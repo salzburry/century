@@ -1,0 +1,530 @@
+---
+title: "Century Health — Real World Evidence: Lupus Patient Analysis"
+author: "Data Analyst Take-Home"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    fig_width: 10
+    fig_height: 6
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center"
+)
+```
+
+# 0. Setup & Data Loading
+
+```{r load-libraries}
+library(tidyverse)
+library(readxl)
+library(scales)
+library(patchwork)
+library(broom)
+library(testthat)
+library(knitr)
+
+# Load modular helper functions
+source("R/helpers.R")
+
+cat("All libraries and helpers loaded.\n")
+```
+
+```{r load-data}
+raw <- load_all_datasets("data")
+
+cat(sprintf("Patients:    %d x %d\n", nrow(raw$patients),    ncol(raw$patients)))
+cat(sprintf("Encounters:  %d x %d\n", nrow(raw$encounters),  ncol(raw$encounters)))
+cat(sprintf("Symptoms:    %d x %d\n", nrow(raw$symptoms),    ncol(raw$symptoms)))
+cat(sprintf("Medications: %d x %d\n", nrow(raw$medications), ncol(raw$medications)))
+cat(sprintf("Conditions:  %d x %d\n", nrow(raw$conditions),  ncol(raw$conditions)))
+```
+
+---
+
+# 1. Data Assessment
+
+## 1.1 Entity-Relationship Diagram
+
+The five datasets are connected through **patient UUIDs** and **encounter UUIDs**:
+
+```
+                          ┌──────────────┐
+                          │   PATIENTS   │
+                          │ (PATIENT_ID) │
+                          └──────┬───────┘
+                                 │  1
+              ┌──────────────────┼──────────────────┐
+              │                  │                  │
+              ▼ *                ▼ *                ▼ *
+     ┌────────────────┐  ┌──────────────┐  ┌──────────────┐
+     │  ENCOUNTERS    │  │  SYMPTOMS    │  │  MEDICATIONS │
+     │  (Id)          │  │  (PATIENT)   │  │  (PATIENT,   │
+     │  FK: PATIENT   │  │              │  │   ENCOUNTER) │
+     └───────┬────────┘  └──────────────┘  └──────┬───────┘
+             │ 1                                  │
+             │            ┌──────────────┐        │
+             └───────────►│  CONDITIONS  │◄───────┘
+                     *    │  (PATIENT,   │    *
+                          │   ENCOUNTER) │
+                          └──────────────┘
+```
+
+| From | To | Join Key |
+|------|------|----------|
+| Patients → Encounters | `PATIENT_ID` = `PATIENT` |
+| Patients → Symptoms | `PATIENT_ID` = `PATIENT` |
+| Patients → Medications | `PATIENT_ID` = `PATIENT` |
+| Patients → Conditions | `PATIENT_ID` = `PATIENT` |
+| Encounters → Medications | `Id` = `ENCOUNTER` |
+| Encounters → Conditions | `Id` = `ENCOUNTER` |
+
+> **Note:** File formats vary across datasets — CSV, Parquet (converted to CSV for R), and Excel — all handled by the `load_all_datasets()` helper.
+
+---
+
+# 2. Data Cleaning
+
+Issues identified and fixed:
+
+1. **Mixed-case UUID keys** — Patient and Encounter IDs use different casing across files (lowercase in patients/symptoms, UPPERCASE in encounters/conditions). Normalised to lowercase.
+2. **Inconsistent medication descriptions** — Same drug appears as `predniSONE 20 MG Oral Tablet`, `PREDNISONE 20 MG ORAL TABLET`, and `prednisone 20 mg oral tablet`. Standardised to uppercase.
+3. **Missing GENDER in symptoms** — The GENDER column is entirely NA; backfilled from the patients table.
+4. **Date columns stored as strings** — Parsed to proper date/datetime types.
+5. **SYMPTOMS column is a packed string** — Parsed `"Rash:34;Joint Pain:39;Fatigue:9;Fever:12"` into four numeric columns.
+6. **File format heterogeneity** — CSV, Parquet, and Excel files all handled during loading.
+
+```{r clean-data}
+# Step 1: Normalise IDs to lowercase
+datasets <- normalise_ids(raw)
+
+# Step 2: Standardise medication names
+datasets$medications <- standardise_medication_names(datasets$medications)
+cat(sprintf("Medication descriptions: %d unique (after normalisation)\n",
+            n_distinct(datasets$medications$DESCRIPTION)))
+
+# Step 3: Parse dates
+datasets <- parse_dates(datasets)
+
+# Step 4: Parse symptom scores
+datasets$symptoms <- parse_symptom_scores(datasets$symptoms)
+datasets$symptoms %>%
+  select(PATIENT, Rash, Joint_Pain, Fatigue, Fever) %>%
+  head(5) %>%
+  kable(caption = "Parsed symptom scores (first 5 rows)")
+
+# Step 5: Fill missing GENDER in symptoms
+datasets$symptoms <- fill_symptom_gender(datasets$symptoms, datasets$patients)
+cat(sprintf("Symptom GENDER nulls remaining: %d\n",
+            sum(is.na(datasets$symptoms$GENDER))))
+```
+
+## 2.1 Data Integrity Unit Tests
+
+```{r unit-tests, results='asis'}
+run_integrity_tests(datasets)
+cat("\n**All data integrity tests passed.**\n")
+```
+
+```{r extract-for-convenience}
+# Extract cleaned tables for convenience in downstream analysis
+patients    <- datasets$patients
+encounters  <- datasets$encounters
+symptoms    <- datasets$symptoms
+medications <- datasets$medications
+conditions  <- datasets$conditions
+```
+
+---
+
+# 3. Descriptive Analysis
+
+## 3.1 Distinct Patients
+
+```{r distinct-patients}
+n_patients <- n_distinct(patients$PATIENT_ID)
+cat(sprintf("Distinct patients in the dataset: %s\n", comma(n_patients)))
+```
+
+## 3.2 Distinct Medications Over Time
+
+```{r meds-over-time, fig.height=4}
+meds_over_time <- medications %>%
+  mutate(YEAR_MONTH = floor_date(START, "month")) %>%
+  group_by(YEAR_MONTH) %>%
+  summarise(distinct_meds = n_distinct(DESCRIPTION), .groups = "drop")
+
+ggplot(meds_over_time, aes(x = YEAR_MONTH, y = distinct_meds)) +
+  geom_line(linewidth = 0.7, colour = "#2c7fb8") +
+  geom_point(size = 1.5, colour = "#2c7fb8") +
+  scale_y_continuous(breaks = scales::pretty_breaks()) +
+  labs(
+    title = "Distinct Medications Prescribed per Month",
+    x     = "Date",
+    y     = "Distinct Medications"
+  ) +
+  theme_minimal()
+```
+
+## 3.3 Patient Distribution by Race and Gender
+
+```{r pie-charts, fig.height=5}
+# Race pie
+race_data <- patients %>%
+  count(RACE) %>%
+  mutate(pct = n / sum(n),
+         label = sprintf("%s\n%.1f%%", RACE, pct * 100))
+
+p_race <- ggplot(race_data, aes(x = "", y = n, fill = RACE)) +
+  geom_col(width = 1, colour = "white") +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = label),
+            position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Patients by Race", fill = "Race") +
+  theme_void()
+
+# Gender pie
+gender_data <- patients %>%
+  count(GENDER) %>%
+  mutate(pct = n / sum(n),
+         label = sprintf("%s\n%.1f%%", GENDER, pct * 100))
+
+p_gender <- ggplot(gender_data, aes(x = "", y = n, fill = GENDER)) +
+  geom_col(width = 1, colour = "white") +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = label),
+            position = position_stack(vjust = 0.5), size = 3.5) +
+  labs(title = "Patients by Gender", fill = "Gender") +
+  theme_void()
+
+p_race + p_gender
+```
+
+## 3.4 Patients with All Four Symptom Categories >= 30
+
+```{r high-symptoms}
+all_high <- symptoms %>%
+  filter(Rash >= 30, Joint_Pain >= 30, Fatigue >= 30, Fever >= 30)
+
+pct_high <- nrow(all_high) / nrow(symptoms) * 100
+
+cat(sprintf(
+  "Patients with ALL four symptom scores >= 30: %d / %d (%.1f%%)\n",
+  nrow(all_high), nrow(symptoms), pct_high
+))
+```
+
+---
+
+# 4. Cohort Analysis — Treatments, Demographics & Outcomes
+
+## Analysis Plan
+
+We examine how **medication type**, **ethnicity**, and **age group** relate to symptom severity.
+
+**Cohort definitions:**
+
+| Dimension | Groups |
+|-----------|--------|
+| Medication | Naproxen (NSAID), Prednisone (Corticosteroid), Cyclosporine (Immunosuppressant) |
+| Ethnicity | Hispanic, Non-Hispanic |
+| Age Group | Young (<30), Middle (30–54), Older (55+) |
+
+**Outcome measure:** Mean composite symptom score (average of Rash, Joint Pain, Fatigue, Fever).
+
+**Approach:**
+
+1. Classify each medication into a therapeutic group.
+2. Identify each patient's primary therapy (most frequently prescribed).
+3. Assign age groups and compute composite symptom scores.
+4. Compare outcomes across therapy x ethnicity x age group.
+
+```{r build-cohort}
+# Classify therapies
+medications <- medications %>%
+  mutate(THERAPY = classify_therapy(DESCRIPTION))
+
+cat("Therapy distribution:\n")
+medications %>% count(THERAPY, sort = TRUE) %>% kable()
+```
+
+```{r build-analysis-cohort}
+# Each patient's primary therapy (most frequently prescribed)
+patient_therapy <- medications %>%
+  count(PATIENT, THERAPY, name = "n_prescriptions") %>%
+  arrange(desc(n_prescriptions)) %>%
+  distinct(PATIENT, .keep_all = TRUE) %>%
+  select(PATIENT, THERAPY)
+
+# Add composite score and age group
+symptoms <- symptoms %>%
+  add_composite_score() %>%
+  mutate(AGE_GROUP = assign_age_group(AGE_BEGIN))
+
+# Join symptoms with primary therapy
+cohort <- symptoms %>%
+  inner_join(patient_therapy, by = "PATIENT")
+
+# Focus on the three main Lupus therapies
+main_therapies <- c("Naproxen (NSAID)", "Prednisone (Corticosteroid)",
+                    "Cyclosporine (Immunosuppressant)")
+cohort_main <- cohort %>% filter(THERAPY %in% main_therapies)
+
+cat(sprintf("Cohort: %d rows, %d unique patients\n",
+            nrow(cohort_main), n_distinct(cohort_main$PATIENT)))
+```
+
+## 4.1 Symptom Severity by Therapy and Age Group
+
+```{r therapy-age-bar, fig.height=5}
+summary_age <- cohort_main %>%
+  group_by(THERAPY, AGE_GROUP) %>%
+  summarise(mean_score = mean(COMPOSITE_SCORE), .groups = "drop")
+
+ggplot(summary_age, aes(x = THERAPY, y = mean_score, fill = AGE_GROUP)) +
+  geom_col(position = "dodge", colour = "black", linewidth = 0.3) +
+  labs(
+    title = "Mean Composite Symptom Score by Therapy and Age Group",
+    x     = "Therapy",
+    y     = "Mean Composite Score",
+    fill  = "Age Group"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1))
+```
+
+## 4.2 Symptom Severity by Therapy and Ethnicity
+
+```{r therapy-ethnicity-bar, fig.height=5}
+summary_eth <- cohort_main %>%
+  group_by(THERAPY, ETHNICITY) %>%
+  summarise(mean_score = mean(COMPOSITE_SCORE), .groups = "drop")
+
+ggplot(summary_eth, aes(x = THERAPY, y = mean_score, fill = ETHNICITY)) +
+  geom_col(position = "dodge", colour = "black", linewidth = 0.3) +
+  labs(
+    title = "Mean Composite Symptom Score by Therapy and Ethnicity",
+    x     = "Therapy",
+    y     = "Mean Composite Score",
+    fill  = "Ethnicity"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1))
+```
+
+## 4.3 Heatmap: Therapy x Age Group x Ethnicity
+
+```{r heatmap, fig.height=4.5}
+cohort_main <- cohort_main %>%
+  mutate(COHORT_LABEL = paste(AGE_GROUP, "/", ETHNICITY))
+
+heat_data <- cohort_main %>%
+  group_by(THERAPY, COHORT_LABEL) %>%
+  summarise(mean_score = mean(COMPOSITE_SCORE), .groups = "drop")
+
+ggplot(heat_data, aes(x = COHORT_LABEL, y = THERAPY, fill = mean_score)) +
+  geom_tile(colour = "white", linewidth = 0.5) +
+  geom_text(aes(label = sprintf("%.1f", mean_score)), size = 3) +
+  scale_fill_gradient(low = "#ffffcc", high = "#d7191c") +
+  labs(
+    title = "Mean Composite Symptom Score: Therapy x Cohort",
+    x     = "Cohort (Age Group / Ethnicity)",
+    y     = "Therapy",
+    fill  = "Mean Score"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+```
+
+## 4.4 Individual Symptom Distributions by Therapy
+
+```{r boxplots, fig.height=8}
+symptom_long <- cohort_main %>%
+  pivot_longer(cols = c(Rash, Joint_Pain, Fatigue, Fever),
+               names_to = "Symptom", values_to = "Score")
+
+ggplot(symptom_long, aes(x = THERAPY, y = Score, fill = THERAPY)) +
+  geom_boxplot(outlier.size = 0.5) +
+  facet_wrap(~ Symptom, scales = "free_y", ncol = 2) +
+  labs(
+    title = "Symptom Score Distributions by Therapy",
+    x     = NULL,
+    y     = "Score"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        legend.position = "bottom")
+```
+
+## 4.5 Discussion
+
+**Key findings:**
+
+- The three primary Lupus therapies (Naproxen, Prednisone, Cyclosporine) show **similar** composite symptom score distributions across age groups and ethnicities, which is consistent with the data being simulated by Synthea.
+- Individual symptom scores (Rash, Joint Pain, Fatigue, Fever) are roughly **uniformly distributed** within each therapy group, reflecting synthetic random generation.
+- No clinically meaningful differences emerge between Hispanic and non-Hispanic subgroups or across age brackets — this is expected for simulated data where outcomes are not conditioned on treatment.
+- The heatmap confirms **homogeneous** symptom severity across all therapy x demographic cohort combinations.
+
+---
+
+# 5. Statistical Analysis
+
+## Goal
+
+Build a logistic regression model predicting whether **Fatigue improves** (falls below the population median) based on therapy type, demographics, and prescription volume.
+
+**Assumptions:**
+
+- Since symptoms are observed at a single time point per patient, we define the binary outcome as Fatigue < median (a proxy for "relatively improved").
+- Predictors: therapy type, age, ethnicity, race, gender, and total prescription count.
+- We use a 75/25 train/test split with a fixed seed for reproducibility.
+
+```{r model-prep}
+# Count total prescriptions per patient
+rx_counts <- medications %>%
+  count(PATIENT, name = "N_PRESCRIPTIONS")
+
+# Build modelling dataset
+model_df <- cohort_main %>%
+  left_join(rx_counts, by = "PATIENT") %>%
+  filter(!is.na(GENDER), !is.na(RACE), !is.na(ETHNICITY)) %>%
+  mutate(
+    FATIGUE_IMPROVED = as.integer(Fatigue < median(Fatigue)),
+    THERAPY   = droplevels(factor(THERAPY)),
+    GENDER    = droplevels(factor(GENDER)),
+    RACE      = droplevels(factor(RACE)),
+    ETHNICITY = droplevels(factor(ETHNICITY))
+  )
+
+# Drop factor columns with fewer than 2 levels (can't be used in regression)
+single_level_cols <- names(model_df)[sapply(model_df, function(x) {
+  is.factor(x) && nlevels(x) < 2
+})]
+if (length(single_level_cols) > 0) {
+  cat(sprintf("Dropping single-level factors: %s\n", paste(single_level_cols, collapse = ", ")))
+  model_df <- model_df %>% select(-all_of(single_level_cols))
+}
+
+cat(sprintf("Modelling dataset: %d rows\n", nrow(model_df)))
+cat(sprintf("Fatigue median threshold: %.0f\n", median(model_df$Fatigue)))
+cat("Outcome distribution:\n")
+table(model_df$FATIGUE_IMPROVED) %>% print()
+```
+
+```{r fit-model}
+# Build formula dynamically (skip any dropped single-level factors)
+candidate_predictors <- c("AGE_BEGIN", "GENDER", "RACE", "ETHNICITY", "THERAPY", "N_PRESCRIPTIONS")
+available_predictors <- intersect(candidate_predictors, names(model_df))
+model_formula <- as.formula(paste("FATIGUE_IMPROVED ~", paste(available_predictors, collapse = " + ")))
+cat("Model formula:", deparse(model_formula), "\n\n")
+
+# Fit logistic regression
+logit_fit <- glm(
+  model_formula,
+  data   = model_df,
+  family = binomial(link = "logit")
+)
+
+summary(logit_fit)
+```
+
+## 5.1 Odds Ratios and Confidence Intervals
+
+```{r odds-ratios}
+or_table <- tidy(logit_fit, conf.int = TRUE, exponentiate = TRUE) %>%
+  select(term, estimate, conf.low, conf.high, p.value) %>%
+  rename(
+    `Odds Ratio`    = estimate,
+    `CI Lower (95%)` = conf.low,
+    `CI Upper (95%)` = conf.high,
+    `p-value`        = p.value
+  )
+
+kable(or_table, digits = 3, caption = "Logistic Regression — Odds Ratios")
+```
+
+## 5.2 Model Evaluation
+
+```{r model-eval, fig.height=5}
+# Train/test split
+set.seed(42)
+train_idx <- sample(seq_len(nrow(model_df)), size = floor(0.75 * nrow(model_df)))
+train_df  <- model_df[train_idx, ]
+test_df   <- model_df[-train_idx, ]
+
+# Refit on training data using the same dynamic formula
+logit_train <- glm(
+  model_formula,
+  data   = train_df,
+  family = binomial(link = "logit")
+)
+
+# Predict on test data
+test_df$pred_prob <- predict(logit_train, newdata = test_df, type = "response")
+test_df$pred_class <- as.integer(test_df$pred_prob >= 0.5)
+
+# Confusion matrix
+cat("Confusion Matrix:\n")
+table(Predicted = test_df$pred_class, Actual = test_df$FATIGUE_IMPROVED) %>% print()
+
+# Accuracy
+acc <- mean(test_df$pred_class == test_df$FATIGUE_IMPROVED)
+cat(sprintf("\nAccuracy: %.1f%%\n", acc * 100))
+
+# ROC Curve
+roc_data <- tibble(
+  truth = test_df$FATIGUE_IMPROVED,
+  prob  = test_df$pred_prob
+) %>%
+  arrange(desc(prob)) %>%
+  mutate(
+    tpr = cumsum(truth == 1) / sum(truth == 1),
+    fpr = cumsum(truth == 0) / sum(truth == 0)
+  )
+
+auc_val <- sum(diff(roc_data$fpr) * (head(roc_data$tpr, -1) + tail(roc_data$tpr, -1)) / 2)
+auc_val <- abs(auc_val)
+
+ggplot(roc_data, aes(x = fpr, y = tpr)) +
+  geom_line(colour = "#2c7fb8", linewidth = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  annotate("text", x = 0.6, y = 0.3,
+           label = sprintf("AUC = %.3f", auc_val), size = 4.5) +
+  labs(
+    title = "ROC Curve — Fatigue Improvement Prediction",
+    x     = "False Positive Rate",
+    y     = "True Positive Rate"
+  ) +
+  theme_minimal()
+```
+
+## 5.3 Model Interpretation
+
+**How to read the output:**
+
+- **Coefficients (log-odds):** Each coefficient represents the change in log-odds of Fatigue improvement for a one-unit increase in that predictor, holding all others constant. Positive coefficients increase the probability of improvement; negative coefficients decrease it.
+
+- **Odds Ratios:** An odds ratio > 1 means the predictor increases the odds of improvement compared to the reference category; < 1 means it decreases the odds. For example, an odds ratio of 1.5 for a therapy would mean patients on that therapy have 50% higher odds of Fatigue improvement.
+
+- **p-values:** A p-value < 0.05 indicates a statistically significant association at the 5% level.
+
+- **Confidence Intervals:** The 95% CI around each odds ratio tells us the range within which the true odds ratio likely falls. If the interval crosses 1.0, the effect is not statistically significant.
+
+**Key findings:**
+
+Since the data is simulated by Synthea, we expect — and observe — that:
+
+- **No therapy is significantly better** than another at reducing Fatigue (odds ratios near 1.0 with confidence intervals crossing 1.0).
+- **Demographic variables** (age, race, ethnicity, gender) have minimal predictive power, as the simulation generates symptom scores independently of these factors.
+- The **AUC near 0.5** confirms the model performs no better than random chance, which is the expected behaviour when no true treatment effect exists in the underlying data-generating process.
+- This validates the integrity of our pipeline: the analysis correctly detects *no signal* where none was planted.
