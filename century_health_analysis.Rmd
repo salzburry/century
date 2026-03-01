@@ -106,12 +106,15 @@ The five datasets are connected through **patient UUIDs** and **encounter UUIDs*
 
 ## 1.3 Two Cohort Definitions
 
-The data supports two natural cohort definitions for Lupus patients. We label them clearly since they have different sizes and are used in different parts of this analysis:
+The data supports two natural cohort definitions for Lupus patients. We label them clearly since they have different sizes and are used in different parts of this analysis. Cohort sizes are computed dynamically in Section 2 and reported in the table below.
 
-| Cohort | Definition | Size |
-|--------|-----------|------|
-| **Diagnosed cohort** | Patients with at least one Lupus erythematosus record in `conditions` | 2,784 |
-| **Symptom-observed subset** | Diagnosed patients who also have a Lupus row in `symptoms` | 948 |
+```{r cohort-sizes, echo=FALSE, results='asis'}
+# This chunk runs after cleaning (Section 2 computes the values);
+# it is placed here narratively but the sizes are filled in at render time.
+# The actual computation happens in the extract-for-convenience chunk.
+```
+
+> The cohort-size table is rendered below in Section 2, after cleaning defines the cohorts.
 
 The **symptom-observed subset** is a strict subset of the diagnosed cohort. Only this subset has individual symptom scores, so it is the basis for Sections 3.4, 4, and 5. Sections 3.1–3.3 report on the full diagnosed cohort.
 
@@ -179,27 +182,45 @@ lupus_patients <- patients %>% filter(PATIENT_ID %in% lupus_patient_ids)
 # Symptom-observed subset: diagnosed patients who also have symptom data
 symptom_patient_ids <- unique(symptoms$PATIENT)
 
-cat(sprintf("Total patients in file:       %s\n", comma(n_distinct(patients$PATIENT_ID))))
-cat(sprintf("Diagnosed Lupus cohort:       %s\n", comma(n_distinct(lupus_patients$PATIENT_ID))))
-cat(sprintf("Symptom-observed Lupus subset: %s\n", comma(n_distinct(symptom_patient_ids))))
+n_total     <- n_distinct(patients$PATIENT_ID)
+n_diagnosed <- n_distinct(lupus_patients$PATIENT_ID)
+n_symptom   <- n_distinct(symptom_patient_ids)
+
+# Dynamic cohort-size table (referenced from Section 1.3)
+tibble(
+  Cohort     = c("All patients in raw dataset",
+                 "Diagnosed Lupus cohort",
+                 "Symptom-observed Lupus subset"),
+  Definition = c("Distinct patients in `patients.csv`",
+                 "Patients with >= 1 Lupus erythematosus record in `conditions`",
+                 "Diagnosed patients who also have a Lupus row in `symptoms`"),
+  Size       = c(comma(n_total), comma(n_diagnosed), comma(n_symptom))
+) %>% kable(caption = "Cohort definitions and sizes")
 ```
 
 ---
 
 # 3. Descriptive Analysis
 
-## 3.1 Distinct Lupus Patients (Diagnosed Cohort)
+## 3.1 How Many Distinct Patients Are in the Dataset?
 
 ```{r distinct-patients}
-n_diagnosed <- n_distinct(lupus_patients$PATIENT_ID)
-cat(sprintf("Distinct patients diagnosed with Lupus: %s\n", comma(n_diagnosed)))
+cat(sprintf("Total distinct patients in the raw dataset: %s\n", comma(n_total)))
+cat(sprintf("  Diagnosed Lupus cohort:                   %s\n", comma(n_diagnosed)))
+cat(sprintf("  Symptom-observed Lupus subset:            %s\n", comma(n_symptom)))
 ```
+
+The raw `patients.csv` file contains `r comma(n_total)` distinct patients. Of these, `r comma(n_diagnosed)` have at least one Lupus erythematosus diagnosis in the conditions table, and `r comma(n_symptom)` also have Lupus symptom records. The remaining descriptive statistics in this section use the **diagnosed cohort** unless noted otherwise.
 
 ## 3.2 Distinct Medications Over Time (Diagnosed Cohort)
 
 ```{r meds-over-time, fig.height=4}
-# Medications for all diagnosed Lupus patients
-lupus_meds <- medications %>% filter(PATIENT %in% lupus_patient_ids)
+# Lupus-directed medications: prescribed to diagnosed patients AND
+# linked to Lupus via REASONDESCRIPTION (excludes supportive-care meds
+# like Vitamin B12 and ferrous sulfate for anemia)
+lupus_meds <- medications %>%
+  filter(PATIENT %in% lupus_patient_ids,
+         str_to_upper(REASONDESCRIPTION) == "LUPUS ERYTHEMATOSUS")
 
 meds_over_time <- lupus_meds %>%
   mutate(YEAR_MONTH = floor_date(START, "month")) %>%
@@ -496,9 +517,14 @@ model_df <- cohort_main %>%
     LOW_FATIGUE = as.integer(Fatigue < median(Fatigue)),
     THERAPY     = droplevels(factor(THERAPY)),
     GENDER      = droplevels(factor(GENDER)),
-    RACE        = droplevels(factor(RACE)),
+    # Collapse sparse race levels (< 20 patients) into "other"
+    RACE        = fct_lump_min(factor(RACE), min = 20, other_level = "other"),
+    RACE        = relevel(RACE, ref = "white"),
     ETHNICITY   = droplevels(factor(ETHNICITY))
   )
+
+cat("Race levels after collapsing sparse categories:\n")
+table(model_df$RACE) %>% print()
 
 # Drop factor columns with fewer than 2 levels (can't be used in regression)
 single_level_cols <- names(model_df)[sapply(model_df, function(x) {

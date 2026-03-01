@@ -273,4 +273,12 @@ run_integrity_tests <- function(datasets) {
     testthat::expect_equal(nrow(datasets$symptoms),
                            dplyr::n_distinct(datasets$symptoms$PATIENT))
   })
+
+  # ── Cohort containment: symptom patients ⊆ diagnosed Lupus patients ──
+  testthat::test_that("All symptom-observed patients are in the diagnosed Lupus cohort", {
+    lupus_ids <- unique(datasets$conditions$PATIENT[
+      stringr::str_to_upper(datasets$conditions$DESCRIPTION) == "LUPUS ERYTHEMATOSUS"
+    ])
+    testthat::expect_true(all(datasets$symptoms$PATIENT %in% lupus_ids))
+  })
 }
