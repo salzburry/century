@@ -1,9 +1,8 @@
 # ============================================================================
 # helpers.R — Reusable helper functions for the Century Health Lupus analysis
 #
-# Required packages (must be attached before sourcing):
-#   tidyverse (dplyr, tidyr, stringr, readr, purrr, ggplot2, forcats, tibble)
-#   readxl, lubridate, testthat
+# Required packages (must be installed; all calls are namespace-qualified):
+#   dplyr, stringr, readr, readxl, lubridate, testthat
 # ============================================================================
 
 # Guard: check that required packages are available

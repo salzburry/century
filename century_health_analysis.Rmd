@@ -106,17 +106,14 @@ The five datasets are connected through **patient UUIDs** and **encounter UUIDs*
 
 ## 1.3 Two Cohort Definitions
 
-The data supports two natural cohort definitions for Lupus patients. We label them clearly since they have different sizes and are used in different parts of this analysis. Cohort sizes are computed dynamically in Section 2 and reported in the table below.
+The data supports two natural cohort definitions for Lupus patients. We label them clearly since they have different sizes and are used in different parts of this analysis:
 
-```{r cohort-sizes, echo=FALSE, results='asis'}
-# This chunk runs after cleaning (Section 2 computes the values);
-# it is placed here narratively but the sizes are filled in at render time.
-# The actual computation happens in the extract-for-convenience chunk.
-```
+| Cohort | Definition | Used in |
+|--------|-----------|---------|
+| **Diagnosed cohort** | Patients with >= 1 Lupus erythematosus record in `conditions` | Sections 3.1–3.3 |
+| **Symptom-observed subset** | Diagnosed patients who also have a Lupus row in `symptoms` | Sections 3.4, 4, 5 |
 
-> The cohort-size table is rendered below in Section 2, after cleaning defines the cohorts.
-
-The **symptom-observed subset** is a strict subset of the diagnosed cohort. Only this subset has individual symptom scores, so it is the basis for Sections 3.4, 4, and 5. Sections 3.1–3.3 report on the full diagnosed cohort.
+The **symptom-observed subset** is a strict subset of the diagnosed cohort. Exact cohort sizes are computed during cleaning and reported in Section 2.
 
 ---
 
@@ -214,6 +211,8 @@ The raw `patients.csv` file contains `r comma(n_total)` distinct patients. Of th
 
 ## 3.2 Distinct Medications Over Time (Diagnosed Cohort)
 
+This chart counts only **Lupus-directed medications** — prescriptions where `REASONDESCRIPTION` is "Lupus erythematosus." This deliberately excludes supportive-care medications (e.g. Vitamin B12, ferrous sulfate) that are prescribed for comorbid anemia rather than Lupus itself.
+
 ```{r meds-over-time, fig.height=4}
 # Lupus-directed medications: prescribed to diagnosed patients AND
 # linked to Lupus via REASONDESCRIPTION (excludes supportive-care meds
@@ -286,14 +285,15 @@ cat(sprintf(
   "Symptom-observed patients with ALL four scores >= 30: %d / %d (%.1f%%)\n",
   nrow(all_high), nrow(symptoms), pct_high
 ))
-cat("(Note: this uses the symptom-observed subset of 948 patients, not the full diagnosed cohort.)\n")
+cat(sprintf("(Note: this uses the symptom-observed subset of %s patients, not the full diagnosed cohort.)\n",
+            comma(n_symptom)))
 ```
 
 ---
 
 # 4. Cohort Analysis — Treatments, Demographics & Outcomes
 
-> **Cohort scope:** This section uses the **symptom-observed subset** (948 patients) since symptom scores are required for outcome measurement.
+> **Cohort scope:** This section uses the **symptom-observed subset** (`r comma(n_symptom)` patients) since symptom scores are required for outcome measurement.
 
 ## Analysis Plan
 

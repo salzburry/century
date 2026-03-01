@@ -1880,16 +1880,38 @@ regeneration instructions.</p>
 <h2>1.3 Two Cohort Definitions</h2>
 <p>The data supports two natural cohort definitions for Lupus patients.
 We label them clearly since they have different sizes and are used in
-different parts of this analysis. Cohort sizes are computed dynamically
-in Section 2 and reported in the table below.</p>
-<blockquote>
-<p>The cohort-size table is rendered below in Section 2, after cleaning
-defines the cohorts.</p>
-</blockquote>
+different parts of this analysis:</p>
+<table>
+<colgroup>
+<col width="28%" />
+<col width="39%" />
+<col width="32%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Cohort</th>
+<th>Definition</th>
+<th>Used in</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Diagnosed cohort</strong></td>
+<td>Patients with &gt;= 1 Lupus erythematosus record in
+<code>conditions</code></td>
+<td>Sections 3.1–3.3</td>
+</tr>
+<tr class="even">
+<td><strong>Symptom-observed subset</strong></td>
+<td>Diagnosed patients who also have a Lupus row in
+<code>symptoms</code></td>
+<td>Sections 3.4, 4, 5</td>
+</tr>
+</tbody>
+</table>
 <p>The <strong>symptom-observed subset</strong> is a strict subset of
-the diagnosed cohort. Only this subset has individual symptom scores, so
-it is the basis for Sections 3.4, 4, and 5. Sections 3.1–3.3 report on
-the full diagnosed cohort.</p>
+the diagnosed cohort. Exact cohort sizes are computed during cleaning
+and reported in Section 2.</p>
 <hr />
 </div>
 </div>
@@ -2085,6 +2107,11 @@ records. The remaining descriptive statistics in this section use the
 </div>
 <div id="distinct-medications-over-time-diagnosed-cohort" class="section level2">
 <h2>3.2 Distinct Medications Over Time (Diagnosed Cohort)</h2>
+<p>This chart counts only <strong>Lupus-directed medications</strong> —
+prescriptions where <code>REASONDESCRIPTION</code> is “Lupus
+erythematosus.” This deliberately excludes supportive-care medications
+(e.g. Vitamin B12, ferrous sulfate) that are prescribed for comorbid
+anemia rather than Lupus itself.</p>
 <div class="sourceCode" id="cb32"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" tabindex="-1"></a><span class="co"># Lupus-directed medications: prescribed to diagnosed patients AND</span></span>
 <span id="cb32-2"><a href="#cb32-2" tabindex="-1"></a><span class="co"># linked to Lupus via REASONDESCRIPTION (excludes supportive-care meds</span></span>
 <span id="cb32-3"><a href="#cb32-3" tabindex="-1"></a><span class="co"># like Vitamin B12 and ferrous sulfate for anemia)</span></span>
@@ -2156,7 +2183,8 @@ records. The remaining descriptive statistics in this section use the
 <span id="cb34-9"><a href="#cb34-9" tabindex="-1"></a>  <span class="fu">nrow</span>(all_high), <span class="fu">nrow</span>(symptoms), pct_high</span>
 <span id="cb34-10"><a href="#cb34-10" tabindex="-1"></a>))</span></code></pre></div>
 <pre><code>## Symptom-observed patients with ALL four scores &gt;= 30: 0 / 948 (0.0%)</code></pre>
-<div class="sourceCode" id="cb36"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb36-1"><a href="#cb36-1" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;(Note: this uses the symptom-observed subset of 948 patients, not the full diagnosed cohort.)</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb36"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb36-1"><a href="#cb36-1" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;(Note: this uses the symptom-observed subset of %s patients, not the full diagnosed cohort.)</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb36-2"><a href="#cb36-2" tabindex="-1"></a>            <span class="fu">comma</span>(n_symptom)))</span></code></pre></div>
 <pre><code>## (Note: this uses the symptom-observed subset of 948 patients, not the full diagnosed cohort.)</code></pre>
 <hr />
 </div>
