@@ -27,6 +27,7 @@ knitr::opts_chunk$set(
 
 ```{r load-libraries}
 library(tidyverse)
+library(lubridate)
 library(readxl)
 library(scales)
 library(patchwork)
@@ -89,20 +90,23 @@ The five datasets are connected through **patient UUIDs** and **encounter UUIDs*
 | Encounters → Medications | `Id` = `ENCOUNTER` |
 | Encounters → Conditions | `Id` = `ENCOUNTER` |
 
-> **Note:** File formats vary across datasets — CSV, Parquet (converted to CSV for R), and Excel — all handled by the `load_all_datasets()` helper.
+> **Note:** The source files use a mix of CSV, Parquet, and Excel formats. The `load_all_datasets()` helper handles this transparently, converting Parquet to CSV on the fly if the `arrow` R package is unavailable.
+
+## 1.2 Key Data Quality Issues Identified
+
+| # | Issue | Impact | Resolution |
+|---|-------|--------|------------|
+| 1 | Mixed-case UUID keys across files | Joins fail silently | Normalise all IDs to lowercase |
+| 2 | Same medication in 3+ casing variants | Inflated distinct-med counts | Standardise to uppercase |
+| 3 | GENDER column entirely NA in symptoms | Missing demographic info | Backfill from patients table |
+| 4 | Date columns stored as strings | Can't do time-based analysis | Parse to Date / POSIXct |
+| 5 | SYMPTOMS is a packed `key:value` string | Not analysable directly | Parse into 4 numeric columns |
+| 6 | Symptoms table has duplicate rows per patient | Overstates sample size | Filter to Lupus pathology, deduplicate |
+| 7 | File format heterogeneity (CSV, Parquet, XLSX) | Loading complexity | Handled in `load_all_datasets()` |
 
 ---
 
 # 2. Data Cleaning
-
-Issues identified and fixed:
-
-1. **Mixed-case UUID keys** — Patient and Encounter IDs use different casing across files (lowercase in patients/symptoms, UPPERCASE in encounters/conditions). Normalised to lowercase.
-2. **Inconsistent medication descriptions** — Same drug appears as `predniSONE 20 MG Oral Tablet`, `PREDNISONE 20 MG ORAL TABLET`, and `prednisone 20 mg oral tablet`. Standardised to uppercase.
-3. **Missing GENDER in symptoms** — The GENDER column is entirely NA; backfilled from the patients table.
-4. **Date columns stored as strings** — Parsed to proper date/datetime types.
-5. **SYMPTOMS column is a packed string** — Parsed `"Rash:34;Joint Pain:39;Fatigue:9;Fever:12"` into four numeric columns.
-6. **File format heterogeneity** — CSV, Parquet, and Excel files all handled during loading.
 
 ```{r clean-data}
 # Step 1: Normalise IDs to lowercase
@@ -113,20 +117,29 @@ datasets$medications <- standardise_medication_names(datasets$medications)
 cat(sprintf("Medication descriptions: %d unique (after normalisation)\n",
             n_distinct(datasets$medications$DESCRIPTION)))
 
-# Step 3: Parse dates
+# Step 3: Parse dates (including DEATHDATE and conditions$STOP)
 datasets <- parse_dates(datasets)
 
 # Step 4: Parse symptom scores
 datasets$symptoms <- parse_symptom_scores(datasets$symptoms)
-datasets$symptoms %>%
-  select(PATIENT, Rash, Joint_Pain, Fatigue, Fever) %>%
-  head(5) %>%
-  kable(caption = "Parsed symptom scores (first 5 rows)")
 
-# Step 5: Fill missing GENDER in symptoms
+# Step 5: Filter to Lupus-only rows and deduplicate to one row per patient
+cat(sprintf("Symptoms before Lupus filter: %d rows, %d unique patients\n",
+            nrow(datasets$symptoms), n_distinct(datasets$symptoms$PATIENT)))
+datasets$symptoms <- filter_lupus_symptoms(datasets$symptoms)
+cat(sprintf("Symptoms after  Lupus filter: %d rows, %d unique patients\n",
+            nrow(datasets$symptoms), n_distinct(datasets$symptoms$PATIENT)))
+
+# Step 6: Fill missing GENDER in symptoms from patients table
 datasets$symptoms <- fill_symptom_gender(datasets$symptoms, datasets$patients)
 cat(sprintf("Symptom GENDER nulls remaining: %d\n",
             sum(is.na(datasets$symptoms$GENDER))))
+
+# Show parsed symptom scores
+datasets$symptoms %>%
+  select(PATIENT, PATHOLOGY, Rash, Joint_Pain, Fatigue, Fever) %>%
+  head(5) %>%
+  kable(caption = "Parsed Lupus symptom scores (first 5 rows)")
 ```
 
 ## 2.1 Data Integrity Unit Tests
@@ -137,29 +150,44 @@ cat("\n**All data integrity tests passed.**\n")
 ```
 
 ```{r extract-for-convenience}
-# Extract cleaned tables for convenience in downstream analysis
+# Extract cleaned tables for downstream analysis
 patients    <- datasets$patients
 encounters  <- datasets$encounters
 symptoms    <- datasets$symptoms
 medications <- datasets$medications
 conditions  <- datasets$conditions
+
+# Define the Lupus cohort patient IDs (patients with at least one Lupus condition)
+lupus_patient_ids <- unique(conditions %>%
+  filter(str_to_upper(DESCRIPTION) == "LUPUS ERYTHEMATOSUS") %>%
+  pull(PATIENT))
+
+lupus_patients <- patients %>% filter(PATIENT_ID %in% lupus_patient_ids)
+
+cat(sprintf("Total patients in file: %d\n", n_distinct(patients$PATIENT_ID)))
+cat(sprintf("Lupus cohort patients:  %d\n", n_distinct(lupus_patients$PATIENT_ID)))
 ```
 
 ---
 
 # 3. Descriptive Analysis
 
-## 3.1 Distinct Patients
+All descriptive statistics below are scoped to the **Lupus cohort** — patients with at least one Lupus erythematosus diagnosis in the conditions table.
+
+## 3.1 Distinct Lupus Patients
 
 ```{r distinct-patients}
-n_patients <- n_distinct(patients$PATIENT_ID)
-cat(sprintf("Distinct patients in the dataset: %s\n", comma(n_patients)))
+n_lupus <- n_distinct(lupus_patients$PATIENT_ID)
+cat(sprintf("Distinct Lupus patients: %s\n", comma(n_lupus)))
 ```
 
 ## 3.2 Distinct Medications Over Time
 
 ```{r meds-over-time, fig.height=4}
-meds_over_time <- medications %>%
+# Restrict to medications for Lupus patients
+lupus_meds <- medications %>% filter(PATIENT %in% lupus_patient_ids)
+
+meds_over_time <- lupus_meds %>%
   mutate(YEAR_MONTH = floor_date(START, "month")) %>%
   group_by(YEAR_MONTH) %>%
   summarise(distinct_meds = n_distinct(DESCRIPTION), .groups = "drop")
@@ -169,18 +197,18 @@ ggplot(meds_over_time, aes(x = YEAR_MONTH, y = distinct_meds)) +
   geom_point(size = 1.5, colour = "#2c7fb8") +
   scale_y_continuous(breaks = scales::pretty_breaks()) +
   labs(
-    title = "Distinct Medications Prescribed per Month",
+    title = "Distinct Medications Prescribed per Month (Lupus Cohort)",
     x     = "Date",
     y     = "Distinct Medications"
   ) +
   theme_minimal()
 ```
 
-## 3.3 Patient Distribution by Race and Gender
+## 3.3 Lupus Cohort Distribution by Race and Gender
 
 ```{r pie-charts, fig.height=5}
-# Race pie
-race_data <- patients %>%
+# Race pie — Lupus cohort only
+race_data <- lupus_patients %>%
   count(RACE) %>%
   mutate(pct = n / sum(n),
          label = sprintf("%s\n%.1f%%", RACE, pct * 100))
@@ -190,11 +218,11 @@ p_race <- ggplot(race_data, aes(x = "", y = n, fill = RACE)) +
   coord_polar(theta = "y") +
   geom_text(aes(label = label),
             position = position_stack(vjust = 0.5), size = 3) +
-  labs(title = "Patients by Race", fill = "Race") +
+  labs(title = "Lupus Patients by Race", fill = "Race") +
   theme_void()
 
-# Gender pie
-gender_data <- patients %>%
+# Gender pie — Lupus cohort only
+gender_data <- lupus_patients %>%
   count(GENDER) %>%
   mutate(pct = n / sum(n),
          label = sprintf("%s\n%.1f%%", GENDER, pct * 100))
@@ -204,7 +232,7 @@ p_gender <- ggplot(gender_data, aes(x = "", y = n, fill = GENDER)) +
   coord_polar(theta = "y") +
   geom_text(aes(label = label),
             position = position_stack(vjust = 0.5), size = 3.5) +
-  labs(title = "Patients by Gender", fill = "Gender") +
+  labs(title = "Lupus Patients by Gender", fill = "Gender") +
   theme_void()
 
 p_race + p_gender
@@ -213,13 +241,14 @@ p_race + p_gender
 ## 3.4 Patients with All Four Symptom Categories >= 30
 
 ```{r high-symptoms}
+# symptoms is already one row per Lupus patient after dedup
 all_high <- symptoms %>%
   filter(Rash >= 30, Joint_Pain >= 30, Fatigue >= 30, Fever >= 30)
 
 pct_high <- nrow(all_high) / nrow(symptoms) * 100
 
 cat(sprintf(
-  "Patients with ALL four symptom scores >= 30: %d / %d (%.1f%%)\n",
+  "Lupus patients with ALL four symptom scores >= 30: %d / %d (%.1f%%)\n",
   nrow(all_high), nrow(symptoms), pct_high
 ))
 ```
@@ -230,7 +259,7 @@ cat(sprintf(
 
 ## Analysis Plan
 
-We examine how **medication type**, **ethnicity**, and **age group** relate to symptom severity.
+We examine how **medication type**, **ethnicity**, and **age group** relate to symptom severity within the Lupus cohort.
 
 **Cohort definitions:**
 
@@ -240,33 +269,34 @@ We examine how **medication type**, **ethnicity**, and **age group** relate to s
 | Ethnicity | Hispanic, Non-Hispanic |
 | Age Group | Young (<30), Middle (30–54), Older (55+) |
 
-**Outcome measure:** Mean composite symptom score (average of Rash, Joint Pain, Fatigue, Fever).
+**Outcome measure:** Mean composite symptom score (mean of Rash, Joint Pain, Fatigue, Fever).
 
 **Approach:**
 
 1. Classify each medication into a therapeutic group.
-2. Identify each patient's primary therapy (most frequently prescribed).
+2. Identify each patient's primary therapy (most frequently prescribed; ties broken deterministically by `slice_max`).
 3. Assign age groups and compute composite symptom scores.
-4. Compare outcomes across therapy x ethnicity x age group.
+4. Compare outcomes across therapy × ethnicity × age group.
 
 ```{r build-cohort}
-# Classify therapies
-medications <- medications %>%
+# Classify therapies (Lupus meds only)
+lupus_meds <- lupus_meds %>%
   mutate(THERAPY = classify_therapy(DESCRIPTION))
 
-cat("Therapy distribution:\n")
-medications %>% count(THERAPY, sort = TRUE) %>% kable()
+cat("Therapy distribution (Lupus cohort prescriptions):\n")
+lupus_meds %>% count(THERAPY, sort = TRUE) %>% kable()
 ```
 
 ```{r build-analysis-cohort}
-# Each patient's primary therapy (most frequently prescribed)
-patient_therapy <- medications %>%
+# Each patient's primary therapy — deterministic tie-breaking with slice_max
+patient_therapy <- lupus_meds %>%
   count(PATIENT, THERAPY, name = "n_prescriptions") %>%
-  arrange(desc(n_prescriptions)) %>%
-  distinct(PATIENT, .keep_all = TRUE) %>%
+  group_by(PATIENT) %>%
+  slice_max(n_prescriptions, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
   select(PATIENT, THERAPY)
 
-# Add composite score and age group
+# Add composite score and age group to the deduplicated symptoms table
 symptoms <- symptoms %>%
   add_composite_score() %>%
   mutate(AGE_GROUP = assign_age_group(AGE_BEGIN))
@@ -280,8 +310,11 @@ main_therapies <- c("Naproxen (NSAID)", "Prednisone (Corticosteroid)",
                     "Cyclosporine (Immunosuppressant)")
 cohort_main <- cohort %>% filter(THERAPY %in% main_therapies)
 
-cat(sprintf("Cohort: %d rows, %d unique patients\n",
-            nrow(cohort_main), n_distinct(cohort_main$PATIENT)))
+cat(sprintf("Analysis cohort: %d patients (one row each)\n",
+            nrow(cohort_main)))
+cat(sprintf("  Naproxen:      %d\n", sum(cohort_main$THERAPY == main_therapies[1])))
+cat(sprintf("  Prednisone:    %d\n", sum(cohort_main$THERAPY == main_therapies[2])))
+cat(sprintf("  Cyclosporine:  %d\n", sum(cohort_main$THERAPY == main_therapies[3])))
 ```
 
 ## 4.1 Symptom Severity by Therapy and Age Group
@@ -322,7 +355,7 @@ ggplot(summary_eth, aes(x = THERAPY, y = mean_score, fill = ETHNICITY)) +
   theme(axis.text.x = element_text(angle = 10, hjust = 1))
 ```
 
-## 4.3 Heatmap: Therapy x Age Group x Ethnicity
+## 4.3 Heatmap: Therapy × Age Group × Ethnicity
 
 ```{r heatmap, fig.height=4.5}
 cohort_main <- cohort_main %>%
@@ -337,7 +370,7 @@ ggplot(heat_data, aes(x = COHORT_LABEL, y = THERAPY, fill = mean_score)) +
   geom_text(aes(label = sprintf("%.1f", mean_score)), size = 3) +
   scale_fill_gradient(low = "#ffffcc", high = "#d7191c") +
   labs(
-    title = "Mean Composite Symptom Score: Therapy x Cohort",
+    title = "Mean Composite Symptom Score: Therapy × Cohort",
     x     = "Cohort (Age Group / Ethnicity)",
     y     = "Therapy",
     fill  = "Mean Score"
@@ -368,12 +401,42 @@ ggplot(symptom_long, aes(x = THERAPY, y = Score, fill = THERAPY)) +
 
 ## 4.5 Discussion
 
-**Key findings:**
+```{r cohort-summary-stats}
+# Summarise actual values so the narrative is grounded in outputs, not assumptions
+overall_means <- cohort_main %>%
+  group_by(THERAPY) %>%
+  summarise(
+    n = n(),
+    mean_composite = round(mean(COMPOSITE_SCORE), 1),
+    sd_composite   = round(sd(COMPOSITE_SCORE), 1),
+    .groups = "drop"
+  )
 
-- The three primary Lupus therapies (Naproxen, Prednisone, Cyclosporine) show **similar** composite symptom score distributions across age groups and ethnicities, which is consistent with the data being simulated by Synthea.
-- Individual symptom scores (Rash, Joint Pain, Fatigue, Fever) are roughly **uniformly distributed** within each therapy group, reflecting synthetic random generation.
-- No clinically meaningful differences emerge between Hispanic and non-Hispanic subgroups or across age brackets — this is expected for simulated data where outcomes are not conditioned on treatment.
-- The heatmap confirms **homogeneous** symptom severity across all therapy x demographic cohort combinations.
+kable(overall_means,
+      col.names = c("Therapy", "N", "Mean Composite", "SD"),
+      caption   = "Summary statistics by therapy")
+
+# Check whether age-group or ethnicity differences are large
+age_spread <- summary_age %>%
+  group_by(THERAPY) %>%
+  summarise(range = round(max(mean_score) - min(mean_score), 1), .groups = "drop")
+
+eth_spread <- summary_eth %>%
+  group_by(THERAPY) %>%
+  summarise(range = round(max(mean_score) - min(mean_score), 1), .groups = "drop")
+
+cat("\nMax within-therapy difference across age groups:\n")
+print(age_spread)
+cat("\nMax within-therapy difference across ethnicities:\n")
+print(eth_spread)
+```
+
+**Observations based on the summaries above:**
+
+- Composite symptom scores are similar across therapies (see the table above for the actual means and standard deviations). If the per-therapy means and SDs are nearly identical, this indicates no observable treatment differentiation in symptom severity.
+- The within-therapy spread across age groups and ethnicities is reported above. Small ranges (a few points) indicate demographic subgroups do not meaningfully differ within a therapy.
+- The box plots show the full distributions. If the medians and interquartile ranges overlap substantially, this further supports the absence of a treatment-specific signal.
+- These patterns are consistent with Synthea's simulation approach, which generates symptom scores independently of treatment assignment.
 
 ---
 
@@ -381,17 +444,17 @@ ggplot(symptom_long, aes(x = THERAPY, y = Score, fill = THERAPY)) +
 
 ## Goal
 
-Build a logistic regression model predicting whether **Fatigue improves** (falls below the population median) based on therapy type, demographics, and prescription volume.
+Build a logistic regression model to assess whether therapy type and demographics are associated with **lower Fatigue scores** in the Lupus cohort.
 
-**Assumptions:**
+**Important framing:** Because symptoms are observed at a single cross-sectional time point (not longitudinally), this model does **not** estimate treatment effect or improvement over time. Instead, it tests whether having low Fatigue (below the cohort median) is associated with therapy type, demographics, or prescription volume.
 
-- Since symptoms are observed at a single time point per patient, we define the binary outcome as Fatigue < median (a proxy for "relatively improved").
-- Predictors: therapy type, age, ethnicity, race, gender, and total prescription count.
-- We use a 75/25 train/test split with a fixed seed for reproducibility.
+**Predictors:** therapy type, age, ethnicity, race, gender, total prescription count.
+
+**Train/test split:** 75/25, stratified at the **patient level** (each patient appears in exactly one set since we have one row per patient after deduplication).
 
 ```{r model-prep}
 # Count total prescriptions per patient
-rx_counts <- medications %>%
+rx_counts <- lupus_meds %>%
   count(PATIENT, name = "N_PRESCRIPTIONS")
 
 # Build modelling dataset
@@ -399,11 +462,11 @@ model_df <- cohort_main %>%
   left_join(rx_counts, by = "PATIENT") %>%
   filter(!is.na(GENDER), !is.na(RACE), !is.na(ETHNICITY)) %>%
   mutate(
-    FATIGUE_IMPROVED = as.integer(Fatigue < median(Fatigue)),
-    THERAPY   = droplevels(factor(THERAPY)),
-    GENDER    = droplevels(factor(GENDER)),
-    RACE      = droplevels(factor(RACE)),
-    ETHNICITY = droplevels(factor(ETHNICITY))
+    LOW_FATIGUE = as.integer(Fatigue < median(Fatigue)),
+    THERAPY     = droplevels(factor(THERAPY)),
+    GENDER      = droplevels(factor(GENDER)),
+    RACE        = droplevels(factor(RACE)),
+    ETHNICITY   = droplevels(factor(ETHNICITY))
   )
 
 # Drop factor columns with fewer than 2 levels (can't be used in regression)
@@ -411,29 +474,29 @@ single_level_cols <- names(model_df)[sapply(model_df, function(x) {
   is.factor(x) && nlevels(x) < 2
 })]
 if (length(single_level_cols) > 0) {
-  cat(sprintf("Dropping single-level factors: %s\n", paste(single_level_cols, collapse = ", ")))
+  cat(sprintf("Dropping single-level factors: %s\n",
+              paste(single_level_cols, collapse = ", ")))
   model_df <- model_df %>% select(-all_of(single_level_cols))
 }
 
-cat(sprintf("Modelling dataset: %d rows\n", nrow(model_df)))
+cat(sprintf("Modelling dataset: %d patients\n", nrow(model_df)))
 cat(sprintf("Fatigue median threshold: %.0f\n", median(model_df$Fatigue)))
-cat("Outcome distribution:\n")
-table(model_df$FATIGUE_IMPROVED) %>% print()
+cat("Outcome distribution (LOW_FATIGUE):\n")
+table(model_df$LOW_FATIGUE) %>% print()
 ```
 
 ```{r fit-model}
 # Build formula dynamically (skip any dropped single-level factors)
-candidate_predictors <- c("AGE_BEGIN", "GENDER", "RACE", "ETHNICITY", "THERAPY", "N_PRESCRIPTIONS")
+candidate_predictors <- c("AGE_BEGIN", "GENDER", "RACE", "ETHNICITY",
+                          "THERAPY", "N_PRESCRIPTIONS")
 available_predictors <- intersect(candidate_predictors, names(model_df))
-model_formula <- as.formula(paste("FATIGUE_IMPROVED ~", paste(available_predictors, collapse = " + ")))
+model_formula <- as.formula(
+  paste("LOW_FATIGUE ~", paste(available_predictors, collapse = " + "))
+)
 cat("Model formula:", deparse(model_formula), "\n\n")
 
-# Fit logistic regression
-logit_fit <- glm(
-  model_formula,
-  data   = model_df,
-  family = binomial(link = "logit")
-)
+# Fit logistic regression on full dataset for coefficient inspection
+logit_fit <- glm(model_formula, data = model_df, family = binomial(link = "logit"))
 
 summary(logit_fit)
 ```
@@ -444,7 +507,7 @@ summary(logit_fit)
 or_table <- tidy(logit_fit, conf.int = TRUE, exponentiate = TRUE) %>%
   select(term, estimate, conf.low, conf.high, p.value) %>%
   rename(
-    `Odds Ratio`    = estimate,
+    `Odds Ratio`     = estimate,
     `CI Lower (95%)` = conf.low,
     `CI Upper (95%)` = conf.high,
     `p-value`        = p.value
@@ -456,34 +519,33 @@ kable(or_table, digits = 3, caption = "Logistic Regression — Odds Ratios")
 ## 5.2 Model Evaluation
 
 ```{r model-eval, fig.height=5}
-# Train/test split
+# Patient-level train/test split (one row per patient, so row = patient)
 set.seed(42)
 train_idx <- sample(seq_len(nrow(model_df)), size = floor(0.75 * nrow(model_df)))
 train_df  <- model_df[train_idx, ]
 test_df   <- model_df[-train_idx, ]
 
-# Refit on training data using the same dynamic formula
-logit_train <- glm(
-  model_formula,
-  data   = train_df,
-  family = binomial(link = "logit")
-)
+cat(sprintf("Train: %d patients, Test: %d patients\n",
+            nrow(train_df), nrow(test_df)))
+
+# Refit on training data
+logit_train <- glm(model_formula, data = train_df, family = binomial(link = "logit"))
 
 # Predict on test data
-test_df$pred_prob <- predict(logit_train, newdata = test_df, type = "response")
+test_df$pred_prob  <- predict(logit_train, newdata = test_df, type = "response")
 test_df$pred_class <- as.integer(test_df$pred_prob >= 0.5)
 
 # Confusion matrix
-cat("Confusion Matrix:\n")
-table(Predicted = test_df$pred_class, Actual = test_df$FATIGUE_IMPROVED) %>% print()
+cat("\nConfusion Matrix:\n")
+table(Predicted = test_df$pred_class, Actual = test_df$LOW_FATIGUE) %>% print()
 
 # Accuracy
-acc <- mean(test_df$pred_class == test_df$FATIGUE_IMPROVED)
+acc <- mean(test_df$pred_class == test_df$LOW_FATIGUE)
 cat(sprintf("\nAccuracy: %.1f%%\n", acc * 100))
 
 # ROC Curve
 roc_data <- tibble(
-  truth = test_df$FATIGUE_IMPROVED,
+  truth = test_df$LOW_FATIGUE,
   prob  = test_df$pred_prob
 ) %>%
   arrange(desc(prob)) %>%
@@ -492,8 +554,8 @@ roc_data <- tibble(
     fpr = cumsum(truth == 0) / sum(truth == 0)
   )
 
-auc_val <- sum(diff(roc_data$fpr) * (head(roc_data$tpr, -1) + tail(roc_data$tpr, -1)) / 2)
-auc_val <- abs(auc_val)
+auc_val <- abs(sum(diff(roc_data$fpr) *
+  (head(roc_data$tpr, -1) + tail(roc_data$tpr, -1)) / 2))
 
 ggplot(roc_data, aes(x = fpr, y = tpr)) +
   geom_line(colour = "#2c7fb8", linewidth = 0.8) +
@@ -501,7 +563,7 @@ ggplot(roc_data, aes(x = fpr, y = tpr)) +
   annotate("text", x = 0.6, y = 0.3,
            label = sprintf("AUC = %.3f", auc_val), size = 4.5) +
   labs(
-    title = "ROC Curve — Fatigue Improvement Prediction",
+    title = "ROC Curve — Low Fatigue Classification",
     x     = "False Positive Rate",
     y     = "True Positive Rate"
   ) +
@@ -512,19 +574,50 @@ ggplot(roc_data, aes(x = fpr, y = tpr)) +
 
 **How to read the output:**
 
-- **Coefficients (log-odds):** Each coefficient represents the change in log-odds of Fatigue improvement for a one-unit increase in that predictor, holding all others constant. Positive coefficients increase the probability of improvement; negative coefficients decrease it.
+- **Coefficients (log-odds):** Each coefficient represents the change in log-odds of having low Fatigue for a one-unit increase in that predictor, holding all others constant. Positive values increase the probability; negative values decrease it.
 
-- **Odds Ratios:** An odds ratio > 1 means the predictor increases the odds of improvement compared to the reference category; < 1 means it decreases the odds. For example, an odds ratio of 1.5 for a therapy would mean patients on that therapy have 50% higher odds of Fatigue improvement.
+- **Odds Ratios:** An OR > 1 means the predictor increases the odds of low Fatigue relative to the reference category; OR < 1 means it decreases the odds.
 
-- **p-values:** A p-value < 0.05 indicates a statistically significant association at the 5% level.
+- **p-values:** Values below 0.05 indicate statistical significance at the 5% level.
 
-- **Confidence Intervals:** The 95% CI around each odds ratio tells us the range within which the true odds ratio likely falls. If the interval crosses 1.0, the effect is not statistically significant.
+- **Confidence Intervals:** If the 95% CI for an odds ratio crosses 1.0, the association is not statistically significant.
 
-**Key findings:**
+```{r interpret-results, results='asis'}
+# Dynamically report findings based on actual model output
+n_sig <- sum(or_table$`p-value` < 0.05, na.rm = TRUE) - 1L  # exclude intercept
 
-Since the data is simulated by Synthea, we expect — and observe — that:
+cat("**Key findings from this model:**\n\n")
 
-- **No therapy is significantly better** than another at reducing Fatigue (odds ratios near 1.0 with confidence intervals crossing 1.0).
-- **Demographic variables** (age, race, ethnicity, gender) have minimal predictive power, as the simulation generates symptom scores independently of these factors.
-- The **AUC near 0.5** confirms the model performs no better than random chance, which is the expected behaviour when no true treatment effect exists in the underlying data-generating process.
-- This validates the integrity of our pipeline: the analysis correctly detects *no signal* where none was planted.
+if (n_sig == 0) {
+  cat("- No predictor reaches statistical significance at the 5% level.\n")
+  cat("- This means therapy type, demographics, and prescription volume are ",
+      "not meaningfully associated with Fatigue level in this cohort.\n")
+} else {
+  sig_terms <- or_table %>% filter(`p-value` < 0.05, term != "(Intercept)")
+  cat(sprintf("- %d predictor(s) reached significance at p < 0.05:\n", n_sig))
+  for (i in seq_len(nrow(sig_terms))) {
+    cat(sprintf("  - **%s**: OR = %.2f (95%% CI: %.2f–%.2f, p = %.3f)\n",
+                sig_terms$term[i], sig_terms$`Odds Ratio`[i],
+                sig_terms$`CI Lower (95%)`[i], sig_terms$`CI Upper (95%)`[i],
+                sig_terms$`p-value`[i]))
+  }
+}
+
+cat(sprintf("\n- **AUC = %.3f** — ", auc_val))
+if (auc_val < 0.55) {
+  cat("near 0.5, indicating the model has no meaningful discriminatory power.\n")
+} else if (auc_val < 0.7) {
+  cat("indicating weak discriminatory power.\n")
+} else {
+  cat("indicating moderate to good discriminatory power.\n")
+}
+
+cat(sprintf("- **Accuracy = %.1f%%** on the held-out test set.\n\n", acc * 100))
+
+cat("**Important caveats:**\n\n")
+cat("- This is a **cross-sectional** analysis, not longitudinal. ",
+    "The outcome (low vs. high Fatigue) does not represent change over time.\n")
+cat("- Patients were not randomly assigned to therapies, so confounding is possible.\n")
+cat("- The data is simulated by Synthea; any patterns (or lack thereof) reflect ",
+    "the simulation's data-generating process rather than real clinical relationships.\n")
+```
