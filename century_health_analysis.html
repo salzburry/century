@@ -1791,8 +1791,8 @@ always available in R, I included a pre-converted
 </div>
 <div id="two-lupus-cohorts" class="section level2">
 <h2>1.3 Two Lupus cohorts</h2>
-<p>There are two natural ways to define “Lupus patients” in this data,
-and they have different sizes:</p>
+<p>There are two ways to slice “Lupus patients” in this data, and they
+end up being different sizes:</p>
 <table>
 <colgroup>
 <col width="28%" />
@@ -2076,8 +2076,8 @@ need symptom scores for outcomes.</p>
 <p>The plan is straightforward:</p>
 <ul>
 <li>Classify each prescription into a therapy group</li>
-<li>Figure out each patient’s primary therapy (most prescriptions; ties
-broken alphabetically)</li>
+<li>Figure out each patient’s primary therapy (most prescriptions;
+alphabetical tiebreak)</li>
 <li>Add age groups and composite symptom scores</li>
 <li>Compare outcomes across therapy, ethnicity, and age group</li>
 </ul>
@@ -2111,7 +2111,7 @@ cat(&quot;Therapy counts across all Lupus prescriptions:\n&quot;)</code></pre>
 <pre class="r"><code># narrow to symptom-observed patients
 sym_meds &lt;- lupus_meds %&gt;% filter(PATIENT %in% symptom_patient_ids)
 
-# primary therapy: most prescribed, alphabetical tiebreak
+# primary therapy: whoever got the most prescriptions wins, alphabetical if tied
 patient_therapy &lt;- sym_meds %&gt;%
   count(PATIENT, THERAPY, name = &quot;n_rx&quot;) %&gt;%
   arrange(PATIENT, desc(n_rx), THERAPY) %&gt;%
@@ -2314,11 +2314,9 @@ treatment assignment.</p>
 medication. Unfortunately the symptom data is cross-sectional — each
 patient has one observation, not a before/after pair. There’s no way to
 measure change over time.</p>
-<p>As a fallback, I’m modelling a cross-sectional outcome: whether
-<strong>Fatigue is below the cohort median</strong> (i.e. relatively low
-severity). This is weaker than what the assignment requests, but it’s
-the best I can do without fabricating a temporal structure that isn’t in
-the data.</p>
+<p>So instead I’m modelling a cross-sectional outcome: whether
+<strong>Fatigue is below the cohort median</strong>. Not ideal, but it’s
+the most honest thing I can do with the data we actually have.</p>
 <p>Predictors: therapy type, age, gender, race, ethnicity, prescription
 count.</p>
 <p>75/25 random split for train/test. Since we have one row per patient
@@ -2333,7 +2331,7 @@ model_df &lt;- cohort_main %&gt;%
     THERAPY   = droplevels(factor(THERAPY)),
     GENDER    = droplevels(factor(GENDER)),
     RACE      = fct_lump_min(factor(RACE), min = 20, other_level = &quot;other&quot;),
-    RACE      = relevel(RACE, ref = &quot;white&quot;),
+    RACE      = if (&quot;white&quot; %in% levels(RACE)) relevel(RACE, ref = &quot;white&quot;) else RACE,
     ETHNICITY = droplevels(factor(ETHNICITY))
   )
 

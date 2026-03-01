@@ -95,7 +95,7 @@ All five tables link through patient and encounter UUIDs:
 
 ## 1.3 Two Lupus cohorts
 
-There are two natural ways to define "Lupus patients" in this data, and they have different sizes:
+There are two ways to slice "Lupus patients" in this data, and they end up being different sizes:
 
 | Cohort | Definition | Used in |
 |--------|-----------|---------|
@@ -268,7 +268,7 @@ This section uses the symptom-observed subset (`r comma(n_symptom)` patients) si
 The plan is straightforward:
 
 - Classify each prescription into a therapy group
-- Figure out each patient's primary therapy (most prescriptions; ties broken alphabetically)
+- Figure out each patient's primary therapy (most prescriptions; alphabetical tiebreak)
 - Add age groups and composite symptom scores
 - Compare outcomes across therapy, ethnicity, and age group
 
@@ -283,7 +283,7 @@ lupus_meds %>% count(THERAPY, sort = TRUE) %>% kable()
 # narrow to symptom-observed patients
 sym_meds <- lupus_meds %>% filter(PATIENT %in% symptom_patient_ids)
 
-# primary therapy: most prescribed, alphabetical tiebreak
+# primary therapy: whoever got the most prescriptions wins, alphabetical if tied
 patient_therapy <- sym_meds %>%
   count(PATIENT, THERAPY, name = "n_rx") %>%
   arrange(PATIENT, desc(n_rx), THERAPY) %>%
@@ -413,7 +413,7 @@ Looking at the results, there isn't much differentiation between therapies — t
 
 The assignment asks for a model of whether symptoms decrease after medication. Unfortunately the symptom data is cross-sectional — each patient has one observation, not a before/after pair. There's no way to measure change over time.
 
-As a fallback, I'm modelling a cross-sectional outcome: whether **Fatigue is below the cohort median** (i.e. relatively low severity). This is weaker than what the assignment requests, but it's the best I can do without fabricating a temporal structure that isn't in the data.
+So instead I'm modelling a cross-sectional outcome: whether **Fatigue is below the cohort median**. Not ideal, but it's the most honest thing I can do with the data we actually have.
 
 Predictors: therapy type, age, gender, race, ethnicity, prescription count.
 
@@ -430,7 +430,7 @@ model_df <- cohort_main %>%
     THERAPY   = droplevels(factor(THERAPY)),
     GENDER    = droplevels(factor(GENDER)),
     RACE      = fct_lump_min(factor(RACE), min = 20, other_level = "other"),
-    RACE      = relevel(RACE, ref = "white"),
+    RACE      = if ("white" %in% levels(RACE)) relevel(RACE, ref = "white") else RACE,
     ETHNICITY = droplevels(factor(ETHNICITY))
   )
 
