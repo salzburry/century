@@ -1,43 +1,51 @@
 # ============================================================================
 # helpers.R — Reusable helper functions for the Century Health Lupus analysis
+#
+# Required packages (must be attached before sourcing):
+#   tidyverse (dplyr, tidyr, stringr, readr, purrr, ggplot2, forcats, tibble)
+#   readxl, lubridate, testthat
 # ============================================================================
+
+# Guard: check that required packages are available
+.required_pkgs <- c("dplyr", "stringr", "readr", "readxl", "lubridate", "testthat")
+.missing_pkgs <- .required_pkgs[!vapply(.required_pkgs, requireNamespace,
+                                        logical(1), quietly = TRUE)]
+if (length(.missing_pkgs) > 0) {
+  stop("helpers.R requires the following packages: ",
+       paste(.missing_pkgs, collapse = ", "),
+       "\nInstall with: install.packages(c(",
+       paste(sprintf('"%s"', .missing_pkgs), collapse = ", "), "))")
+}
 
 # ── Data Loading ─────────────────────────────────────────────────────────────
 
 #' Load all datasets from the data/ directory
 #'
-#' Reads patients (CSV), encounters (Parquet via CSV conversion), symptoms (CSV),
-#' medications (CSV), and conditions (Excel).
+#' Reads patients (CSV), encounters (CSV — pre-converted from Parquet),
+#' symptoms (CSV), medications (CSV), and conditions (Excel).
 #'
-#' If encounters.csv does not exist, it is created automatically from the
-#' Parquet source so that the pipeline is self-contained without the arrow
-#' package.
+#' encounters.csv must be present in data_dir. It is a pre-converted copy of
+#' encounters.parquet and is included in the submission because the R `arrow`
+#' package is not always available. To regenerate it:
+#'
+#'   python3 -c "import pandas; pandas.read_parquet('data/encounters.parquet') \
+#'     .to_csv('data/encounters.csv', index=False)"
 #'
 #' @param data_dir Path to the data directory (default "data")
 #' @return Named list of raw data frames
 load_all_datasets <- function(data_dir = "data") {
-  # Convert Parquet → CSV on the fly if needed (requires Python + pyarrow)
   enc_csv <- file.path(data_dir, "encounters.csv")
-  enc_pq  <- file.path(data_dir, "encounters.parquet")
-
-  if (!file.exists(enc_csv) && file.exists(enc_pq)) {
-    message("encounters.csv not found — converting from Parquet via Python...")
-    cmd <- sprintf(
-      "python3 -c \"import pandas; pandas.read_parquet('%s').to_csv('%s', index=False)\"",
-      enc_pq, enc_csv
-    )
-    status <- system(cmd)
-    if (status != 0) stop("Failed to convert encounters.parquet to CSV. ",
-                          "Ensure Python 3 with pandas and pyarrow is installed.")
-    message("  -> encounters.csv created.")
+  if (!file.exists(enc_csv)) {
+    stop("encounters.csv not found in ", data_dir,
+         ". See helpers.R documentation for how to generate it from the Parquet source.")
   }
 
   list(
-    patients    = read_csv(file.path(data_dir, "patients.csv"),   show_col_types = FALSE),
-    encounters  = read_csv(enc_csv,                                show_col_types = FALSE),
-    symptoms    = read_csv(file.path(data_dir, "symptoms.csv"),   show_col_types = FALSE),
-    medications = read_csv(file.path(data_dir, "medications.csv"), show_col_types = FALSE),
-    conditions  = read_excel(file.path(data_dir, "conditions.xlsx"))
+    patients    = readr::read_csv(file.path(data_dir, "patients.csv"),   show_col_types = FALSE),
+    encounters  = readr::read_csv(enc_csv,                                show_col_types = FALSE),
+    symptoms    = readr::read_csv(file.path(data_dir, "symptoms.csv"),   show_col_types = FALSE),
+    medications = readr::read_csv(file.path(data_dir, "medications.csv"), show_col_types = FALSE),
+    conditions  = readxl::read_excel(file.path(data_dir, "conditions.xlsx"))
   )
 }
 
@@ -48,11 +56,11 @@ load_all_datasets <- function(data_dir = "data") {
 #' @param datasets Named list of data frames from load_all_datasets()
 #' @return The same list with UUID columns lowercased
 normalise_ids <- function(datasets) {
-  datasets$patients    <- datasets$patients    %>% mutate(PATIENT_ID = tolower(PATIENT_ID))
-  datasets$encounters  <- datasets$encounters  %>% mutate(Id = tolower(Id), PATIENT = tolower(PATIENT))
-  datasets$symptoms    <- datasets$symptoms    %>% mutate(PATIENT = tolower(PATIENT))
-  datasets$medications <- datasets$medications %>% mutate(PATIENT = tolower(PATIENT), ENCOUNTER = tolower(ENCOUNTER))
-  datasets$conditions  <- datasets$conditions  %>% mutate(PATIENT = tolower(PATIENT), ENCOUNTER = tolower(ENCOUNTER))
+  datasets$patients    <- dplyr::mutate(datasets$patients,    PATIENT_ID = tolower(PATIENT_ID))
+  datasets$encounters  <- dplyr::mutate(datasets$encounters,  Id = tolower(Id), PATIENT = tolower(PATIENT))
+  datasets$symptoms    <- dplyr::mutate(datasets$symptoms,    PATIENT = tolower(PATIENT))
+  datasets$medications <- dplyr::mutate(datasets$medications, PATIENT = tolower(PATIENT), ENCOUNTER = tolower(ENCOUNTER))
+  datasets$conditions  <- dplyr::mutate(datasets$conditions,  PATIENT = tolower(PATIENT), ENCOUNTER = tolower(ENCOUNTER))
   datasets
 }
 
@@ -66,8 +74,8 @@ normalise_ids <- function(datasets) {
 #' @param medications_df Medications data frame
 #' @return Data frame with DESCRIPTION cleaned
 standardise_medication_names <- function(medications_df) {
-  medications_df %>%
-    mutate(DESCRIPTION = str_to_upper(str_trim(DESCRIPTION)))
+  dplyr::mutate(medications_df,
+                DESCRIPTION = stringr::str_to_upper(stringr::str_trim(DESCRIPTION)))
 }
 
 # ── Date Parsing ─────────────────────────────────────────────────────────────
@@ -77,29 +85,25 @@ standardise_medication_names <- function(medications_df) {
 #' @param datasets Named list of data frames
 #' @return Same list with date columns converted
 parse_dates <- function(datasets) {
-  datasets$patients <- datasets$patients %>%
-    mutate(
-      BIRTHDATE = as.Date(BIRTHDATE),
-      DEATHDATE = as.Date(DEATHDATE)
-    )
+  datasets$patients <- dplyr::mutate(datasets$patients,
+    BIRTHDATE = as.Date(BIRTHDATE),
+    DEATHDATE = as.Date(DEATHDATE)
+  )
 
-  datasets$encounters <- datasets$encounters %>%
-    mutate(
-      START = lubridate::ymd_hms(START),
-      STOP  = lubridate::ymd_hms(STOP)
-    )
+  datasets$encounters <- dplyr::mutate(datasets$encounters,
+    START = lubridate::ymd_hms(START),
+    STOP  = lubridate::ymd_hms(STOP)
+  )
 
-  datasets$medications <- datasets$medications %>%
-    mutate(
-      START = lubridate::ymd_hms(START),
-      STOP  = lubridate::ymd_hms(STOP)
-    )
+  datasets$medications <- dplyr::mutate(datasets$medications,
+    START = lubridate::ymd_hms(START),
+    STOP  = lubridate::ymd_hms(STOP)
+  )
 
-  datasets$conditions <- datasets$conditions %>%
-    mutate(
-      START = as.Date(START),
-      STOP  = as.Date(STOP)
-    )
+  datasets$conditions <- dplyr::mutate(datasets$conditions,
+    START = as.Date(START),
+    STOP  = as.Date(STOP)
+  )
 
   datasets
 }
@@ -114,13 +118,12 @@ parse_dates <- function(datasets) {
 #' @param symptoms_df Symptoms data frame
 #' @return Data frame with parsed symptom columns added
 parse_symptom_scores <- function(symptoms_df) {
-  symptoms_df %>%
-    mutate(
-      Rash       = as.integer(str_extract(SYMPTOMS, "(?<=Rash:)\\d+")),
-      Joint_Pain = as.integer(str_extract(SYMPTOMS, "(?<=Joint Pain:)\\d+")),
-      Fatigue    = as.integer(str_extract(SYMPTOMS, "(?<=Fatigue:)\\d+")),
-      Fever      = as.integer(str_extract(SYMPTOMS, "(?<=Fever:)\\d+"))
-    )
+  dplyr::mutate(symptoms_df,
+    Rash       = as.integer(stringr::str_extract(SYMPTOMS, "(?<=Rash:)\\d+")),
+    Joint_Pain = as.integer(stringr::str_extract(SYMPTOMS, "(?<=Joint Pain:)\\d+")),
+    Fatigue    = as.integer(stringr::str_extract(SYMPTOMS, "(?<=Fatigue:)\\d+")),
+    Fever      = as.integer(stringr::str_extract(SYMPTOMS, "(?<=Fever:)\\d+"))
+  )
 }
 
 # ── Lupus-Only Symptom Filtering ─────────────────────────────────────────────
@@ -135,8 +138,8 @@ parse_symptom_scores <- function(symptoms_df) {
 #' @return Deduplicated data frame: one Lupus row per patient
 filter_lupus_symptoms <- function(symptoms_df) {
   symptoms_df %>%
-    filter(str_to_upper(PATHOLOGY) == "LUPUS ERYTHEMATOSUS") %>%
-    distinct(PATIENT, .keep_all = TRUE)
+    dplyr::filter(stringr::str_to_upper(PATHOLOGY) == "LUPUS ERYTHEMATOSUS") %>%
+    dplyr::distinct(PATIENT, .keep_all = TRUE)
 }
 
 # ── Gender Backfill ──────────────────────────────────────────────────────────
@@ -147,32 +150,32 @@ filter_lupus_symptoms <- function(symptoms_df) {
 #' @param patients_df Patients data frame
 #' @return Symptoms data frame with GENDER filled
 fill_symptom_gender <- function(symptoms_df, patients_df) {
-  gender_lookup <- patients_df %>% select(PATIENT_ID, PAT_GENDER = GENDER)
+  gender_lookup <- dplyr::select(patients_df, PATIENT_ID, PAT_GENDER = GENDER)
 
   symptoms_df %>%
-    mutate(GENDER = as.character(GENDER)) %>%
-    left_join(gender_lookup, by = c("PATIENT" = "PATIENT_ID")) %>%
-    mutate(GENDER = coalesce(GENDER, PAT_GENDER)) %>%
-    select(-PAT_GENDER)
+    dplyr::mutate(GENDER = as.character(GENDER)) %>%
+    dplyr::left_join(gender_lookup, by = c("PATIENT" = "PATIENT_ID")) %>%
+    dplyr::mutate(GENDER = dplyr::coalesce(GENDER, PAT_GENDER)) %>%
+    dplyr::select(-PAT_GENDER)
 }
 
 # ── Medication Therapy Classification ────────────────────────────────────────
 
 #' Classify medications into therapeutic groups
 #'
-#' Uses exact drug-name tokens to avoid false matches (e.g. "VITAMIN" would
-#' match too broadly, so we match the full "VITAMIN B12" substring).
+#' Uses exact drug-name tokens to avoid false matches (e.g. "VITAMIN" alone
+#' would be too broad, so we match the full "VITAMIN B12" substring).
 #'
 #' @param description Character vector of (uppercase) medication descriptions
 #' @return Character vector of therapy labels
 classify_therapy <- function(description) {
-  case_when(
-    str_detect(description, "NAPROXEN")          ~ "Naproxen (NSAID)",
-    str_detect(description, "PREDNISONE")        ~ "Prednisone (Corticosteroid)",
-    str_detect(description, "CYCLOSPORINE")      ~ "Cyclosporine (Immunosuppressant)",
-    str_detect(description, "HYDROXYCHLOROQUINE") ~ "Hydroxychloroquine",
-    str_detect(description, "VITAMIN B12")       ~ "Vitamin B12",
-    TRUE                                         ~ "Other"
+  dplyr::case_when(
+    stringr::str_detect(description, "NAPROXEN")          ~ "Naproxen (NSAID)",
+    stringr::str_detect(description, "PREDNISONE")        ~ "Prednisone (Corticosteroid)",
+    stringr::str_detect(description, "CYCLOSPORINE")      ~ "Cyclosporine (Immunosuppressant)",
+    stringr::str_detect(description, "HYDROXYCHLOROQUINE") ~ "Hydroxychloroquine",
+    stringr::str_detect(description, "VITAMIN B12")       ~ "Vitamin B12",
+    TRUE                                                  ~ "Other"
   )
 }
 
@@ -198,11 +201,12 @@ assign_age_group <- function(age) {
 #' @param df Data frame with Rash, Joint_Pain, Fatigue, Fever columns
 #' @return Data frame with COMPOSITE_SCORE column added
 add_composite_score <- function(df) {
-  df %>%
-    mutate(COMPOSITE_SCORE = rowMeans(
-      across(c(Rash, Joint_Pain, Fatigue, Fever)),
+  dplyr::mutate(df,
+    COMPOSITE_SCORE = rowMeans(
+      dplyr::across(c(Rash, Joint_Pain, Fatigue, Fever)),
       na.rm = TRUE
-    ))
+    )
+  )
 }
 
 # ── Data Integrity Tests ────────────────────────────────────────────────────
@@ -211,60 +215,62 @@ add_composite_score <- function(df) {
 #'
 #' @param datasets Named list of cleaned data frames
 run_integrity_tests <- function(datasets) {
-  patient_ids  <- unique(datasets$patients$PATIENT_ID)
+  patient_ids   <- unique(datasets$patients$PATIENT_ID)
   encounter_ids <- unique(datasets$encounters$Id)
 
   # ── Referential integrity: patient FKs ──
-  test_that("All medication patients exist in patients table", {
-    expect_true(all(datasets$medications$PATIENT %in% patient_ids))
+  testthat::test_that("All medication patients exist in patients table", {
+    testthat::expect_true(all(datasets$medications$PATIENT %in% patient_ids))
   })
 
-  test_that("All encounter patients exist in patients table", {
-    expect_true(all(datasets$encounters$PATIENT %in% patient_ids))
+  testthat::test_that("All encounter patients exist in patients table", {
+    testthat::expect_true(all(datasets$encounters$PATIENT %in% patient_ids))
   })
 
-  test_that("All condition patients exist in patients table", {
-    expect_true(all(datasets$conditions$PATIENT %in% patient_ids))
+  testthat::test_that("All condition patients exist in patients table", {
+    testthat::expect_true(all(datasets$conditions$PATIENT %in% patient_ids))
   })
 
-  test_that("All symptom patients exist in patients table", {
-    expect_true(all(datasets$symptoms$PATIENT %in% patient_ids))
+  testthat::test_that("All symptom patients exist in patients table", {
+    testthat::expect_true(all(datasets$symptoms$PATIENT %in% patient_ids))
   })
 
   # ── Referential integrity: encounter FKs ──
-  test_that("All medication encounters exist in encounters table", {
-    expect_true(all(datasets$medications$ENCOUNTER %in% encounter_ids))
+  testthat::test_that("All medication encounters exist in encounters table", {
+    testthat::expect_true(all(datasets$medications$ENCOUNTER %in% encounter_ids))
   })
 
-  test_that("All condition encounters exist in encounters table", {
-    expect_true(all(datasets$conditions$ENCOUNTER %in% encounter_ids))
+  testthat::test_that("All condition encounters exist in encounters table", {
+    testthat::expect_true(all(datasets$conditions$ENCOUNTER %in% encounter_ids))
   })
 
   # ── Uniqueness ──
-  test_that("Patient IDs are unique", {
-    expect_equal(nrow(datasets$patients), n_distinct(datasets$patients$PATIENT_ID))
+  testthat::test_that("Patient IDs are unique", {
+    testthat::expect_equal(nrow(datasets$patients),
+                           dplyr::n_distinct(datasets$patients$PATIENT_ID))
   })
 
-  test_that("Encounter IDs are unique", {
-    expect_equal(nrow(datasets$encounters), n_distinct(datasets$encounters$Id))
+  testthat::test_that("Encounter IDs are unique", {
+    testthat::expect_equal(nrow(datasets$encounters),
+                           dplyr::n_distinct(datasets$encounters$Id))
   })
 
-  # ── Medication normalisation ──
-  test_that("Medication descriptions have no mixed-case duplicates", {
-    n_raw   <- n_distinct(datasets$medications$DESCRIPTION)
-    n_upper <- n_distinct(toupper(datasets$medications$DESCRIPTION))
-    expect_equal(n_raw, n_upper)
+  # ── Medication descriptions are fully uppercase ──
+  testthat::test_that("All medication descriptions are uppercase", {
+    descs <- datasets$medications$DESCRIPTION
+    testthat::expect_true(all(descs == toupper(descs)))
   })
 
   # ── Symptom columns ──
-  test_that("Symptom numeric columns are non-negative", {
+  testthat::test_that("Symptom numeric columns are non-negative", {
     for (col in c("Rash", "Joint_Pain", "Fatigue", "Fever")) {
-      expect_true(all(datasets$symptoms[[col]] >= 0, na.rm = TRUE))
+      testthat::expect_true(all(datasets$symptoms[[col]] >= 0, na.rm = TRUE))
     }
   })
 
   # ── Lupus deduplication ──
-  test_that("Symptoms table has one row per patient", {
-    expect_equal(nrow(datasets$symptoms), n_distinct(datasets$symptoms$PATIENT))
+  testthat::test_that("Symptoms table has one row per patient", {
+    testthat::expect_equal(nrow(datasets$symptoms),
+                           dplyr::n_distinct(datasets$symptoms$PATIENT))
   })
 }
