@@ -1,27 +1,19 @@
 #!/usr/bin/env python3
-"""Validate a Century Health clinical coding dictionary.
+"""Validate the mtc_aat_cohort clinical coding dictionary.
 
-Single-file, step-by-step validator. Each step runs in order and prints what
-it is doing so a failure is easy to locate. Steps are:
+Single-file step-by-step validator:
 
-    1. Load the source file (XLSX workbook or CSV/TSV flat file).
-    2. Check required sheets exist (XLSX only).
+    1. Load the source file (xlsx workbook or csv/tsv flat file).
+    2. Check required sheets exist (workbook only).
     3. Locate the Variables sheet and canonicalise its column headers.
     4. Check required columns are present and in the expected order.
     5. Walk every row and validate values.
     6. Summarise and exit.
 
-The baseline profile is ``DEFAULT_PROFILE`` below, tuned to the
-``CH_MTC_Alzheimers_DataDictionary`` reference sheet. Other cohorts override
-it with ``--profile path/to/<cohort>.json``.
-
-Usage
------
-::
+Usage::
 
     python validate_dictionary.py --input dictionaries/mtc_aat_cohort.xlsx
-    python validate_dictionary.py --input dd.csv --profile profiles/nimbus_copd.json
-    python validate_dictionary.py --input dd.xlsx --report-json report.json
+    python validate_dictionary.py --input dd.csv --report-json report.json
 """
 
 from __future__ import annotations
@@ -38,118 +30,96 @@ import pandas as pd
 
 
 # --------------------------------------------------------------------------- #
-# Default profile
+# mtc_aat_cohort rules (inlined — this validator is single-cohort by design)
 # --------------------------------------------------------------------------- #
 
-DEFAULT_PROFILE: dict[str, Any] = {
-    "profile_name": "mtc_aat_cohort",
-    "description": (
-        "Baseline validation rules for Century clinical coding dictionaries. "
-        "Tuned to the CH_MTC_Alzheimers_DataDictionary reference sheet, "
-        "applied first to the mtc_aat_cohort workflow."
-    ),
-    "required_sheets": {
-        "summary": ["Summary"],
-        "tables": ["Tables"],
-        "variables": ["Variables", "Variable", "Data Dictionary", "Dictionary"],
-    },
-    "variables_sheet": {
-        "required_columns": [
-            "category",
-            "variable",
-            "description",
-            "schema",
-            "source_columns",
-            "criteria",
-            "values",
-            "distribution",
-            "completeness",
-            "extraction_type",
-        ],
-        "required_non_empty_columns": [
-            "category",
-            "variable",
-            "description",
-            "schema",
-            "source_columns",
-            "completeness",
-            "extraction_type",
-        ],
-        "column_order": [
-            "category",
-            "variable",
-            "description",
-            "schema",
-            "source_columns",
-            "criteria",
-            "values",
-            "distribution",
-            "completeness",
-            "extraction_type",
-            "notes",
-        ],
-        "column_aliases": {
-            "category": ["category", "cohort category", "domain"],
-            "variable": ["variable", "variable name", "field", "field name"],
-            "description": ["description", "variable description", "definition"],
-            "schema": ["schema", "table", "source table", "table/schema", "table(s)"],
-            "source_columns": [
-                "column(s)",
-                "columns",
-                "column",
-                "source columns",
-                "source column",
-            ],
-            "criteria": [
-                "criteria",
-                "logic",
-                "filter criteria",
-                "configuration criteria",
-            ],
-            "values": ["values", "value examples", "valid values"],
-            "distribution": ["distribution", "value distribution"],
-            "completeness": [
-                "completeness",
-                "completion",
-                "% completeness",
-                "percent completeness",
-            ],
-            "extraction_type": [
-                "extraction type",
-                "extract type",
-                "capture type",
-                "mapping type",
-            ],
-            "notes": ["notes", "comments"],
-        },
-        "allowed_extraction_types": [
-            "Structured",
-            "Abstracted",
-            "Unstructured",
-            "Derived",
-            "Calculated",
-            "Manual",
-        ],
-        "recommended_schema_values": [
-            "person",
-            "observation",
-            "measurement",
-            "condition_occurrence",
-            "drug_exposure",
-            "procedure_occurrence",
-            "visit_occurrence",
-            "location",
-            "payer_plan_period",
-            "death",
-            "device_exposure",
-            "note",
-            "document",
-            "specimen",
-        ],
-        # Display labels ("Heart rate", "AAT level", "pTau-217") — not SQL ids.
-        "variable_name_pattern": r"^[A-Za-z][A-Za-z0-9 _/().\-]*$",
-    },
+COHORT_NAME = "mtc_aat_cohort"
+
+REQUIRED_SHEETS: dict[str, list[str]] = {
+    "summary": ["Summary"],
+    "tables": ["Tables"],
+    "variables": ["Variables", "Variable", "Data Dictionary", "Dictionary"],
 }
+
+REQUIRED_COLUMNS: list[str] = [
+    "category",
+    "variable",
+    "description",
+    "schema",
+    "source_columns",
+    "criteria",
+    "values",
+    "distribution",
+    "completeness",
+    "extraction_type",
+]
+
+REQUIRED_NON_EMPTY_COLUMNS: list[str] = [
+    "category",
+    "variable",
+    "description",
+    "schema",
+    "source_columns",
+    "completeness",
+    "extraction_type",
+]
+
+COLUMN_ORDER: list[str] = [
+    "category",
+    "variable",
+    "description",
+    "schema",
+    "source_columns",
+    "criteria",
+    "values",
+    "distribution",
+    "completeness",
+    "extraction_type",
+    "notes",
+]
+
+COLUMN_ALIASES: dict[str, list[str]] = {
+    "category": ["category", "cohort category", "domain"],
+    "variable": ["variable", "variable name", "field", "field name"],
+    "description": ["description", "variable description", "definition"],
+    "schema": ["schema", "table", "source table", "table/schema", "table(s)"],
+    "source_columns": ["column(s)", "columns", "column", "source columns", "source column"],
+    "criteria": ["criteria", "logic", "filter criteria", "configuration criteria"],
+    "values": ["values", "value examples", "valid values"],
+    "distribution": ["distribution", "value distribution"],
+    "completeness": ["completeness", "completion", "% completeness", "percent completeness"],
+    "extraction_type": ["extraction type", "extract type", "capture type", "mapping type"],
+    "notes": ["notes", "comments"],
+}
+
+ALLOWED_EXTRACTION_TYPES: set[str] = {
+    "Structured",
+    "Abstracted",
+    "Unstructured",
+    "Derived",
+    "Calculated",
+    "Manual",
+}
+
+RECOMMENDED_SCHEMA_VALUES: set[str] = {
+    "person",
+    "observation",
+    "measurement",
+    "condition_occurrence",
+    "drug_exposure",
+    "procedure_occurrence",
+    "visit_occurrence",
+    "location",
+    "payer_plan_period",
+    "death",
+    "device_exposure",
+    "note",
+    "document",
+    "specimen",
+}
+
+# Display labels ("Heart rate", "AAT level", "pTau-217") — not SQL ids.
+VARIABLE_NAME_PATTERN: str = r"^[A-Za-z][A-Za-z0-9 _/().\-]*$"
 
 SOURCE_COLUMN_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?$")
 
@@ -174,7 +144,6 @@ class Issue:
 
 @dataclass
 class ValidationResult:
-    profile_name: str
     source_path: str
     source_kind: str
     status: str
@@ -185,7 +154,7 @@ class ValidationResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "profile_name": self.profile_name,
+            "cohort": COHORT_NAME,
             "source_path": self.source_path,
             "source_kind": self.source_kind,
             "status": self.status,
@@ -287,7 +256,7 @@ def step_load_source(path: Path) -> tuple[dict[str, pd.DataFrame], str]:
 
 
 def step_check_required_sheets(
-    frames: dict[str, pd.DataFrame], profile: dict[str, Any], source_kind: str
+    frames: dict[str, pd.DataFrame], source_kind: str
 ) -> tuple[dict[str, str], list[Issue]]:
     """Return ``({canonical_name: actual_name}, issues)``.
 
@@ -296,23 +265,21 @@ def step_check_required_sheets(
     """
     issues: list[Issue] = []
     resolved: dict[str, str] = {}
-    required = profile.get("required_sheets", {})
 
     if source_kind != "workbook":
-        if required:
-            issues.append(
-                Issue(
-                    severity="info",
-                    code="sheet_validation_skipped",
-                    message=(
-                        "Workbook-level tab validation was skipped because the "
-                        "source is a flat file."
-                    ),
-                )
+        issues.append(
+            Issue(
+                severity="info",
+                code="sheet_validation_skipped",
+                message=(
+                    "Workbook-level tab validation was skipped because the "
+                    "source is a flat file."
+                ),
             )
+        )
         return resolved, issues
 
-    for canonical, aliases in required.items():
+    for canonical, aliases in REQUIRED_SHEETS.items():
         actual = resolve_sheet_name(frames, aliases)
         if actual is None:
             issues.append(
@@ -346,15 +313,14 @@ def step_check_required_sheets(
 
 
 def step_canonicalize_headers(
-    frame: pd.DataFrame, profile: dict[str, Any], sheet_name: str
+    frame: pd.DataFrame, sheet_name: str
 ) -> tuple[pd.DataFrame, list[Issue], set[str]]:
-    """Rename headers that match the profile's aliases to their canonical form.
+    """Rename headers that match an alias to their canonical form.
 
     Returns the renamed frame, any issues raised (e.g. duplicated aliases),
     and the set of original header names that were matched.
     """
     issues: list[Issue] = []
-    column_aliases = profile["variables_sheet"]["column_aliases"]
 
     normalized: dict[str, list[str]] = {}
     for column in frame.columns:
@@ -376,7 +342,7 @@ def step_canonicalize_headers(
 
     rename_map: dict[str, str] = {}
     matched: set[str] = set()
-    for canonical, aliases in column_aliases.items():
+    for canonical, aliases in COLUMN_ALIASES.items():
         for alias in aliases:
             actuals = normalized.get(normalize_token(alias), [])
             if actuals:
@@ -394,19 +360,16 @@ def step_canonicalize_headers(
 
 def step_check_required_columns(
     frame: pd.DataFrame,
-    profile: dict[str, Any],
     sheet_name: str,
     matched_originals: set[str],
     original_columns: list[str],
 ) -> tuple[list[Issue], list[str]]:
     """Return ``(issues, missing_columns)``."""
     issues: list[Issue] = []
-    rules = profile["variables_sheet"]
-    required = rules.get("required_columns", [])
-    missing = [c for c in required if c not in frame.columns]
+    missing = [c for c in REQUIRED_COLUMNS if c not in frame.columns]
 
     for col in missing:
-        aliases = rules["column_aliases"].get(col, [col])
+        aliases = COLUMN_ALIASES.get(col, [col])
         issues.append(
             Issue(
                 severity="error",
@@ -435,9 +398,8 @@ def step_check_required_columns(
         )
 
     if not missing:
-        expected_order = rules.get("column_order", required)
-        present_expected = [c for c in expected_order if c in frame.columns]
-        actual_subset = [c for c in frame.columns if c in expected_order]
+        present_expected = [c for c in COLUMN_ORDER if c in frame.columns]
+        actual_subset = [c for c in frame.columns if c in COLUMN_ORDER]
         if actual_subset != present_expected:
             issues.append(
                 Issue(
@@ -446,7 +408,7 @@ def step_check_required_columns(
                     message=(
                         "Columns do not follow the expected order. "
                         "Expected order starts with: "
-                        + ", ".join(expected_order)
+                        + ", ".join(COLUMN_ORDER)
                     ),
                     sheet=sheet_name,
                 )
@@ -460,19 +422,10 @@ def step_check_required_columns(
 # --------------------------------------------------------------------------- #
 
 
-def step_check_rows(
-    frame: pd.DataFrame, profile: dict[str, Any], sheet_name: str
-) -> list[Issue]:
+def step_check_rows(frame: pd.DataFrame, sheet_name: str) -> list[Issue]:
     issues: list[Issue] = []
-    rules = profile["variables_sheet"]
-    required_non_empty = rules.get("required_non_empty_columns", rules["required_columns"])
-    allowed_extraction = {
-        normalize_token(v) for v in rules.get("allowed_extraction_types", [])
-    }
-    recommended_schemas = {
-        normalize_token(v) for v in rules.get("recommended_schema_values", [])
-    }
-    variable_pattern = rules.get("variable_name_pattern", r"^[A-Za-z][A-Za-z0-9_ ]*$")
+    allowed_extraction = {normalize_token(v) for v in ALLOWED_EXTRACTION_TYPES}
+    recommended_schemas = {normalize_token(v) for v in RECOMMENDED_SCHEMA_VALUES}
 
     seen_variables: dict[str, int] = {}
     for row_index, row in frame.iterrows():
@@ -483,7 +436,7 @@ def step_check_rows(
             continue
 
         # Required non-empty fields
-        for col in required_non_empty:
+        for col in REQUIRED_NON_EMPTY_COLUMNS:
             if is_blank(row.get(col, "")):
                 issues.append(
                     Issue(
@@ -498,14 +451,14 @@ def step_check_rows(
 
         variable = display_value(row.get("variable", ""))
         if variable:
-            if not re.fullmatch(variable_pattern, variable):
+            if not re.fullmatch(VARIABLE_NAME_PATTERN, variable):
                 issues.append(
                     Issue(
                         severity="error",
                         code="invalid_variable_name",
                         message=(
                             f"Variable name '{variable}' does not match the "
-                            f"profile pattern {variable_pattern!r}."
+                            f"expected pattern {VARIABLE_NAME_PATTERN!r}."
                         ),
                         sheet=sheet_name,
                         row=excel_row,
@@ -560,14 +513,14 @@ def step_check_rows(
         # Extraction type
         extraction = display_value(row.get("extraction_type", ""))
         extraction_norm = normalize_token(extraction)
-        if extraction_norm and allowed_extraction and extraction_norm not in allowed_extraction:
+        if extraction_norm and extraction_norm not in allowed_extraction:
             issues.append(
                 Issue(
                     severity="warning",
                     code="unknown_extraction_type",
                     message=(
                         f"Extraction type '{extraction}' is not in the "
-                        "configured allow list."
+                        f"allow list {sorted(ALLOWED_EXTRACTION_TYPES)}."
                     ),
                     sheet=sheet_name,
                     row=excel_row,
@@ -590,14 +543,14 @@ def step_check_rows(
             )
         else:
             for schema in schemas:
-                if recommended_schemas and normalize_token(schema) not in recommended_schemas:
+                if normalize_token(schema) not in recommended_schemas:
                     issues.append(
                         Issue(
                             severity="warning",
                             code="unexpected_schema_value",
                             message=(
                                 f"Schema/table '{schema}' is not in the "
-                                "current recommended list."
+                                "recommended list."
                             ),
                             sheet=sheet_name,
                             row=excel_row,
@@ -641,21 +594,6 @@ def step_check_rows(
 
 
 # --------------------------------------------------------------------------- #
-# Profile loading
-# --------------------------------------------------------------------------- #
-
-
-def load_profile(profile_arg: str | None) -> dict[str, Any]:
-    """``None`` / missing → default; otherwise load from the given JSON path."""
-    if not profile_arg:
-        return DEFAULT_PROFILE
-    path = Path(profile_arg)
-    if not path.exists():
-        raise FileNotFoundError(f"Profile file not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-# --------------------------------------------------------------------------- #
 # Orchestrator + reporting
 # --------------------------------------------------------------------------- #
 
@@ -689,19 +627,12 @@ def _print_issues(issues: list[Issue], indent: str = "  ") -> None:
         print(f"{indent}[{i.severity.upper()}] {i.code}{loc_str}: {i.message}")
 
 
-def validate_source(
-    source_path: str | Path,
-    profile: dict[str, Any] | None = None,
-    verbose: bool = True,
-) -> ValidationResult:
+def validate_source(source_path: str | Path, verbose: bool = True) -> ValidationResult:
     """Run every step in order and return a :class:`ValidationResult`.
 
     When ``verbose`` is true (the default, as called from the CLI) the step
     banners and per-step issues are printed as the run progresses.
     """
-    if profile is None:
-        profile = DEFAULT_PROFILE
-
     source = Path(source_path)
     all_issues: list[Issue] = []
 
@@ -718,15 +649,15 @@ def validate_source(
     # --- Step 2: required sheets ---
     if verbose:
         _print_step(2, "Check required sheets")
-    resolved, step2_issues = step_check_required_sheets(frames, profile, source_kind)
+    resolved, step2_issues = step_check_required_sheets(frames, source_kind)
     all_issues.extend(step2_issues)
     if verbose:
         _print_issues(step2_issues)
         print()
 
-    # Locate the variables sheet even if step 2 didn't find it via required_sheets.
-    variables_aliases = profile["required_sheets"].get("variables", ["Variables"])
-    variables_sheet = resolved.get("variables") or resolve_sheet_name(frames, variables_aliases)
+    variables_sheet = resolved.get("variables") or resolve_sheet_name(
+        frames, REQUIRED_SHEETS["variables"]
+    )
 
     if variables_sheet is None:
         all_issues.append(
@@ -735,11 +666,11 @@ def validate_source(
                 code="missing_variables_sheet",
                 message=(
                     "Could not locate the variables / data dictionary sheet. "
-                    f"Accepted names: {', '.join(variables_aliases)}"
+                    f"Accepted names: {', '.join(REQUIRED_SHEETS['variables'])}"
                 ),
             )
         )
-        return _build_result(source, source_kind, profile, all_issues, verbose)
+        return _build_result(source, source_kind, all_issues, verbose)
 
     raw_frame = frames[variables_sheet]
     original_columns = list(raw_frame.columns)
@@ -748,7 +679,7 @@ def validate_source(
     if verbose:
         _print_step(3, f"Canonicalise headers on '{variables_sheet}'")
     canonical_frame, step3_issues, matched_originals = step_canonicalize_headers(
-        raw_frame, profile, variables_sheet
+        raw_frame, variables_sheet
     )
     all_issues.extend(step3_issues)
     if verbose:
@@ -760,7 +691,7 @@ def validate_source(
     if verbose:
         _print_step(4, "Check required columns and column order")
     step4_issues, missing = step_check_required_columns(
-        canonical_frame, profile, variables_sheet, matched_originals, original_columns
+        canonical_frame, variables_sheet, matched_originals, original_columns
     )
     all_issues.extend(step4_issues)
     if verbose:
@@ -770,31 +701,29 @@ def validate_source(
     if missing:
         if verbose:
             print("  skipping row-level checks until required columns are fixed.\n")
-        return _build_result(source, source_kind, profile, all_issues, verbose)
+        return _build_result(source, source_kind, all_issues, verbose)
 
     # --- Step 5: per-row checks ---
     if verbose:
         _print_step(5, f"Walk rows of '{variables_sheet}'")
-    step5_issues = step_check_rows(canonical_frame, profile, variables_sheet)
+    step5_issues = step_check_rows(canonical_frame, variables_sheet)
     all_issues.extend(step5_issues)
     if verbose:
         _print_issues(step5_issues)
         print()
 
-    return _build_result(source, source_kind, profile, all_issues, verbose)
+    return _build_result(source, source_kind, all_issues, verbose)
 
 
 def _build_result(
     source: Path,
     source_kind: str,
-    profile: dict[str, Any],
     issues: list[Issue],
     verbose: bool,
 ) -> ValidationResult:
     e, w, n = _summarise(issues)
     status = "passed" if e == 0 else "failed"
     result = ValidationResult(
-        profile_name=profile.get("profile_name", "unnamed"),
         source_path=str(source.resolve()),
         source_kind=source_kind,
         status=status,
@@ -805,7 +734,7 @@ def _build_result(
     )
     if verbose:
         _print_step(6, "Summary")
-        print(f"  profile : {result.profile_name}")
+        print(f"  cohort  : {COHORT_NAME}")
         print(f"  source  : {result.source_path}")
         print(f"  status  : {result.status.upper()}")
         print(f"  counts  : {e} error(s), {w} warning(s), {n} info")
@@ -819,17 +748,9 @@ def _build_result(
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description=(
-            "Validate a Century Health clinical coding dictionary workbook or "
-            "flat-file export against a profile."
-        )
+        description=f"Validate the {COHORT_NAME} clinical coding dictionary."
     )
     p.add_argument("--input", required=True, help="Path to the dictionary file.")
-    p.add_argument(
-        "--profile",
-        default=None,
-        help="Path to a JSON profile file. Defaults to the built-in mtc_aat_cohort profile.",
-    )
     p.add_argument(
         "--report-json",
         default=None,
@@ -850,8 +771,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    profile = load_profile(args.profile)
-    result = validate_source(args.input, profile, verbose=not args.quiet)
+    result = validate_source(args.input, verbose=not args.quiet)
 
     if args.report_json:
         Path(args.report_json).write_text(
