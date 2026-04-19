@@ -1,0 +1,83 @@
+{
+  "profile_name": "mtc_aat_cohort",
+  "description": "Baseline validation rules for Century clinical coding dictionaries, initialized for the mtc_aat_cohort workflow.",
+  "required_sheets": {
+    "summary": ["Summary"],
+    "tables": ["Tables"],
+    "variables": ["Variables", "Variable", "Data Dictionary", "Dictionary"]
+  },
+  "variables_sheet": {
+    "required_columns": [
+      "category",
+      "variable",
+      "description",
+      "schema",
+      "source_columns",
+      "criteria",
+      "values",
+      "distribution",
+      "completeness",
+      "extraction_type"
+    ],
+    "required_non_empty_columns": [
+      "category",
+      "variable",
+      "description",
+      "schema",
+      "source_columns",
+      "completeness",
+      "extraction_type"
+    ],
+    "column_order": [
+      "category",
+      "variable",
+      "description",
+      "schema",
+      "source_columns",
+      "criteria",
+      "values",
+      "distribution",
+      "completeness",
+      "extraction_type",
+      "notes"
+    ],
+    "column_aliases": {
+      "category": ["category", "cohort category", "domain"],
+      "variable": ["variable", "variable name", "field", "field name"],
+      "description": ["description", "variable description", "definition"],
+      "schema": ["schema", "table", "source table", "table/schema"],
+      "source_columns": ["column(s)", "columns", "column", "source columns", "source column"],
+      "criteria": ["criteria", "logic", "filter criteria", "configuration criteria"],
+      "values": ["values", "value examples", "valid values"],
+      "distribution": ["distribution", "value distribution"],
+      "completeness": ["completeness", "completion", "% completeness", "percent completeness"],
+      "extraction_type": ["extraction type", "extract type", "capture type", "mapping type"],
+      "notes": ["notes", "comments"]
+    },
+    "allowed_extraction_types": [
+      "Structured",
+      "Abstracted",
+      "Unstructured",
+      "Derived",
+      "Calculated",
+      "Manual"
+    ],
+    "recommended_schema_values": [
+      "person",
+      "observation",
+      "measurement",
+      "condition_occurrence",
+      "drug_exposure",
+      "procedure_occurrence",
+      "visit_occurrence",
+      "location",
+      "payer_plan_period",
+      "death",
+      "device_exposure",
+      "note",
+      "document",
+      "specimen"
+    ],
+    "variable_name_pattern": "^[A-Za-z][A-Za-z0-9 _/().\\-]*$"
+  }
+}
