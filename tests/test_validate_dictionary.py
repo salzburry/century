@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -11,7 +13,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from validate_dictionary import validate_source
+from validate_dictionary import main, validate_source
 
 
 class ValidateDictionaryTests(unittest.TestCase):
@@ -79,6 +81,58 @@ class ValidateDictionaryTests(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_blank_tables_sheet_is_flagged(self) -> None:
+        temp_dir = self._make_temp_dir("blank_sheet")
+        try:
+            workbook_path = temp_dir / "blank_tables_dictionary.xlsx"
+            summary = pd.DataFrame([{"metric": "patient_count", "value": "1000"}])
+            tables = pd.DataFrame([{"table": "   ", "description": ""}])
+            variables = pd.DataFrame(
+                [
+                    {
+                        "Category": "Demographics",
+                        "Variable": "Sex",
+                        "Description": "Biological sex at birth.",
+                        "Schema": "person",
+                        "Column(s)": "gender_concept_name",
+                        "Criteria": "",
+                        "Values": "Female, Male",
+                        "Distribution": "Female: 55%; Male: 45%",
+                        "Completeness": "99.1%",
+                        "Extraction Type": "Structured",
+                    }
+                ]
+            )
+
+            with pd.ExcelWriter(workbook_path, engine="openpyxl") as writer:
+                summary.to_excel(writer, sheet_name="Summary", index=False)
+                tables.to_excel(writer, sheet_name="Tables", index=False)
+                variables.to_excel(writer, sheet_name="Variables", index=False)
+
+            result = validate_source(workbook_path, verbose=False)
+            codes = {issue.code for issue in result.issues}
+
+            self.assertIn("empty_sheet", codes)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_quiet_mode_still_prints_summary(self) -> None:
+        temp_dir = self._make_temp_dir("quiet")
+        try:
+            workbook_path = temp_dir / "quiet_dictionary.xlsx"
+            self._write_valid_workbook(workbook_path)
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(["--input", str(workbook_path), "--quiet"])
+
+            self.assertEqual(0, exit_code)
+            rendered = output.getvalue()
+            self.assertIn("Step 6: Summary", rendered)
+            self.assertIn("status  : PASSED", rendered)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     def _make_temp_dir(self, prefix: str) -> Path:
         temp_dir = self.temp_root / f"{prefix}_{uuid.uuid4().hex}"
         temp_dir.mkdir(parents=True, exist_ok=False)
@@ -93,24 +147,24 @@ class ValidateDictionaryTests(unittest.TestCase):
         )
         variables = pd.DataFrame(
             [
-                {
-                    "Category": "Demographics",
-                    "Variable": "sex",
-                    "Description": "Biological sex at birth.",
-                    "Schema": "person",
-                    "Column(s)": "gender_concept_name",
+                    {
+                        "Category": "Demographics",
+                        "Variable": "Sex",
+                        "Description": "Biological sex at birth.",
+                        "Schema": "person",
+                        "Column(s)": "gender_concept_name",
                     "Criteria": "",
                     "Values": "Female, Male",
                     "Distribution": "Female: 55%; Male: 45%",
                     "Completeness": "99.1%",
                     "Extraction Type": "Structured",
                 },
-                {
-                    "Category": "Vitals",
-                    "Variable": "heart_rate",
-                    "Description": "Heart rate captured during the office visit.",
-                    "Schema": "observation",
-                    "Column(s)": "value_as_number",
+                    {
+                        "Category": "Vitals",
+                        "Variable": "Heart rate",
+                        "Description": "Heart rate captured during the office visit.",
+                        "Schema": "observation",
+                        "Column(s)": "value_as_number",
                     "Criteria": "observation_concept_name = 'Heart rate'",
                     "Values": "",
                     "Distribution": "Median: 72",
