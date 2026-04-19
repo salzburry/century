@@ -11,7 +11,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from dictionary_validation.validator import load_profile, validate_source
+from validate_dictionary import load_profile, validate_source
 
 
 class ValidateDictionaryTests(unittest.TestCase):
@@ -21,7 +21,8 @@ class ValidateDictionaryTests(unittest.TestCase):
         cls.temp_root.mkdir(parents=True, exist_ok=True)
 
     def setUp(self) -> None:
-        self.profile = load_profile("mtc_aat_cohort")
+        # ``None`` loads the baked-in default profile, which is the mtc_aat_cohort baseline.
+        self.profile = load_profile(None)
 
     def test_valid_workbook_passes(self) -> None:
         temp_dir = self._make_temp_dir("valid")
@@ -29,7 +30,7 @@ class ValidateDictionaryTests(unittest.TestCase):
             workbook_path = temp_dir / "valid_dictionary.xlsx"
             self._write_valid_workbook(workbook_path)
 
-            result = validate_source(workbook_path, self.profile)
+            result = validate_source(workbook_path, self.profile, verbose=False)
 
             self.assertEqual("passed", result.status)
             self.assertEqual(0, result.error_count)
@@ -42,7 +43,7 @@ class ValidateDictionaryTests(unittest.TestCase):
             workbook_path = temp_dir / "invalid_dictionary.xlsx"
             self._write_invalid_workbook(workbook_path)
 
-            result = validate_source(workbook_path, self.profile)
+            result = validate_source(workbook_path, self.profile, verbose=False)
             codes = {issue.code for issue in result.issues}
 
             self.assertEqual("failed", result.status)
@@ -74,7 +75,7 @@ class ValidateDictionaryTests(unittest.TestCase):
                 ]
             ).to_csv(csv_path, index=False)
 
-            result = validate_source(csv_path, self.profile)
+            result = validate_source(csv_path, self.profile, verbose=False)
             codes = {issue.code for issue in result.issues}
 
             self.assertEqual("passed", result.status)
