@@ -11,7 +11,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from dictionary_validation.validator import load_profile, validate_source
+from validate_dictionary import validate_source
 
 
 class ValidateDictionaryTests(unittest.TestCase):
@@ -20,16 +20,13 @@ class ValidateDictionaryTests(unittest.TestCase):
         cls.temp_root = PROJECT_ROOT / "tests" / ".tmp"
         cls.temp_root.mkdir(parents=True, exist_ok=True)
 
-    def setUp(self) -> None:
-        self.profile = load_profile("mtc_aat_cohort")
-
     def test_valid_workbook_passes(self) -> None:
         temp_dir = self._make_temp_dir("valid")
         try:
             workbook_path = temp_dir / "valid_dictionary.xlsx"
             self._write_valid_workbook(workbook_path)
 
-            result = validate_source(workbook_path, self.profile)
+            result = validate_source(workbook_path, verbose=False)
 
             self.assertEqual("passed", result.status)
             self.assertEqual(0, result.error_count)
@@ -42,7 +39,7 @@ class ValidateDictionaryTests(unittest.TestCase):
             workbook_path = temp_dir / "invalid_dictionary.xlsx"
             self._write_invalid_workbook(workbook_path)
 
-            result = validate_source(workbook_path, self.profile)
+            result = validate_source(workbook_path, verbose=False)
             codes = {issue.code for issue in result.issues}
 
             self.assertEqual("failed", result.status)
@@ -74,7 +71,7 @@ class ValidateDictionaryTests(unittest.TestCase):
                 ]
             ).to_csv(csv_path, index=False)
 
-            result = validate_source(csv_path, self.profile)
+            result = validate_source(csv_path, verbose=False)
             codes = {issue.code for issue in result.issues}
 
             self.assertEqual("passed", result.status)
@@ -134,7 +131,7 @@ class ValidateDictionaryTests(unittest.TestCase):
             [
                 {
                     "Category": "Demographics",
-                    "Variable": "Sex",
+                    "Variable": "1sex!",
                     "Description": "Biological sex at birth.",
                     "Schema": "person",
                     "Column(s)": "gender_concept_name",
@@ -146,7 +143,7 @@ class ValidateDictionaryTests(unittest.TestCase):
                 },
                 {
                     "Category": "Demographics",
-                    "Variable": "Sex",
+                    "Variable": "1sex!",
                     "Description": "Duplicate variable example.",
                     "Schema": "person",
                     "Column(s)": "gender_concept_name",
