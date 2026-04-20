@@ -3,3 +3,6 @@ __pycache__/
 *.pyo
 .venv/
 .DS_Store
+
+# Local credentials — keep .env out of git. .env.example is the committed template.
+.env
