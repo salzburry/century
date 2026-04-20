@@ -34,11 +34,9 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 # NOTE: psycopg is imported lazily inside ``_require_psycopg()`` so the
 # module can be imported for offline tasks (``--list-cohorts``, unit tests
@@ -897,18 +895,19 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--cohort",
-        default="mtc_aat",
+        default=None,
         help=(
-            "Cohort pack to load from packs/cohorts/<cohort>.yaml "
-            "(default: mtc_aat). Use --list-cohorts to see available packs."
+            "Cohort pack to load from packs/cohorts/<cohort>.yaml. "
+            "If omitted, --schema is required and no pack is needed. "
+            "Use --list-cohorts to see available packs."
         ),
     )
     parser.add_argument(
         "--schema",
         default=None,
         help=(
-            "Override the pack's schema_name. Default: the schema_name "
-            "declared in the cohort pack."
+            "Postgres schema to introspect. Required if --cohort is not "
+            "given, and otherwise overrides the pack's schema_name."
         ),
     )
     parser.add_argument(
@@ -1034,9 +1033,29 @@ def _main(argv: list[str] | None = None) -> int:
             print(f"{name:<45} {count}")
         return 0
 
-    pack = load_pack(args.cohort)
-    schema_name = args.schema or pack.schema_name
-    chatter(f"Loaded pack '{args.cohort}' (schema={schema_name})")
+    # Two ways to identify the cohort:
+    #   --cohort NAME        read packs/cohorts/NAME.yaml (handy when you
+    #                        reuse the same schema repeatedly and want the
+    #                        display name and schema pinned in version
+    #                        control)
+    #   --schema NAME        skip the pack entirely; cohort_name is
+    #                        synthesised from the schema name
+    # If both are given, --cohort provides the display name and --schema
+    # overrides the schema lookup.
+    if args.cohort:
+        pack = load_pack(args.cohort)
+        schema_name = args.schema or pack.schema_name
+        chatter(f"Loaded pack '{args.cohort}' (schema={schema_name})")
+    elif args.schema:
+        schema_name = args.schema
+        pack = Pack(slug=schema_name, cohort_name=schema_name, schema_name=schema_name)
+        chatter(f"Using schema '{schema_name}' (no pack)")
+    else:
+        print(
+            "error: one of --cohort or --schema is required.",
+            file=sys.stderr,
+        )
+        return 2
 
     conn_kwargs = build_conn_kwargs(args)
 
