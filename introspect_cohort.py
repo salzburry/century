@@ -236,8 +236,24 @@ def introspect(
     conn: psycopg.Connection,
     schema: str,
     sample_values: int,
-    include_top_for_types: set[str],
+    pack: "Pack",
 ) -> tuple[list[ColumnInfo], list[TableInfo]]:
+    """Walk the target schema and return ``(columns, tables)``.
+
+    The ``pack`` drives two filters applied *before* any SQL runs:
+
+    * tables named in ``pack.tables_to_skip`` are skipped wholesale - no
+      row count, no column listing, no null-count queries. Keeps PII-style
+      linkage tables (``dv_tokenized_profile_data`` and similar) entirely
+      out of the raw inventory and out of any downstream report.
+    * individual columns that match ``pack.sensitive_columns`` (exact name)
+      or ``pack.drop_column_patterns`` (regex) are filtered out as soon as
+      ``information_schema.columns`` returns them, again before any
+      null-count or top-value query hits them.
+
+    Top-value sampling is additionally gated by ``pack.sampleable_types``
+    so long free-text columns never have their contents selected.
+    """
     columns_out: list[ColumnInfo] = []
     tables_out: list[TableInfo] = []
 
@@ -252,6 +268,15 @@ def introspect(
                 file=sys.stderr,
             )
 
+    skipped_tables = [t for t in tables if t in pack.tables_to_skip]
+    tables = [t for t in tables if t not in pack.tables_to_skip]
+    if skipped_tables:
+        print(
+            f"  (skipped {len(skipped_tables)} table(s) per pack.tables_to_skip: "
+            f"{', '.join(sorted(skipped_tables))})",
+            file=sys.stderr,
+        )
+
     if not tables:
         sys.stderr.write(
             f"No tables or views found in schema '{schema}'. "
@@ -265,15 +290,28 @@ def introspect(
             row_count = cur.fetchone()[0]
 
             cur.execute(LIST_COLUMNS_SQL, (schema, table))
-            columns = cur.fetchall()
+            raw_columns = cur.fetchall()
 
-        tables_out.append(TableInfo(name=table, row_count=row_count, column_count=len(columns)))
+        # Filter out sensitive / plumbing columns before we run any further
+        # queries against them. We still record the table's full column
+        # count for Summary accuracy.
+        visible_columns = [
+            row for row in raw_columns
+            if not _column_is_dropped(table, row[0], pack)
+        ]
+        dropped = len(raw_columns) - len(visible_columns)
+
+        tables_out.append(
+            TableInfo(name=table, row_count=row_count, column_count=len(raw_columns))
+        )
         print(
-            f"  {schema}.{table}  ({row_count:,} rows, {len(columns)} cols)",
+            f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
+            + (f", {dropped} filtered" if dropped else "")
+            + ")",
             file=sys.stderr,
         )
 
-        for col_row in columns:
+        for col_row in visible_columns:
             column_name, data_type, is_nullable_str, _max_len, _prec = col_row
             is_nullable = is_nullable_str == "YES"
 
@@ -289,7 +327,10 @@ def introspect(
                     )
                     null_count = cur.fetchone()[0]
 
-                    if sample_values > 0 and data_type in include_top_for_types:
+                    if (
+                        sample_values > 0
+                        and data_type in pack.sampleable_types
+                    ):
                         cur.execute(
                             TOP_VALUES_SQL_TEMPLATE.format(
                                 schema=schema, table=table, column=column_name
@@ -474,12 +515,23 @@ def write_dictionary_xlsx(
 
 
 try:
-    import yaml  # PyYAML
-except ImportError:  # pragma: no cover
-    sys.stderr.write(
-        "PyYAML is not installed. Run: pip install pyyaml\n"
-    )
-    raise SystemExit(1)
+    import yaml  # PyYAML — imported lazily in _require_yaml()
+except ImportError:  # pragma: no cover - handled at call time
+    yaml = None  # type: ignore[assignment]
+
+
+def _require_yaml():
+    """Lazy getter for PyYAML. Exits with a clear install hint if missing.
+
+    Module-level ``import yaml`` would break offline tests and
+    ``--list-cohorts`` for users who haven't pip-installed the package,
+    same anti-pattern as psycopg earlier.
+    """
+    if yaml is None:
+        raise SystemExit(
+            "PyYAML is not installed. Run: pip install pyyaml"
+        )
+    return yaml
 
 
 PACKS_DIR = Path(__file__).resolve().parent / "packs"
@@ -531,8 +583,9 @@ def load_pack(cohort: str, packs_dir: Path = PACKS_DIR) -> Pack:
             )
         )
 
-    core_data = yaml.safe_load(core_path.read_text(encoding="utf-8")) or {}
-    cohort_data = yaml.safe_load(cohort_path.read_text(encoding="utf-8")) or {}
+    y = _require_yaml()
+    core_data = y.safe_load(core_path.read_text(encoding="utf-8")) or {}
+    cohort_data = y.safe_load(cohort_path.read_text(encoding="utf-8")) or {}
     merged = _deep_merge(core_data, cohort_data)
 
     cohort_name = merged.get("cohort_name")
@@ -1296,7 +1349,7 @@ def main(argv: list[str] | None = None) -> int:
             conn,
             schema=schema_name,
             sample_values=args.sample_values,
-            include_top_for_types=pack.sampleable_types,
+            pack=pack,
         )
         person_count = fetch_person_count(conn, schema_name)
 
