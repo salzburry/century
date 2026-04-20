@@ -57,6 +57,49 @@ except ImportError:  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #
+# .env loading (no external dependency)
+# --------------------------------------------------------------------------- #
+
+
+def load_dotenv(path: Path) -> int:
+    """Parse KEY=VALUE lines from ``path`` and set them on ``os.environ``.
+
+    Values already present in the environment (e.g. from the shell) win so
+    ``PGPASSWORD=... python introspect_cohort.py`` still overrides the file.
+    Returns the number of keys loaded. Silently no-ops if the file is absent.
+    """
+    if not path.is_file():
+        return 0
+
+    loaded = 0
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        # Support "export KEY=VALUE" form too.
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        # Strip matching surrounding quotes.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+            loaded += 1
+    return loaded
+
+
+# Auto-load ``.env`` from the script's directory on import. Running from a
+# different cwd still works.
+_DOTENV_PATH = Path(__file__).resolve().parent / ".env"
+_loaded = load_dotenv(_DOTENV_PATH)
+if _loaded:
+    print(f"Loaded {_loaded} value(s) from {_DOTENV_PATH}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------- #
 # Connection
 # --------------------------------------------------------------------------- #
 
