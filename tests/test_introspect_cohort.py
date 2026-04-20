@@ -26,6 +26,19 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import introspect_cohort as ic
 
+# Detect PyYAML availability once; pack-based tests skip (not fail) if
+# it's not installed so a clean sandbox still gets a readable summary
+# of which tests ran and which were skipped for missing-dep reasons.
+try:
+    import yaml  # noqa: F401
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
+_needs_yaml = unittest.skipUnless(
+    HAS_YAML, "PyYAML is required for pack-based tests (pip install pyyaml)"
+)
+
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -102,6 +115,7 @@ class DeepMergeTests(unittest.TestCase):
         self.assertEqual(ic._deep_merge({"a": 1}, [1, 2]), [1, 2])
 
 
+@_needs_yaml
 class LoadPackTests(unittest.TestCase):
     """The shipped ``packs/`` directory must load cleanly."""
 
@@ -124,6 +138,7 @@ class LoadPackTests(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 
 
+@_needs_yaml
 class ColumnIsDroppedTests(unittest.TestCase):
     def setUp(self) -> None:
         self.pack = ic.load_pack("mtc_aat")
@@ -186,6 +201,7 @@ class PickValueColumnTests(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 
 
+@_needs_yaml
 class BuildCuratedVariablesTests(unittest.TestCase):
     """Run build_curated_variables with a minimal inventory and stubbed conn."""
 
@@ -437,6 +453,66 @@ class BuildCuratedVariablesTests(unittest.TestCase):
         sex = [r for r in rows if r["Variable"] == "Sex"][0]
         self.assertEqual(sex["Values"], "Female, Male, Non-binary")
 
+    def test_per_concept_duplicate_names_get_disambiguated(self) -> None:
+        """Two distinct concept rows that normalize to the same Variable
+        key must get a ``(table)`` suffix so the validator does not fire
+        duplicate_variable on the auto-generated output."""
+
+        def router(sql, params=None):
+            if 'COUNT("value_as_number")' in sql:
+                # Both tables have a concept that would produce the same
+                # Variable label ("Total") if emitted bare.
+                table = re.search(r'FROM "[^"]+"\."([^"]+)"', sql).group(1)
+                return {"rows": {
+                    "observation": [("Total", 100, 100, 0, 0)],
+                    "measurement": [("Total", 80, 80, 0, 0)],
+                }.get(table, [])}
+            if "PERCENTILE_CONT" in sql:
+                return {"row": ("1", "2", "3", "4", "5")}
+            return {}
+
+        rows = self._run(
+            [
+                _col("observation", "observation_concept_name"),
+                _col("measurement", "measurement_concept_name"),
+            ],
+            router,
+        )
+        variables = [r["Variable"] for r in rows]
+        # No two variables should normalize to the same key.
+        normalized = [ic._normalize_variable_key(v) for v in variables]
+        self.assertEqual(
+            len(normalized), len(set(normalized)),
+            f"duplicate normalized variable name: {variables}",
+        )
+        # And at least one of the two must carry a table disambiguator.
+        self.assertTrue(
+            any("(measurement)" in v or "(observation)" in v for v in variables),
+            f"expected a (table) suffix on the collision, got {variables}",
+        )
+
+    def test_long_concept_names_that_truncate_to_same_prefix(self) -> None:
+        """Two concepts whose display names are identical for the first
+        61 characters would truncate to the same ``<prefix>...`` string.
+        Dedupe must keep them distinct."""
+
+        long_a = "Alpha-1 antitrypsin deficiency with emphysematous phenotype subtype A"
+        long_b = "Alpha-1 antitrypsin deficiency with emphysematous phenotype subtype B"
+
+        def router(sql, params=None):
+            if 'COUNT("value_as_number")' in sql:
+                return {"rows": [(long_a, 50, 50, 0, 0), (long_b, 40, 40, 0, 0)]}
+            if "PERCENTILE_CONT" in sql:
+                return {"row": ("1", "2", "3", "4", "5")}
+            return {}
+
+        rows = self._run([_col("observation", "observation_concept_name")], router)
+        normalized = [ic._normalize_variable_key(r["Variable"]) for r in rows]
+        self.assertEqual(
+            len(normalized), len(set(normalized)),
+            f"truncated variable names collide: {[r['Variable'] for r in rows]}",
+        )
+
     def test_missing_dep_error_is_runtimeerror(self) -> None:
         """Lazy imports must raise MissingDependencyError (a subclass of
         RuntimeError), not SystemExit, so unittest reports them as a
@@ -472,6 +548,7 @@ class BuildCuratedVariablesTests(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 
 
+@_needs_yaml
 class EndToEndTests(unittest.TestCase):
     """A curated workbook produced by write_curated_xlsx must validate
     cleanly under validate_dictionary.validate_source."""
@@ -552,6 +629,7 @@ class EndToEndTests(unittest.TestCase):
             out.unlink(missing_ok=True)
 
 
+@_needs_yaml
 class ValidatorProfileOverrideTests(unittest.TestCase):
     """Lock down the merge semantics of apply_profile_overrides."""
 
