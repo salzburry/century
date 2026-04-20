@@ -163,12 +163,10 @@ curation_rules:
         criteria: ""
         extraction_type: Unstructured
 
-  infusion:
-    category: Administrations
-    mode: static
-    rows:
-      - variable: Infusion Note
-        description: Free text or PDF of the infusion note.
-        column: note_text
-        criteria: ""
-        extraction_type: Unstructured
+  # NOTE: mtc__aat_cohort.infusion on this warehouse is drug_exposure-shaped
+  # (dates, quantity, refills, days_supply, route_concept_name). It is not
+  # a free-text/notes table here, so the "Infusion Note" static recipe was
+  # removed. If a later ingest adds a note_text column, re-add the recipe.
+  # Infusion *activity* is already covered by the drug_exposure
+  # Administrations split above (drug_type_concept_name = 'EHR
+  # administration record').
