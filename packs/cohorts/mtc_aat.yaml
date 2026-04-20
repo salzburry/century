@@ -95,15 +95,19 @@ curation_rules:
       gender_concept_name:
         variable: Sex
         description: Biological sex at birth.
+        variable_type: categorical
       race_concept_name:
         variable: Race
         description: Self-identified racial category.
+        variable_type: categorical
       ethnicity_concept_name:
         variable: Ethnicity
         description: Self-identified ethnicity.
+        variable_type: categorical
       year_of_birth:
         variable: BirthYear
         description: Year the patient was born.
+        variable_type: continuous
 
   location:
     category: Demographics
@@ -112,9 +116,11 @@ curation_rules:
       zip:
         variable: ZIP Code
         description: Patient ZIP code (full or first 3 digits).
+        variable_type: categorical
       state:
         variable: State
         description: Patient state of residence.
+        variable_type: categorical
 
   payer_plan_period:
     category: Demographics
@@ -123,9 +129,11 @@ curation_rules:
       payer_concept_name:
         variable: Payer
         description: Insurance payer responsible for the visit.
+        variable_type: categorical
       plan_type_concept_name:
         variable: Plan Type
         description: Insurance plan type.
+        variable_type: categorical
 
   note:
     category: Documents
