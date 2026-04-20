@@ -719,6 +719,24 @@ class EndToEndTests(unittest.TestCase):
                 # importlib.reload resets the defaults.
                 import importlib
                 importlib.reload(vd)
+
+            # The curated workbook must also carry an "All Columns" sheet
+            # with one row per introspected column - a flat inventory
+            # alongside the curated dictionary. Every row must have a
+            # non-empty Schema and Column so the sheet is usable on its
+            # own.
+            import pandas as pd
+            sheets = pd.read_excel(out, sheet_name=None)
+            self.assertIn("All Columns", sheets)
+            all_cols = sheets["All Columns"]
+            self.assertEqual(len(all_cols), len(columns))
+            self.assertEqual(
+                set(all_cols.columns),
+                {"Schema", "Column", "Data Type", "Nullable",
+                 "Row Count", "Null Count", "Completeness", "Top Values"},
+            )
+            self.assertFalse(all_cols["Schema"].isna().any())
+            self.assertFalse(all_cols["Column"].isna().any())
         finally:
             out.unlink(missing_ok=True)
 

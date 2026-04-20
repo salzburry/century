@@ -1461,10 +1461,10 @@ def write_curated_xlsx(
 
     summary_rows = [
         {"metric": "cohort", "value": cohort},
-        {"metric": "output_kind", "value": "curated"},
+        {"metric": "output_kind", "value": "curated + all-columns"},
         {"metric": "variable_count", "value": len(variables_rows)},
+        {"metric": "all_columns_count", "value": len(columns)},
         {"metric": "source_table_count", "value": len(tables)},
-        {"metric": "source_column_count", "value": len(columns)},
     ]
     if person_count is not None:
         summary_rows.insert(1, {"metric": "patient_count", "value": person_count})
@@ -1501,10 +1501,44 @@ def write_curated_xlsx(
         ],
     )
 
+    # ``All Columns`` sheet: one row per introspected column, regardless of
+    # whether the curation rules used it. Gives reviewers the full field
+    # inventory alongside the curated dictionary without them having to
+    # open a second workbook. The raw dump still respects pack-level
+    # safety filters (tables_to_skip / sensitive_columns /
+    # drop_column_patterns) so PII-class fields do not leak through this
+    # sheet either - the sheet reflects what ``introspect()`` returned.
+    all_columns_df = pd.DataFrame(
+        [
+            {
+                "Schema": col.table,
+                "Column": col.column,
+                "Data Type": col.data_type,
+                "Nullable": "yes" if col.is_nullable else "no",
+                "Row Count": col.row_count,
+                "Null Count": col.null_count,
+                "Completeness": f"{col.completeness_pct:.1f}%",
+                "Top Values": col.distribution_cell(),
+            }
+            for col in columns
+        ],
+        columns=[
+            "Schema",
+            "Column",
+            "Data Type",
+            "Nullable",
+            "Row Count",
+            "Null Count",
+            "Completeness",
+            "Top Values",
+        ],
+    )
+
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="Summary", index=False)
         tables_df.to_excel(writer, sheet_name="Tables", index=False)
         variables_df.to_excel(writer, sheet_name="Variables", index=False)
+        all_columns_df.to_excel(writer, sheet_name="All Columns", index=False)
 
     # Print the full validate command including --cohort so the user
     # picks up the pack's validator overlay (e.g. cohort-specific
