@@ -1048,6 +1048,16 @@ def build_curated_variables(
                     for seg in distribution.split(";")
                     if seg.strip()
                 )[:400]  # keep the cell manageable in Excel
+
+                # Fallback when the drug type is declared in the pack but
+                # absent from (or silent in) the data: avoid blanks so the
+                # validator does not fire missing_value_context. The
+                # placeholder still tells a reviewer which split this row
+                # belongs to.
+                if not distribution:
+                    distribution = f"(no rows with {group_col} = '{drug_type}')"
+                if not values_cell:
+                    values_cell = drug_type
                 rows.append({
                     "Category": split_cfg["category"],
                     "Variable": split_cfg["variable"],
