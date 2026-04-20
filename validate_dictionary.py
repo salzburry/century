@@ -142,6 +142,115 @@ VARIABLE_NAME_PATTERN: str = r"^[A-Za-z][A-Za-z0-9 _/().\-]*$"
 SOURCE_COLUMN_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?$")
 
 
+PACKS_DIR = Path(__file__).resolve().parent / "packs"
+
+
+def _deep_merge(base: Any, overlay: Any) -> Any:
+    """Same merge semantics as the generator: lists append, scalars replace,
+    dicts deep-merge. Used when a cohort pack's ``validator`` section extends
+    the module-level defaults.
+    """
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged: dict[str, Any] = {**base}
+        for key, value in overlay.items():
+            merged[key] = _deep_merge(base.get(key), value) if key in base else value
+        return merged
+    if isinstance(base, list) and isinstance(overlay, list):
+        return [*base, *overlay]
+    return overlay
+
+
+def apply_profile_overrides(profile: dict[str, Any]) -> None:
+    """Overlay ``profile`` onto the module-level validator constants.
+
+    ``profile`` follows the schema of the optional ``validator:`` block in a
+    cohort pack. Anything missing falls back to the compiled-in default. The
+    merge is in-place on module globals so every step function picks up the
+    overrides without threading a config argument through each call.
+    """
+    global COHORT_NAME, REQUIRED_SHEETS, REQUIRED_COLUMNS
+    global REQUIRED_NON_EMPTY_COLUMNS, COLUMN_ORDER, COLUMN_ALIASES
+    global ALLOWED_EXTRACTION_TYPES, RECOMMENDED_SCHEMA_VALUES
+    global VARIABLE_NAME_PATTERN
+
+    if "cohort_name" in profile:
+        COHORT_NAME = str(profile["cohort_name"])
+
+    if "required_sheets" in profile:
+        REQUIRED_SHEETS = _deep_merge(REQUIRED_SHEETS, profile["required_sheets"])
+
+    if "required_columns" in profile:
+        REQUIRED_COLUMNS = list(profile["required_columns"])
+
+    if "required_non_empty_columns" in profile:
+        REQUIRED_NON_EMPTY_COLUMNS = list(profile["required_non_empty_columns"])
+
+    if "column_order" in profile:
+        COLUMN_ORDER = list(profile["column_order"])
+
+    if "column_aliases" in profile:
+        COLUMN_ALIASES = _deep_merge(COLUMN_ALIASES, profile["column_aliases"])
+
+    if "allowed_extraction_types" in profile:
+        ALLOWED_EXTRACTION_TYPES = (
+            ALLOWED_EXTRACTION_TYPES | set(profile["allowed_extraction_types"])
+        )
+
+    if "recommended_schema_values" in profile:
+        RECOMMENDED_SCHEMA_VALUES = (
+            RECOMMENDED_SCHEMA_VALUES | set(profile["recommended_schema_values"])
+        )
+
+    if "variable_name_pattern" in profile:
+        VARIABLE_NAME_PATTERN = str(profile["variable_name_pattern"])
+
+
+def load_cohort_profile(cohort: str, packs_dir: Path = PACKS_DIR) -> dict[str, Any]:
+    """Load ``packs/cohorts/<cohort>.yaml`` and return the flat profile dict.
+
+    The returned dict has ``cohort_name`` populated from the pack's top-level
+    ``cohort_name``, then merged with the optional ``validator:`` section.
+    Raises FileNotFoundError if the pack doesn't exist.
+    """
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover
+        raise SystemExit(
+            "PyYAML is required for --cohort / --profile loading. "
+            "Install with: pip install pyyaml"
+        ) from exc
+
+    path = packs_dir / "cohorts" / f"{cohort}.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"cohort pack missing: {path}. Available: "
+            + ", ".join(
+                sorted(p.stem for p in (packs_dir / "cohorts").glob("*.yaml"))
+            )
+        )
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    profile = dict(data.get("validator", {}))
+    profile.setdefault("cohort_name", data.get("cohort_name"))
+    return profile
+
+
+def load_profile_file(path: str | Path) -> dict[str, Any]:
+    """Load a stand-alone validator profile YAML or JSON."""
+    path = Path(path)
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        try:
+            import yaml
+        except ImportError as exc:  # pragma: no cover
+            raise SystemExit(
+                "PyYAML is required to load YAML profiles. "
+                "Install with: pip install pyyaml"
+            ) from exc
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if path.suffix.lower() == ".json":
+        return json.loads(path.read_text(encoding="utf-8"))
+    raise ValueError(f"Unsupported profile format: {path.suffix!r}. Use .yaml or .json.")
+
+
 # --------------------------------------------------------------------------- #
 # Issue and result dataclasses
 # --------------------------------------------------------------------------- #
@@ -769,9 +878,26 @@ def _build_result(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=f"Validate the {COHORT_NAME} clinical coding dictionary."
+        description="Validate a Century clinical coding dictionary."
     )
     parser.add_argument("--input", required=True, help="Path to the dictionary file.")
+    parser.add_argument(
+        "--cohort",
+        default=None,
+        help=(
+            "Load validator rules from packs/cohorts/<cohort>.yaml. "
+            "The pack's optional ``validator:`` section overlays the "
+            "built-in defaults."
+        ),
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help=(
+            "Load a stand-alone validator profile file (YAML or JSON) that "
+            "overlays the built-in defaults. Mutually exclusive with --cohort."
+        ),
+    )
     parser.add_argument(
         "--report-json",
         default=None,
@@ -792,6 +918,19 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+
+    if args.cohort and args.profile:
+        print("--cohort and --profile are mutually exclusive.", file=sys.stderr)
+        return 2
+
+    try:
+        if args.cohort:
+            apply_profile_overrides(load_cohort_profile(args.cohort))
+        elif args.profile:
+            apply_profile_overrides(load_profile_file(args.profile))
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Profile load failed: {exc}", file=sys.stderr)
+        return 1
 
     try:
         result = validate_source(args.input, verbose=not args.quiet)
