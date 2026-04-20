@@ -68,13 +68,22 @@ from typing import Any
 # string forward references via ``from __future__ import annotations``, so
 # referencing ``psycopg.Connection`` in a signature does not trigger the
 # import.
+class MissingDependencyError(RuntimeError):
+    """Raised when a lazily-imported dependency is unavailable at call time.
+
+    Using a regular exception (not ``SystemExit``) means the test runner
+    can report the single failing test cleanly, and the CLI ``main()`` can
+    translate it into a non-zero exit with a user-friendly stderr line.
+    """
+
+
 def _require_psycopg():
-    """Lazy import the ``psycopg`` driver, or exit with a clear install hint."""
+    """Lazy import the ``psycopg`` driver, or raise a clear install hint."""
     try:
         import psycopg  # noqa: F401 - returned for local use
         return psycopg
     except ImportError as exc:
-        raise SystemExit(
+        raise MissingDependencyError(
             "psycopg is not installed. Run: pip install 'psycopg[binary]'"
         ) from exc
 
@@ -535,14 +544,13 @@ except ImportError:  # pragma: no cover - handled at call time
 
 
 def _require_yaml():
-    """Lazy getter for PyYAML. Exits with a clear install hint if missing.
+    """Lazy getter for PyYAML. Raises ``MissingDependencyError`` if missing.
 
     Module-level ``import yaml`` would break offline tests and
-    ``--list-cohorts`` for users who haven't pip-installed the package,
-    same anti-pattern as psycopg earlier.
+    ``--list-cohorts`` for users who haven't pip-installed the package.
     """
     if yaml is None:
-        raise SystemExit(
+        raise MissingDependencyError(
             "PyYAML is not installed. Run: pip install pyyaml"
         )
     return yaml
@@ -790,6 +798,42 @@ def _summarize_date(
         sys.stderr.write(f"  date summary failed on {table}.{column}: {exc}\n")
         conn.rollback()
         return ""
+
+
+def _fetch_slice_completeness(
+    conn: psycopg.Connection,
+    schema: str,
+    table: str,
+    value_col: str,
+    concept_col: str,
+    concept_value: str,
+) -> float | None:
+    """Fraction of rows where ``value_col`` is populated among rows where
+    ``concept_col = concept_value``. Returns a 0-100 float or ``None`` on
+    error. Used for per-split completeness so a row whose ``Column(s)``
+    points at ``drug_concept_name`` reports the drug_concept_name
+    coverage rather than the group column's coverage.
+    """
+    sql = (
+        f'SELECT COUNT(*) AS total, '
+        f'       COUNT("{value_col}") AS populated '
+        f'FROM "{schema}"."{table}" '
+        f'WHERE "{concept_col}" = %s;'
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (concept_value,))
+            row = cur.fetchone()
+    except Exception as exc:
+        sys.stderr.write(
+            f"  slice completeness failed on {table}.{value_col}: {exc}\n"
+        )
+        conn.rollback()
+        return None
+    if not row or row[0] == 0:
+        return None
+    total, populated = int(row[0]), int(row[1])
+    return 100.0 * populated / total
 
 
 def _summarize_categorical_for_concept(
@@ -1072,6 +1116,24 @@ def build_curated_variables(
                     distribution = f"(no rows with {group_col} = '{drug_type}')"
                 if not values_cell:
                     values_cell = drug_type
+
+                # Per-split completeness on the displayed value_column
+                # (drug_concept_name), not on the group_by column. Using
+                # group_by coverage would overstate completeness
+                # whenever drug names are sparser than drug types.
+                slice_pct = _fetch_slice_completeness(
+                    conn,
+                    schema,
+                    table_name,
+                    value_col=recipe["value_column"],
+                    concept_col=group_col,
+                    concept_value=drug_type,
+                )
+                completeness_cell = (
+                    f"{slice_pct:.1f}%" if slice_pct is not None
+                    else f"{info.completeness_pct:.1f}%"
+                )
+
                 rows.append({
                     "Category": split_cfg["category"],
                     "Variable": split_cfg["variable"],
@@ -1081,7 +1143,7 @@ def build_curated_variables(
                     "Criteria": recipe["criteria_template"].format(name=drug_type),
                     "Values": values_cell,
                     "Distribution": distribution,
-                    "Completeness": f"{info.completeness_pct:.1f}%",
+                    "Completeness": completeness_cell,
                     "Extraction Type": recipe["extraction_type"],
                     "Notes": "",
                 })
@@ -1121,7 +1183,13 @@ def build_curated_variables(
                     distribution_cell = _summarize_categorical(
                         conn, schema, table_name, col_name
                     ) or info.distribution_cell()
-                    values_cell = info.top_values[0][0] if info.top_values else ""
+                    # Values is a compact, comma-separated enumeration
+                    # (e.g. "Female, Male") so reviewers see the allowed
+                    # set at a glance. The Distribution cell carries the
+                    # counts / percentages separately.
+                    values_cell = ", ".join(
+                        v for v, _ in info.top_values[:10]
+                    )
 
                 rows.append({
                     "Category": recipe["category"],
@@ -1139,17 +1207,28 @@ def build_curated_variables(
             continue
 
         # --- static: hard-coded Unstructured rows for notes / documents.
-        # Only emit rows when the table actually exists in the inventory -
-        # skip gracefully when the schema doesn't carry this optional table.
+        # Emit a row only when (a) the table exists in the inventory AND
+        # (b) the configured source column exists on it. Silently
+        # fabricating a row with a fallback 100% completeness for a
+        # missing column would turn schema drift into a misleadingly
+        # perfect dictionary entry. We log the drift to stderr so the
+        # reviewer can fix the pack or the schema.
         if mode == "static":
             present_tables = {c.table for c in columns}
             if table_name not in present_tables:
                 continue
             for spec in recipe["rows"]:
                 info = lookup.get((table_name, spec["column"]))
-                completeness = (
-                    f"{info.completeness_pct:.1f}%" if info else "100%"
-                )
+                if info is None:
+                    sys.stderr.write(
+                        f"  skipping static row '{spec['variable']}': "
+                        f"column '{spec['column']}' not found on "
+                        f"{schema}.{table_name}. Fix the pack or the "
+                        f"source schema.\n"
+                    )
+                    continue
+
+                completeness = f"{info.completeness_pct:.1f}%"
                 # Give the validator something in Values so the unstructured
                 # row does not trip missing_value_context. The point of the
                 # cell for unstructured rows is to tell a reviewer what
@@ -1159,8 +1238,7 @@ def build_curated_variables(
                     "values", f"Unstructured content - see {spec['column']}."
                 )
                 distribution_cell = spec.get(
-                    "distribution",
-                    f"{info.row_count:,} records" if info else "",
+                    "distribution", f"{info.row_count:,} records"
                 )
                 rows.append({
                     "Category": recipe["category"],
@@ -1338,6 +1416,14 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except MissingDependencyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
 
     if args.list_cohorts:

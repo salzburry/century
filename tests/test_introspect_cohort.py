@@ -369,6 +369,80 @@ class BuildCuratedVariablesTests(unittest.TestCase):
         self.assertTrue(note["Values"])
         self.assertIn("5,000", note["Distribution"])
 
+    def test_static_row_skipped_when_source_column_absent(self) -> None:
+        """Table exists, but the recipe's source column (note_text) is not
+        in the inventory. The row must NOT be emitted with a fallback
+        100% completeness - that would hide schema drift. Expect a
+        stderr warning and no Clinical Note row."""
+        import contextlib, io
+
+        columns = [
+            _col("note", "some_other_column", row_count=5000),
+        ]
+        conn = _stub_conn(lambda sql, params=None: {})
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rows = ic.build_curated_variables(
+                conn, self.pack.schema_name, columns, self.pack
+            )
+
+        self.assertFalse(
+            any(r["Variable"] == "Clinical Note" for r in rows),
+            "static row should skip when its source column is absent",
+        )
+        self.assertIn("skipping static row", err.getvalue())
+        self.assertIn("note_text", err.getvalue())
+
+    def test_split_by_type_uses_slice_completeness(self) -> None:
+        """Split rows must derive completeness from the displayed value
+        column (drug_concept_name) scoped to each drug type, not from
+        the group_by column (drug_type_concept_name)."""
+
+        def router(sql, params=None):
+            if "WITH scoped AS" in sql:
+                return {"rows": [("Prolastin 1000 MG", 400, 80.0)]}
+            if "COUNT(*) AS total" in sql and 'COUNT("drug_concept_name")' in sql:
+                # 1000 rows matched the drug_type, but only 500 populate
+                # drug_concept_name -> 50.0% completeness for this slice
+                return {"row": (1000, 500)}
+            return {}
+
+        rows = self._run(
+            [_col("drug_exposure", "drug_type_concept_name")], router
+        )
+        for drug_row in [r for r in rows if r["Schema"] == "drug_exposure"]:
+            self.assertEqual(drug_row["Completeness"], "50.0%")
+
+    def test_keep_columns_categorical_values_cell_is_full_list(self) -> None:
+        """Values for a categorical keep_columns row must show the full
+        top-N as a comma-separated list (e.g. "Female, Male"), not only
+        the first value."""
+
+        def router(sql, params=None):
+            if "ORDER BY COUNT(*) DESC" in sql:
+                return {"rows": [
+                    ("Female", 620, 62.0),
+                    ("Male", 370, 37.0),
+                    ("Non-binary", 10, 1.0),
+                ]}
+            return {}
+
+        rows = self._run(
+            [
+                _col("person", "gender_concept_name",
+                     top_values=[("Female", 620), ("Male", 370), ("Non-binary", 10)])
+            ],
+            router,
+        )
+        sex = [r for r in rows if r["Variable"] == "Sex"][0]
+        self.assertEqual(sex["Values"], "Female, Male, Non-binary")
+
+    def test_missing_dep_error_is_runtimeerror(self) -> None:
+        """Lazy imports must raise MissingDependencyError (a subclass of
+        RuntimeError), not SystemExit, so unittest reports them as a
+        single failed test rather than killing the whole suite."""
+        self.assertTrue(issubclass(ic.MissingDependencyError, RuntimeError))
+
     def test_split_by_type_fallback_when_no_rows(self) -> None:
         """If the categorical-for-concept query returns nothing (drug type
         declared in the pack but no rows in data), the split row must
