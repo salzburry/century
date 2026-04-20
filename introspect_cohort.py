@@ -1,50 +1,29 @@
 #!/usr/bin/env python3
-"""Introspect a Postgres schema (default: ``mtc_aat_cohort``) and optionally
-write a Century-format dictionary workbook straight out of the database.
+"""Introspect a Postgres cohort schema and write a data dictionary.
 
 One file, end-to-end:
 
-    1. Connect to the warehouse using the standard PG* env vars.
-    2. Walk every table in the target schema (skipping anything listed in
-       the cohort pack's ``tables_to_skip`` / ``sensitive_columns`` /
-       ``drop_column_patterns``).
-    3. For every kept column, collect data type, row count, NULL count,
-       completeness %, and the top-N frequent values.
-    4. Print a tree to stdout and, if requested, emit the draft in one
-       or both shapes:
-         * ``--out-xlsx``      curated Century-style workbook -
-           one row per business variable, validates cleanly against
-           ``validate_dictionary.py``.
-         * ``--out-xlsx-raw``  full inventory - one row per source
-           column. Intended for QA only. It *does not* validate: rows
-           carry no category / description, and the Variable prefill is
-           a ``table/column`` placeholder meant to be renamed.
+    1. Connect to the warehouse using PG* env vars (or a local ``.env``).
+    2. Walk every table in the cohort schema.
+    3. For every column, record data type, row count, null count,
+       completeness %, and a typed summary:
+         * continuous  -> Min / Max / Mean (std) and Median (IQR)
+         * date        -> Min / Max
+         * categorical -> top-N value counts with percentages
+         * text        -> no summary (marked Unstructured)
+    4. Emit the dictionary as Excel and/or HTML. Same content, same
+       column order as the Century reference PDF:
 
-You still fill in ``category``, ``description``, and in some cases
-``criteria`` for the curated workbook by hand; everything else is
-pre-populated.
-
-Required env vars (or the equivalent ``--`` flags):
-    PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD
-
-Optional:
-    PGSSLMODE   (default: require - typical for RDS/Aurora)
+         Category | Variable | Description | Table(s) | Column(s) |
+         Criteria | Values | Distribution | Median (IQR) |
+         Completeness | Extraction Type | Notes
 
 Typical usage::
 
-    # Configure via a local .env (copy .env.example) so credentials don't
-    # live in shell history.
-
-    python introspect_cohort.py                                         # tree only
-    python introspect_cohort.py --out-xlsx mtc_aat_cohort.xlsx          # curated
-    python introspect_cohort.py --out-xlsx-raw mtc_aat_cohort_raw.xlsx  # raw QA
-
-    # The curated workbook has one row per business variable (fact tables
-    # collapsed by concept_name). The raw workbook has one row per source
-    # column - useful only for QA. Descriptions on the curated workbook
-    # are intentionally blank; fill them in before circulating.
-
-    python validate_dictionary.py --input mtc_aat_cohort.xlsx --cohort mtc_aat
+    # Copy .env.example to .env and fill in real credentials.
+    python introspect_cohort.py --cohort mtc_aat \\
+        --out-xlsx mtc_aat_cohort.xlsx \\
+        --out-html mtc_aat_cohort.html
 
 Dependencies (see ``requirements.txt``)::
 
@@ -54,11 +33,10 @@ Dependencies (see ``requirements.txt``)::
 from __future__ import annotations
 
 import argparse
-import csv
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -215,6 +193,41 @@ PERSON_COUNT_SQL_TEMPLATE = 'SELECT COUNT(*) FROM "{schema}".person;'
 # --------------------------------------------------------------------------- #
 
 
+# ------------------------------------------------------------------- #
+# Metric-kind classification. Drives what summary we try to compute
+# for each column in ``introspect()`` and which cell gets filled on
+# the ``All Columns`` sheet.
+# ------------------------------------------------------------------- #
+
+_NUMERIC_TYPES = frozenset({
+    "integer", "bigint", "smallint",
+    "numeric", "real", "double precision",
+})
+
+_DATE_TYPES = frozenset({
+    "date",
+    "timestamp without time zone",
+    "timestamp with time zone",
+    "time without time zone",
+    "time with time zone",
+})
+
+# Long free-form content: no summary. Everything else that isn't
+# numeric/date is treated as categorical (top-N with counts).
+_UNSTRUCTURED_TYPES = frozenset({"text"})
+
+
+def _classify_metric_kind(data_type: str) -> str:
+    """Return 'continuous' | 'date' | 'unstructured' | 'categorical'."""
+    if data_type in _NUMERIC_TYPES:
+        return "continuous"
+    if data_type in _DATE_TYPES:
+        return "date"
+    if data_type in _UNSTRUCTURED_TYPES:
+        return "unstructured"
+    return "categorical"
+
+
 @dataclass
 class ColumnInfo:
     schema: str
@@ -225,15 +238,23 @@ class ColumnInfo:
     row_count: int
     null_count: int
     completeness_pct: float  # 0-100
-    top_values: list[tuple[str, int]]
-    # True when the column is on a kept table but was excluded from
-    # sampling (pack.sensitive_columns / pack.drop_column_patterns).
-    # We still list it in the full inventory so reviewers can see the
-    # complete field list; we just don't run null-count / top-value
-    # queries against it, and completeness/null_count stay at 0.
-    dropped: bool = False
+    # Pre-formatted summary cells. At most one of these three is
+    # populated for any given column, based on the column's
+    # metric kind (see ``_classify_metric_kind``):
+    #   categorical  -> value_distribution
+    #   continuous   -> numeric_summary + median_iqr
+    #   date         -> numeric_summary (min/max only)
+    #   unstructured -> all three blank
+    value_distribution: str = ""   # "Female: 620 (58.1%); Male: 440 (41.3%)"
+    numeric_summary: str = ""       # "Min: 1924, Max: 2002, Mean: 1958 (std: 12.3)"
+    median_iqr: str = ""            # "Median: 1958 (IQR: 1948-1968)"
+
+    # Categorical top-N (legacy field retained for keep_columns recipes).
+    top_values: list[tuple[str, int]] = field(default_factory=list)
 
     def distribution_cell(self) -> str:
+        if self.value_distribution:
+            return self.value_distribution
         if not self.top_values:
             return ""
         parts = []
@@ -267,24 +288,27 @@ def introspect(
 ) -> tuple[list[ColumnInfo], list[TableInfo]]:
     """Walk the target schema and return ``(columns, tables)``.
 
-    The ``pack`` drives two kinds of filter:
+    Dictionary-as-documentation policy: run typed metrics on **every
+    column of every accessible table**. No sampling gates.
 
-    * Tables named in ``pack.tables_to_skip`` are excluded wholesale -
-      no row count, no column listing, no null-count queries. Keeps
-      PII / vendor linkage tables (``dv_tokenized_profile_data``,
-      ``standard_profile_data_model``) out of the inventory entirely.
+    For each column the generator computes:
 
-    * Individual columns that match ``pack.sensitive_columns`` (exact
-      name) or ``pack.drop_column_patterns`` (regex) are still *listed*
-      in the inventory (so reviewers see the full field set) but they
-      carry ``dropped=True`` and we skip the null-count / top-value
-      queries against them. Completeness / null_count remain 0. The
-      curated ``Variables`` sheet ignores dropped rows; the
-      ``All Columns`` sheet surfaces them.
+      null_count + completeness   always
+      value_distribution          if metric kind == categorical
+      numeric_summary             if metric kind == continuous or date
+      median_iqr                  if metric kind == continuous
 
-    Top-value sampling on kept columns is additionally gated by
-    ``pack.sampleable_types`` so long free-text columns never have
-    their contents selected.
+    Metric kind is inferred from the Postgres data type
+    (``_classify_metric_kind``):
+
+      numeric types   -> continuous   (Min, Max, Mean (std), Median IQR)
+      date/timestamp  -> date         (Min, Max only)
+      text            -> unstructured (all three cells blank)
+      everything else -> categorical  (value counts with %)
+
+    If a column cannot be read (e.g. column-level permission denial),
+    each summary query is wrapped in its own try/except so the row
+    stays listed in the inventory with blank stats.
     """
     columns_out: list[ColumnInfo] = []
     tables_out: list[TableInfo] = []
@@ -307,95 +331,58 @@ def introspect(
         )
         return columns_out, tables_out
 
-    skipped_tables = sorted(t for t in tables if t in pack.tables_to_skip)
-    if skipped_tables and not quiet:
-        print(
-            f"  (listing without sampling, per pack.tables_to_skip: "
-            f"{', '.join(skipped_tables)})",
-            file=sys.stderr,
-        )
-
     for table in tables:
-        table_is_skipped = table in pack.tables_to_skip
-
-        # Always list columns for every table the user can see, so the
-        # All Columns inventory matches the real schema. Skipped tables
-        # contribute name/type only - no row count, no null queries, no
-        # value sampling - keeping the cost bounded and any row-level
-        # PII unread.
         with conn.cursor() as cur:
+            cur.execute(ROW_COUNT_SQL_TEMPLATE.format(schema=schema, table=table))
+            row_count = cur.fetchone()[0]
+
             cur.execute(LIST_COLUMNS_SQL, (schema, table))
             raw_columns = cur.fetchall()
-
-        if table_is_skipped:
-            row_count = 0
-        else:
-            with conn.cursor() as cur:
-                cur.execute(ROW_COUNT_SQL_TEMPLATE.format(schema=schema, table=table))
-                row_count = cur.fetchone()[0]
-
-        # Partition into sampleable vs "dropped" (plumbing / sensitive /
-        # skipped-table). Dropped columns are still recorded in the
-        # inventory; we just do not run further queries against them.
-        dropped_names = {
-            row[0] for row in raw_columns
-            if table_is_skipped or _column_is_dropped(table, row[0], pack)
-        }
 
         tables_out.append(
             TableInfo(name=table, row_count=row_count, column_count=len(raw_columns))
         )
         if not quiet:
-            if table_is_skipped:
-                print(
-                    f"  {schema}.{table}  ({len(raw_columns)} cols, not sampled)",
-                    file=sys.stderr,
-                )
-            else:
-                n_not_sampled = len(dropped_names)
-                print(
-                    f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
-                    + (f", {n_not_sampled} not sampled" if n_not_sampled else "")
-                    + ")",
-                    file=sys.stderr,
-                )
+            print(
+                f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols)",
+                file=sys.stderr,
+            )
 
         for col_row in raw_columns:
             column_name, data_type, is_nullable_str, _max_len, _prec = col_row
             is_nullable = is_nullable_str == "YES"
-            is_dropped = column_name in dropped_names
+            kind = _classify_metric_kind(data_type)
 
             null_count = 0
+            value_distribution = ""
+            numeric_summary = ""
+            median_iqr = ""
             top_values: list[tuple[str, int]] = []
 
-            if row_count > 0 and not is_dropped:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        NULL_COUNT_SQL_TEMPLATE.format(
-                            schema=schema, table=table, column=column_name
-                        )
+            if row_count > 0:
+                null_count = _safe_null_count(
+                    conn, schema, table, column_name
+                )
+
+                if kind == "continuous":
+                    numeric_summary, median_iqr = _compile_continuous(
+                        conn, schema, table, column_name
                     )
-                    null_count = cur.fetchone()[0]
+                elif kind == "date":
+                    numeric_summary = _compile_date_range(
+                        conn, schema, table, column_name
+                    )
+                elif kind == "categorical":
+                    top_values = _compile_top_values(
+                        conn, schema, table, column_name,
+                        limit=sample_values if sample_values > 0 else 5,
+                    )
+                    value_distribution = _format_value_distribution(
+                        top_values, null_count, row_count
+                    )
+                # kind == "unstructured": all three summary cells stay blank.
 
-                    if (
-                        sample_values > 0
-                        and data_type in pack.sampleable_types
-                    ):
-                        cur.execute(
-                            TOP_VALUES_SQL_TEMPLATE.format(
-                                schema=schema, table=table, column=column_name
-                            ),
-                            (sample_values,),
-                        )
-                        top_values = [(str(v), int(n)) for v, n in cur.fetchall()]
-
-            # Completeness is only meaningful when we actually ran the
-            # null-count query. For dropped / skipped-table columns it
-            # stays 0.
-            if row_count > 0 and not is_dropped:
-                completeness = (1 - null_count / row_count) * 100
-            else:
-                completeness = 0.0
+            completeness = (1 - null_count / row_count) * 100 if row_count > 0 else 0.0
 
             columns_out.append(
                 ColumnInfo(
@@ -407,12 +394,180 @@ def introspect(
                     row_count=row_count,
                     null_count=null_count,
                     completeness_pct=completeness,
+                    value_distribution=value_distribution,
+                    numeric_summary=numeric_summary,
+                    median_iqr=median_iqr,
                     top_values=top_values,
-                    dropped=is_dropped,
                 )
             )
 
     return columns_out, tables_out
+
+
+# --------------------------------------------------------------------------- #
+# Per-column summary helpers used during introspection
+# --------------------------------------------------------------------------- #
+
+
+def _safe_null_count(
+    conn: psycopg.Connection, schema: str, table: str, column: str
+) -> int:
+    """``COUNT(*) WHERE col IS NULL`` with a try/except so one locked-down
+    column doesn't break the rest of the run."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                NULL_COUNT_SQL_TEMPLATE.format(
+                    schema=schema, table=table, column=column
+                )
+            )
+            return int(cur.fetchone()[0])
+    except Exception as exc:
+        sys.stderr.write(
+            f"  null-count failed on {table}.{column}: {exc}\n"
+        )
+        conn.rollback()
+        return 0
+
+
+_CONTINUOUS_SUMMARY_SQL = """
+SELECT
+  MIN("{column}")::text,
+  MAX("{column}")::text,
+  AVG("{column}")::text,
+  STDDEV_SAMP("{column}")::text,
+  PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY "{column}")::text,
+  PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY "{column}")::text,
+  PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "{column}")::text
+FROM "{schema}"."{table}"
+WHERE "{column}" IS NOT NULL;
+"""
+
+
+def _fmt_num(value: str | None) -> str:
+    """Format a numeric string to at most 3 decimals; pass through if
+    it's already short or non-numeric."""
+    if value is None:
+        return "—"
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if f == int(f) and abs(f) < 1e15:
+        return str(int(f))
+    return f"{f:.3g}"
+
+
+def _compile_continuous(
+    conn: psycopg.Connection, schema: str, table: str, column: str
+) -> tuple[str, str]:
+    """Return ``(numeric_summary, median_iqr)`` for a numeric column.
+
+    numeric_summary  -> 'Min: X, Max: Y, Mean: M (std: S)'
+    median_iqr       -> 'Median: M (IQR: Q1–Q3)'
+
+    Empty strings when the query fails or the column has no non-null rows.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                _CONTINUOUS_SUMMARY_SQL.format(
+                    schema=schema, table=table, column=column
+                )
+            )
+            row = cur.fetchone()
+    except Exception as exc:
+        sys.stderr.write(
+            f"  continuous summary failed on {table}.{column}: {exc}\n"
+        )
+        conn.rollback()
+        return "", ""
+
+    if not row or row[0] is None:
+        return "", ""
+
+    mn, mx, mean, std, q1, median, q3 = row
+    numeric_summary = (
+        f"Min: {_fmt_num(mn)}, Max: {_fmt_num(mx)}, "
+        f"Mean: {_fmt_num(mean)} (std: {_fmt_num(std)})"
+    )
+    median_iqr = (
+        f"Median: {_fmt_num(median)} (IQR: {_fmt_num(q1)}–{_fmt_num(q3)})"
+    )
+    return numeric_summary, median_iqr
+
+
+_DATE_RANGE_SQL = """
+SELECT MIN("{column}")::text, MAX("{column}")::text
+FROM "{schema}"."{table}"
+WHERE "{column}" IS NOT NULL;
+"""
+
+
+def _compile_date_range(
+    conn: psycopg.Connection, schema: str, table: str, column: str
+) -> str:
+    """Min / Max of a date/timestamp column, or empty on failure / no data."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                _DATE_RANGE_SQL.format(schema=schema, table=table, column=column)
+            )
+            row = cur.fetchone()
+    except Exception as exc:
+        sys.stderr.write(
+            f"  date range failed on {table}.{column}: {exc}\n"
+        )
+        conn.rollback()
+        return ""
+    if not row or row[0] is None:
+        return ""
+    return f"Min: {row[0]}, Max: {row[1]}"
+
+
+def _compile_top_values(
+    conn: psycopg.Connection,
+    schema: str,
+    table: str,
+    column: str,
+    limit: int = 5,
+) -> list[tuple[str, int]]:
+    """Top-N value counts for a categorical column."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                TOP_VALUES_SQL_TEMPLATE.format(
+                    schema=schema, table=table, column=column
+                ),
+                (limit,),
+            )
+            return [(str(v), int(n)) for v, n in cur.fetchall()]
+    except Exception as exc:
+        sys.stderr.write(
+            f"  top-values failed on {table}.{column}: {exc}\n"
+        )
+        conn.rollback()
+        return []
+
+
+def _format_value_distribution(
+    top_values: list[tuple[str, int]],
+    null_count: int,
+    row_count: int,
+) -> str:
+    """Render ``[(value, n), ...]`` as ``"Female: 620 (58.1%); Male: 440 (41.3%)"``.
+
+    Percentages are over ``row_count`` (including nulls) so they match
+    the Completeness figure the reviewer sees on the same row.
+    """
+    if not top_values or row_count <= 0:
+        return ""
+    parts = []
+    for value, count in top_values:
+        display = value if len(value) <= 60 else value[:57] + "..."
+        pct = 100.0 * count / row_count
+        parts.append(f"{display}: {count} ({pct:.1f}%)")
+    return "; ".join(parts)
 
 
 def fetch_person_count(conn: psycopg.Connection, schema: str) -> int | None:
@@ -447,136 +602,6 @@ def print_tree(columns: list[ColumnInfo]) -> None:
         )
 
 
-# --------------------------------------------------------------------------- #
-# Output: CSV (raw introspection)
-# --------------------------------------------------------------------------- #
-
-
-def write_raw_csv(columns: list[ColumnInfo], out_path: Path) -> None:
-    fieldnames = [
-        "schema",
-        "table",
-        "column",
-        "data_type",
-        "is_nullable",
-        "row_count",
-        "null_count",
-        "completeness_pct",
-        "top_values",
-    ]
-    with out_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fieldnames)
-        writer.writeheader()
-        for col in columns:
-            writer.writerow({
-                "schema": col.schema,
-                "table": col.table,
-                "column": col.column,
-                "data_type": col.data_type,
-                "is_nullable": "yes" if col.is_nullable else "no",
-                "row_count": col.row_count,
-                "null_count": col.null_count,
-                "completeness_pct": f"{col.completeness_pct:.1f}",
-                "top_values": col.distribution_cell(),
-            })
-    print(f"\nWrote raw CSV -> {out_path}", file=sys.stderr)
-
-
-# --------------------------------------------------------------------------- #
-# Output: Century-format XLSX dictionary draft
-# --------------------------------------------------------------------------- #
-
-
-def write_dictionary_xlsx(
-    columns: list[ColumnInfo],
-    tables: list[TableInfo],
-    out_path: Path,
-    cohort: str,
-    person_count: int | None,
-) -> None:
-    """Write a Summary / Tables / Variables workbook the validator can read.
-
-    ``category``, ``description``, ``criteria``, ``extraction_type`` and
-    ``notes`` are left blank on purpose - fill them in after reviewing.
-    """
-    try:
-        import pandas as pd
-    except ImportError as exc:
-        sys.stderr.write(
-            "pandas is not installed; install it to emit XLSX: "
-            "pip install pandas openpyxl\n"
-        )
-        raise SystemExit(3) from exc
-
-    summary_rows = [
-        {"metric": "cohort", "value": cohort},
-        {"metric": "table_count", "value": len(tables)},
-        {"metric": "column_count", "value": len(columns)},
-    ]
-    if person_count is not None:
-        summary_rows.insert(1, {"metric": "patient_count", "value": person_count})
-
-    summary_df = pd.DataFrame(summary_rows, columns=["metric", "value"])
-
-    tables_df = pd.DataFrame(
-        [
-            {
-                "table": t.name,
-                "row_count": t.row_count,
-                "column_count": t.column_count,
-                "description": "",
-            }
-            for t in tables
-        ]
-    )
-
-    variables_rows = []
-    for col in columns:
-        variables_rows.append({
-            # Blank columns for the user to fill in:
-            "Category": "",
-            # Prefill Variable as "<table>/<column>" so rows stay unique
-            # even when the same column (value_as_number, concept_id, ...)
-            # appears in several tables. The "/" separator keeps the cell
-            # within the validator's VARIABLE_NAME_PATTERN in case anyone
-            # ever feeds a raw workbook through the validator. Rename to
-            # the display label ("AAT level", "Heart rate", ...) during
-            # review.
-            "Variable": f"{col.table}/{col.column}",
-            "Description": "",
-            # Auto-populated from the warehouse:
-            "Schema": col.table,
-            "Column(s)": col.column,
-            "Criteria": "",
-            "Values": col.top_values[0][0] if col.top_values else "",
-            "Distribution": col.distribution_cell(),
-            "Completeness": f"{col.completeness_pct:.1f}%",
-            "Extraction Type": "Structured",
-            "Notes": "",
-        })
-    variables_df = pd.DataFrame(variables_rows)
-
-    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        summary_df.to_excel(writer, sheet_name="Summary", index=False)
-        tables_df.to_excel(writer, sheet_name="Tables", index=False)
-        variables_df.to_excel(writer, sheet_name="Variables", index=False)
-
-    print(
-        f"\nWrote raw inventory workbook -> {out_path}\n"
-        "  QA use only; one row per source column, not a clinical\n"
-        "  dictionary. Category / Description / Extraction Type are\n"
-        "  blank and Variable is a table/column placeholder, so this\n"
-        "  workbook does not validate cleanly. Use --out-xlsx for\n"
-        "  the curated, validator-ready workbook.",
-        file=sys.stderr,
-    )
-
-
-# --------------------------------------------------------------------------- #
-# Pack loader (core + cohort rules from YAML)
-# --------------------------------------------------------------------------- #
-
-
 try:
     import yaml  # PyYAML — imported lazily in _require_yaml()
 except ImportError:  # pragma: no cover - handled at call time
@@ -601,43 +626,22 @@ PACKS_DIR = Path(__file__).resolve().parent / "packs"
 
 @dataclass
 class Pack:
-    """Merged runtime view of ``packs/core.yaml`` + ``packs/cohorts/<x>.yaml``."""
+    """Runtime view of ``packs/cohorts/<x>.yaml``.
 
-    slug: str  # pack filename stem, e.g. "mtc_aat" - used in CLI hints
-    cohort_name: str
-    schema_name: str
-    tables_to_skip: set[str]
-    sensitive_columns: set[str]
-    drop_column_patterns: list[re.Pattern[str]]
-    sampleable_types: set[str]
-    curation_rules: dict[str, dict[str, Any]]
-
-
-def _deep_merge(base: Any, overlay: Any) -> Any:
-    """Merge ``overlay`` onto ``base`` with the rules we agreed on:
-
-    * dicts → deep-merge (recurse per-key)
-    * lists → append (overlay extends base; stable order)
-    * scalars → replace
-
-    Neither side is mutated.
+    Declares the display name and warehouse schema for one cohort. The
+    pack file may also carry an optional ``validator:`` section read by
+    ``validate_dictionary.py``, but the generator itself only needs
+    these three fields.
     """
-    if isinstance(base, dict) and isinstance(overlay, dict):
-        merged: dict[str, Any] = {**base}
-        for key, value in overlay.items():
-            merged[key] = _deep_merge(base.get(key), value) if key in base else value
-        return merged
-    if isinstance(base, list) and isinstance(overlay, list):
-        return [*base, *overlay]
-    return overlay
+
+    slug: str           # pack filename stem, e.g. "mtc_aat"
+    cohort_name: str    # human-readable cohort label
+    schema_name: str    # actual Postgres schema (e.g. "mtc__aat_cohort")
 
 
 def load_pack(cohort: str, packs_dir: Path = PACKS_DIR) -> Pack:
-    """Load ``packs/core.yaml`` then overlay ``packs/cohorts/<cohort>.yaml``."""
-    core_path = packs_dir / "core.yaml"
+    """Load ``packs/cohorts/<cohort>.yaml`` and return a ``Pack``."""
     cohort_path = packs_dir / "cohorts" / f"{cohort}.yaml"
-    if not core_path.is_file():
-        raise FileNotFoundError(f"core pack missing: {core_path}")
     if not cohort_path.is_file():
         raise FileNotFoundError(
             f"cohort pack missing: {cohort_path}. Available: "
@@ -647,12 +651,10 @@ def load_pack(cohort: str, packs_dir: Path = PACKS_DIR) -> Pack:
         )
 
     y = _require_yaml()
-    core_data = y.safe_load(core_path.read_text(encoding="utf-8")) or {}
-    cohort_data = y.safe_load(cohort_path.read_text(encoding="utf-8")) or {}
-    merged = _deep_merge(core_data, cohort_data)
+    data = y.safe_load(cohort_path.read_text(encoding="utf-8")) or {}
 
-    cohort_name = merged.get("cohort_name")
-    schema_name = merged.get("schema_name")
+    cohort_name = data.get("cohort_name")
+    schema_name = data.get("schema_name")
     if not cohort_name or not schema_name:
         raise ValueError(
             f"cohort pack {cohort_path} must define cohort_name and schema_name"
@@ -662,817 +664,12 @@ def load_pack(cohort: str, packs_dir: Path = PACKS_DIR) -> Pack:
         slug=cohort,
         cohort_name=str(cohort_name),
         schema_name=str(schema_name),
-        tables_to_skip=set(merged.get("tables_to_skip", [])),
-        sensitive_columns=set(merged.get("sensitive_columns", [])),
-        drop_column_patterns=[
-            re.compile(p) for p in merged.get("drop_column_patterns", [])
-        ],
-        sampleable_types=set(merged.get("sampleable_types", [])),
-        curation_rules=dict(merged.get("curation_rules", {})),
     )
 
 
 def available_cohorts(packs_dir: Path = PACKS_DIR) -> list[str]:
     return sorted(p.stem for p in (packs_dir / "cohorts").glob("*.yaml"))
 
-
-DISTINCT_CONCEPTS_SQL_TEMPLATE = """
-SELECT "{column}"::text AS name, COUNT(*) AS n
-FROM "{schema}"."{table}"
-WHERE "{column}" IS NOT NULL
-GROUP BY "{column}"
-ORDER BY n DESC
-LIMIT %s;
-"""
-
-
-# For per-concept rows on fact tables: one query returns, per concept,
-# how many rows populate value_as_number / value_as_string /
-# value_as_concept_name. Used to pick the right source column (and
-# implicitly, the variable_type) per concept.
-CONCEPT_VALUE_SHAPE_SQL_TEMPLATE = """
-SELECT
-  "{group_col}"::text AS name,
-  COUNT(*) AS total,
-  COUNT("value_as_number") AS n_num,
-  COUNT(NULLIF(TRIM("value_as_string"::text), '')) AS n_str,
-  COUNT("value_as_concept_name") AS n_concept
-FROM "{schema}"."{table}"
-WHERE "{group_col}" IS NOT NULL
-GROUP BY "{group_col}"
-ORDER BY total DESC
-LIMIT %s;
-"""
-
-
-# Continuous summary for a single column (optionally scoped to a concept).
-CONTINUOUS_SUMMARY_SQL_TEMPLATE = """
-SELECT
-  MIN("{column}")::text AS min_val,
-  PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY "{column}")::text AS q1,
-  PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY "{column}")::text AS median,
-  PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "{column}")::text AS q3,
-  MAX("{column}")::text AS max_val
-FROM "{schema}"."{table}"
-WHERE "{column}" IS NOT NULL {concept_filter};
-"""
-
-
-# Date summary (min / max) for a single column.
-DATE_SUMMARY_SQL_TEMPLATE = """
-SELECT
-  MIN("{column}")::text AS min_val,
-  MAX("{column}")::text AS max_val
-FROM "{schema}"."{table}"
-WHERE "{column}" IS NOT NULL;
-"""
-
-
-# Categorical top-N with percentages for a single column.
-CATEGORICAL_SUMMARY_SQL_TEMPLATE = """
-WITH total AS (
-    SELECT COUNT(*)::numeric AS n FROM "{schema}"."{table}"
-    WHERE "{column}" IS NOT NULL
-)
-SELECT "{column}"::text AS val, COUNT(*) AS n,
-       ROUND(100.0 * COUNT(*) / NULLIF((SELECT n FROM total), 0), 1) AS pct
-FROM "{schema}"."{table}"
-WHERE "{column}" IS NOT NULL
-GROUP BY "{column}"
-ORDER BY COUNT(*) DESC
-LIMIT %s;
-"""
-
-
-def _fetch_concept_value_shape(
-    conn: psycopg.Connection,
-    schema: str,
-    table: str,
-    group_col: str,
-    limit: int,
-    available_value_cols: set[str] | None = None,
-) -> list[tuple[str, int, int, int, int]]:
-    """Return ``[(concept, total, n_num, n_str, n_concept), ...]`` for a fact
-    table, ranked by total count. Used to auto-pick the value column per
-    concept in per_concept mode.
-
-    Warehouse OMOP variants don't all carry every ``value_as_*`` column.
-    ``available_value_cols`` is the subset of {value_as_number,
-    value_as_string, value_as_concept_name} that the actual table has,
-    usually derived from the already-introspected ``ColumnInfo`` list.
-    Columns that are absent from the table are reported back as ``0`` so
-    ``_pick_value_column`` still picks sensibly without requiring extra
-    round-trips on a schema that lacks them.
-    """
-    available = available_value_cols or {
-        "value_as_number",
-        "value_as_string",
-        "value_as_concept_name",
-    }
-
-    # Build the SELECT so it only references columns that actually exist.
-    # Missing columns contribute ``0`` to the result.
-    def col_or_zero(name: str, expr: str) -> str:
-        return expr if name in available else "0"
-
-    count_num = col_or_zero("value_as_number", 'COUNT("value_as_number")')
-    count_str = col_or_zero(
-        "value_as_string",
-        'COUNT(NULLIF(TRIM("value_as_string"::text), \'\'))',
-    )
-    count_concept = col_or_zero(
-        "value_as_concept_name", 'COUNT("value_as_concept_name")'
-    )
-
-    sql = f"""
-        SELECT
-          "{group_col}"::text AS name,
-          COUNT(*) AS total,
-          {count_num} AS n_num,
-          {count_str} AS n_str,
-          {count_concept} AS n_concept
-        FROM "{schema}"."{table}"
-        WHERE "{group_col}" IS NOT NULL
-        GROUP BY "{group_col}"
-        ORDER BY total DESC
-        LIMIT %s;
-    """
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql, (limit,))
-            return [
-                (str(row[0]), int(row[1]), int(row[2]), int(row[3]), int(row[4]))
-                for row in cur.fetchall()
-            ]
-    except Exception as exc:
-        sys.stderr.write(
-            f"  concept value-shape query failed on {table}.{group_col}: {exc}\n"
-        )
-        conn.rollback()
-        return []
-
-
-def _pick_value_column(n_num: int, n_str: int, n_concept: int) -> tuple[str, str]:
-    """Return ``(column_name, variable_type)`` for the most-populated
-    value_as_* on an OMOP fact row. Ties break toward value_as_number."""
-    best = max(n_num, n_str, n_concept)
-    if best == 0:
-        return "value_as_number", "continuous"
-    if n_num == best:
-        return "value_as_number", "continuous"
-    if n_str == best:
-        return "value_as_string", "categorical"
-    return "value_as_concept_name", "categorical"
-
-
-def _summarize_continuous(
-    conn: psycopg.Connection,
-    schema: str,
-    table: str,
-    column: str,
-    concept_col: str | None = None,
-    concept_value: str | None = None,
-) -> str:
-    """Return a ``Min: ..., Q1: ..., Median: ..., Q3: ..., Max: ...`` string."""
-    params: list[Any] = []
-    concept_filter = ""
-    if concept_col and concept_value is not None:
-        concept_filter = f'AND "{concept_col}" = %s'
-        params.append(concept_value)
-    sql = CONTINUOUS_SUMMARY_SQL_TEMPLATE.format(
-        schema=schema, table=table, column=column, concept_filter=concept_filter
-    )
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql, tuple(params))
-            row = cur.fetchone()
-        if not row or row[0] is None:
-            return ""
-        mn, q1, median, q3, mx = (str(v) if v is not None else "—" for v in row)
-        return f"Min: {mn}, Q1: {q1}, Median: {median}, Q3: {q3}, Max: {mx}"
-    except Exception as exc:
-        sys.stderr.write(
-            f"  continuous summary failed on {table}.{column}: {exc}\n"
-        )
-        conn.rollback()
-        return ""
-
-
-def _summarize_date(
-    conn: psycopg.Connection, schema: str, table: str, column: str
-) -> str:
-    """Return ``Min: YYYY-MM-DD, Max: YYYY-MM-DD`` for a date/timestamp column."""
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                DATE_SUMMARY_SQL_TEMPLATE.format(
-                    schema=schema, table=table, column=column
-                )
-            )
-            row = cur.fetchone()
-        if not row or row[0] is None:
-            return ""
-        return f"Min: {row[0]}, Max: {row[1]}"
-    except Exception as exc:
-        sys.stderr.write(f"  date summary failed on {table}.{column}: {exc}\n")
-        conn.rollback()
-        return ""
-
-
-def _fetch_slice_completeness(
-    conn: psycopg.Connection,
-    schema: str,
-    table: str,
-    value_col: str,
-    concept_col: str,
-    concept_value: str,
-) -> float | None:
-    """Fraction of rows where ``value_col`` is populated among rows where
-    ``concept_col = concept_value``. Returns a 0-100 float or ``None`` on
-    error. Used for per-split completeness so a row whose ``Column(s)``
-    points at ``drug_concept_name`` reports the drug_concept_name
-    coverage rather than the group column's coverage.
-    """
-    sql = (
-        f'SELECT COUNT(*) AS total, '
-        f'       COUNT("{value_col}") AS populated '
-        f'FROM "{schema}"."{table}" '
-        f'WHERE "{concept_col}" = %s;'
-    )
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql, (concept_value,))
-            row = cur.fetchone()
-    except Exception as exc:
-        sys.stderr.write(
-            f"  slice completeness failed on {table}.{value_col}: {exc}\n"
-        )
-        conn.rollback()
-        return None
-    if not row or row[0] == 0:
-        return None
-    total, populated = int(row[0]), int(row[1])
-    return 100.0 * populated / total
-
-
-def _summarize_categorical_for_concept(
-    conn: psycopg.Connection,
-    schema: str,
-    table: str,
-    column: str,
-    concept_col: str,
-    concept_value: str,
-    limit: int = 5,
-) -> str:
-    """Top-N values of ``column`` scoped to rows where ``concept_col =
-    concept_value``. Returns ``val: n (pct%); ...``.
-    """
-    sql = f"""
-        WITH scoped AS (
-            SELECT "{column}"::text AS val
-            FROM "{schema}"."{table}"
-            WHERE "{concept_col}" = %s AND "{column}" IS NOT NULL
-        )
-        SELECT val, COUNT(*) AS n,
-               ROUND(100.0 * COUNT(*) / NULLIF((SELECT COUNT(*) FROM scoped), 0), 1) AS pct
-        FROM scoped
-        GROUP BY val
-        ORDER BY COUNT(*) DESC
-        LIMIT %s;
-    """
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql, (concept_value, limit))
-            fetched = cur.fetchall()
-    except Exception as exc:
-        sys.stderr.write(
-            f"  categorical-for-concept failed on {table}.{column}: {exc}\n"
-        )
-        conn.rollback()
-        return ""
-    parts = []
-    for val, n, pct in fetched:
-        display = str(val) if len(str(val)) <= 60 else str(val)[:57] + "..."
-        pct_str = f"{pct:.1f}" if pct is not None else "—"
-        parts.append(f"{display}: {n} ({pct_str}%)")
-    return "; ".join(parts)
-
-
-def _summarize_categorical(
-    conn: psycopg.Connection,
-    schema: str,
-    table: str,
-    column: str,
-    limit: int = 5,
-) -> str:
-    """Return ``val1: n (pct%), val2: n (pct%), ...`` for a categorical column."""
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                CATEGORICAL_SUMMARY_SQL_TEMPLATE.format(
-                    schema=schema, table=table, column=column
-                ),
-                (limit,),
-            )
-            rows_out = cur.fetchall()
-        parts = []
-        for val, n, pct in rows_out:
-            display = str(val) if len(str(val)) <= 60 else str(val)[:57] + "..."
-            pct_str = f"{pct:.1f}" if pct is not None else "—"
-            parts.append(f"{display}: {n} ({pct_str}%)")
-        return "; ".join(parts)
-    except Exception as exc:
-        sys.stderr.write(
-            f"  categorical summary failed on {table}.{column}: {exc}\n"
-        )
-        conn.rollback()
-        return ""
-
-
-def _column_is_dropped(table: str, column: str, pack: Pack) -> bool:
-    if table in pack.tables_to_skip:
-        return True
-    if column in pack.sensitive_columns:
-        return True
-    for pattern in pack.drop_column_patterns:
-        if pattern.match(column):
-            return True
-    return False
-
-
-def _fetch_distinct_concepts(
-    conn: psycopg.Connection,
-    schema: str,
-    table: str,
-    column: str,
-    limit: int,
-) -> list[tuple[str, int]]:
-    """Top-N concept names and their counts for a fact table's group column."""
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                DISTINCT_CONCEPTS_SQL_TEMPLATE.format(
-                    schema=schema, table=table, column=column
-                ),
-                (limit,),
-            )
-            return [(str(row[0]), int(row[1])) for row in cur.fetchall()]
-    except Exception as exc:
-        sys.stderr.write(
-            f"  skipping concept enumeration on {table}.{column}: {exc}\n"
-        )
-        conn.rollback()
-        return []
-
-
-def _column_lookup(columns: list[ColumnInfo]) -> dict[tuple[str, str], ColumnInfo]:
-    return {(c.table, c.column): c for c in columns}
-
-
-_VARIABLE_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
-
-# Characters the validator's VARIABLE_NAME_PATTERN accepts after the
-# leading letter. Anything outside this class (e.g. "[", "]", "#", ":",
-# "," typical of LOINC concept names) has to be rewritten into a safe
-# form so auto-generated rows don't fail invalid_variable_name.
-_VARIABLE_ALLOWED_CHAR_RE = re.compile(r"[A-Za-z0-9 _/().\-]")
-
-
-def _sanitize_variable_label(name: str) -> str:
-    """Rewrite ``name`` into a label that matches the validator's
-    VARIABLE_NAME_PATTERN while staying as readable as possible.
-
-    LOINC / clinical concept names routinely contain ``[``, ``]``, ``#``,
-    ``:``, ``,``, ``{``, ``}``. The validator's default pattern rejects
-    those. Rather than relaxing the pattern (which would also accept
-    garbage like ``!@$%``), we map:
-
-      * ``[`` / ``]`` / ``{`` / ``}``  -> dropped
-      * ``#`` / ``:`` / ``,`` / ``;``  -> dropped
-      * any other char outside the allowed class -> underscore
-      * runs of whitespace/underscores         -> collapsed to a single space
-      * leading / trailing whitespace          -> stripped
-
-    If the first char ends up non-alphabetic, we prepend ``V_`` so the
-    label still matches ``^[A-Za-z]...``. Preserves the original name
-    via the Criteria cell upstream.
-    """
-    if not name:
-        return ""
-
-    # Drop square / curly brackets and punctuation we can safely remove
-    # without mangling the readable form.
-    cleaned = re.sub(r"[\[\]{}#:,;]", "", name)
-    # Map anything else outside the allowed class to a space; collapse runs.
-    cleaned = "".join(
-        ch if _VARIABLE_ALLOWED_CHAR_RE.match(ch) else " " for ch in cleaned
-    )
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-
-    if not cleaned:
-        return "Unnamed concept"
-    if not cleaned[0].isalpha():
-        cleaned = "V_" + cleaned
-
-    # Cap at 64 chars (upstream truncation invariant) but end the label on
-    # a word boundary if possible so reviewers don't see "...".
-    if len(cleaned) > 64:
-        cap = cleaned[:64].rsplit(" ", 1)[0]
-        cleaned = cap if len(cap) >= 32 else cleaned[:61] + "..."
-    return cleaned
-
-
-def _normalize_variable_key(name: str) -> str:
-    """Dedupe key for Variable labels. Mirrors the validator's
-    normalize_token: lowercase, collapse non-alphanumerics to underscores.
-    """
-    return _VARIABLE_NORMALIZE_RE.sub("_", str(name).strip().lower()).strip("_")
-
-
-def _disambiguate_variable(
-    variable: str,
-    table_name: str,
-    seen: dict[str, int],
-    rows: list[dict[str, str]],
-) -> str:
-    """Ensure ``variable`` is unique under the validator's dedupe key.
-
-    If the normalized form of ``variable`` was already emitted, append
-    ``" (<table>)"``. If that's also taken, fall back to a numeric
-    suffix ``" (<table> N)"``. Updates ``seen`` to point at the latest
-    emission so long names that truncate to the same prefix don't
-    collide silently.
-    """
-    key = _normalize_variable_key(variable)
-    if key not in seen:
-        seen[key] = len(rows)
-        return variable
-
-    # First try table-qualified disambiguation - keeps the row readable.
-    candidate = f"{variable} ({table_name})"
-    candidate_key = _normalize_variable_key(candidate)
-    if candidate_key not in seen:
-        seen[candidate_key] = len(rows)
-        return candidate
-
-    # Fall back to a numeric suffix if even the table form collides.
-    suffix = 2
-    while True:
-        candidate = f"{variable} ({table_name} {suffix})"
-        candidate_key = _normalize_variable_key(candidate)
-        if candidate_key not in seen:
-            seen[candidate_key] = len(rows)
-            return candidate
-        suffix += 1
-
-
-def build_curated_variables(
-    conn: psycopg.Connection,
-    schema: str,
-    columns: list[ColumnInfo],
-    pack: Pack,
-) -> list[dict[str, str]]:
-    """Apply ``pack.curation_rules`` to the raw inventory and return
-    Century-format Variables-sheet rows ready for ``pd.DataFrame``.
-
-    Rows for fact tables (observation, measurement, etc.) are produced by
-    querying the distinct concept_name values and emitting one row per concept.
-    Demographic tables produce one row per curated column. Documents emit
-    hard-coded Unstructured rows.
-
-    Variable labels are deduplicated under the validator's normalization
-    rule before emission: a collision gets a ``(<table>)`` suffix so the
-    validator never fires ``duplicate_variable`` on our own output.
-    """
-    lookup = _column_lookup(columns)
-    rows: list[dict[str, str]] = []
-    # Shared across every row so dedupe spans all modes, not just per_concept.
-    seen_variables: dict[str, int] = {}
-
-    for table_name, recipe in pack.curation_rules.items():
-        mode = recipe["mode"]
-
-        # --- per_concept: one dictionary row per distinct concept_name value.
-        # Per concept, we look at the shape of value_as_number /
-        # value_as_string / value_as_concept_name to pick the right source
-        # column and variable type, then fetch a typed summary (continuous
-        # stats for numbers, top-N with pct for categoricals).
-        if mode == "per_concept":
-            group_col = recipe["group_by"]
-            info = lookup.get((table_name, group_col))
-            if info is None:
-                continue
-
-            # Only reference value_as_* columns that actually live on this
-            # table (some OMOP variants omit value_as_string on measurement,
-            # for instance). The inventory we already have tells us which
-            # columns are present without a second information_schema hit.
-            available_value_cols = {
-                c.column for c in columns
-                if c.table == table_name
-                and c.column in {
-                    "value_as_number",
-                    "value_as_string",
-                    "value_as_concept_name",
-                }
-            }
-            shapes = _fetch_concept_value_shape(
-                conn, schema, table_name, group_col,
-                recipe.get("max_concepts", 30),
-                available_value_cols=available_value_cols,
-            )
-            if not shapes:
-                # Fall back to simple concept count if the shape query failed.
-                for name, count in _fetch_distinct_concepts(
-                    conn, schema, table_name, group_col,
-                    recipe.get("max_concepts", 30),
-                ):
-                    shapes.append((name, count, 0, 0, 0))
-
-            fallback_col = recipe.get("value_column", "value_as_number")
-            for name, total, n_num, n_str, n_concept in shapes:
-                value_column, variable_type = _pick_value_column(
-                    n_num, n_str, n_concept
-                )
-                # Honour the pack's declared value_column if the data is
-                # ambiguous (total = 0 rows populated in any of them).
-                if n_num + n_str + n_concept == 0:
-                    value_column = fallback_col
-
-                # Per-concept completeness for the column we actually show.
-                # The ``info`` completeness (looked up from the grouping
-                # column) would describe concept_name coverage, not the
-                # value column, and would overstate sparse concepts. Using
-                # the shape counts avoids another round-trip.
-                column_populated = {
-                    "value_as_number": n_num,
-                    "value_as_string": n_str,
-                    "value_as_concept_name": n_concept,
-                }.get(value_column, 0)
-                row_completeness = (
-                    f"{(100 * column_populated / total):.1f}%"
-                    if total > 0
-                    else "0.0%"
-                )
-
-                if variable_type == "continuous":
-                    distribution = _summarize_continuous(
-                        conn, schema, table_name, value_column,
-                        concept_col=group_col, concept_value=name,
-                    )
-                else:
-                    # Categorical-within-concept: query distinct values of
-                    # the picked column, filtered to this concept.
-                    distribution = _summarize_categorical_for_concept(
-                        conn, schema, table_name, value_column,
-                        concept_col=group_col, concept_value=name,
-                    )
-
-                if not distribution:
-                    distribution = f"{name}: {total}"  # fall back to concept count
-
-                # Sanitize the concept name into a validator-safe display
-                # label; the raw name survives in the Criteria cell so the
-                # mapping back to source is not lost.
-                variable = _sanitize_variable_label(name)
-                variable = _disambiguate_variable(
-                    variable, table_name, seen_variables, rows
-                )
-                description = recipe.get(
-                    "description_template",
-                    "Concept '{name}' captured for the patient.",
-                ).format(name=name)
-                rows.append({
-                    "Category": recipe["category"],
-                    "Variable": variable,
-                    "Description": description,
-                    "Schema": table_name,
-                    "Column(s)": value_column,
-                    "Criteria": recipe["criteria_template"].format(name=name),
-                    "Values": "",
-                    "Distribution": distribution,
-                    "Completeness": row_completeness,
-                    "Extraction Type": recipe["extraction_type"],
-                    "Notes": "",
-                })
-            continue
-
-        # --- single_row_with_list: one row summarising the whole fact table
-        if mode == "single_row_with_list":
-            group_col = recipe["group_by"]
-            info = lookup.get((table_name, group_col))
-            if info is None:
-                continue
-            concepts = _fetch_distinct_concepts(
-                conn, schema, table_name, group_col, recipe.get("max_values", 50)
-            )
-            values_cell = ", ".join(name for name, _ in concepts[:20])
-            distribution_cell = "; ".join(f"{n}: {c}" for n, c in concepts[:5])
-            variable = _disambiguate_variable(
-                recipe["variable"], table_name, seen_variables, rows
-            )
-            rows.append({
-                "Category": recipe["category"],
-                "Variable": variable,
-                "Description": recipe["description"],
-                "Schema": table_name,
-                "Column(s)": recipe["value_column"],
-                "Criteria": "",
-                "Values": values_cell,
-                "Distribution": distribution_cell,
-                "Completeness": f"{info.completeness_pct:.1f}%",
-                "Extraction Type": recipe["extraction_type"],
-                "Notes": "",
-            })
-            continue
-
-        # --- split_by_type: one row per pre-declared drug type
-        if mode == "split_by_type":
-            group_col = recipe["group_by"]
-            info = lookup.get((table_name, group_col))
-            if info is None:
-                continue
-            for drug_type, split_cfg in recipe["splits"].items():
-                # Scope the top-N of ``value_column`` to rows where
-                # ``group_by = drug_type``. Fills Values + Distribution so
-                # the validator does not warn missing_value_context.
-                distribution = _summarize_categorical_for_concept(
-                    conn,
-                    schema,
-                    table_name,
-                    recipe["value_column"],
-                    concept_col=group_col,
-                    concept_value=drug_type,
-                )
-                # Derive a compact Values cell from the same top-N (drug
-                # names only, no counts/pct) so reviewers see a quick
-                # example without re-running a query.
-                values_cell = ", ".join(
-                    seg.split(":", 1)[0].strip()
-                    for seg in distribution.split(";")
-                    if seg.strip()
-                )[:400]  # keep the cell manageable in Excel
-
-                # Fallback when the drug type is declared in the pack but
-                # absent from (or silent in) the data: avoid blanks so the
-                # validator does not fire missing_value_context. The
-                # placeholder still tells a reviewer which split this row
-                # belongs to.
-                if not distribution:
-                    distribution = f"(no rows with {group_col} = '{drug_type}')"
-                if not values_cell:
-                    values_cell = drug_type
-
-                # Per-split completeness on the displayed value_column
-                # (drug_concept_name), not on the group_by column. Using
-                # group_by coverage would overstate completeness
-                # whenever drug names are sparser than drug types.
-                slice_pct = _fetch_slice_completeness(
-                    conn,
-                    schema,
-                    table_name,
-                    value_col=recipe["value_column"],
-                    concept_col=group_col,
-                    concept_value=drug_type,
-                )
-                completeness_cell = (
-                    f"{slice_pct:.1f}%" if slice_pct is not None
-                    else f"{info.completeness_pct:.1f}%"
-                )
-
-                variable = _disambiguate_variable(
-                    split_cfg["variable"], table_name, seen_variables, rows
-                )
-                rows.append({
-                    "Category": split_cfg["category"],
-                    "Variable": variable,
-                    "Description": split_cfg["description"],
-                    "Schema": table_name,
-                    "Column(s)": recipe["value_column"],
-                    "Criteria": recipe["criteria_template"].format(name=drug_type),
-                    "Values": values_cell,
-                    "Distribution": distribution,
-                    "Completeness": completeness_cell,
-                    "Extraction Type": recipe["extraction_type"],
-                    "Notes": "",
-                })
-            continue
-
-        # --- keep_columns: one row per named demographic column.
-        # Each column spec may carry ``variable_type`` to drive the summary:
-        #   categorical - top values with pct
-        #   continuous  - Min/Q1/Median/Q3/Max
-        #   date        - Min/Max
-        #   identifier  - row skipped entirely
-        #   free_text   - row emitted with Unstructured extraction, no stats
-        if mode == "keep_columns":
-            for col_name, cfg in recipe["columns"].items():
-                info = lookup.get((table_name, col_name))
-                if info is None or info.dropped:
-                    # A column the pack wants to surface but the pack-level
-                    # safety filter excluded from sampling. Skip so we don't
-                    # emit a row whose stats are all zero.
-                    continue
-                variable_type = cfg.get("variable_type", "categorical")
-                if variable_type == "identifier":
-                    continue
-
-                extraction_type = "Structured"
-                values_cell = ""
-                distribution_cell = ""
-
-                if variable_type == "continuous":
-                    distribution_cell = _summarize_continuous(
-                        conn, schema, table_name, col_name
-                    )
-                elif variable_type == "date":
-                    distribution_cell = _summarize_date(
-                        conn, schema, table_name, col_name
-                    )
-                elif variable_type == "free_text":
-                    extraction_type = "Unstructured"
-                else:  # categorical (default)
-                    distribution_cell = _summarize_categorical(
-                        conn, schema, table_name, col_name
-                    ) or info.distribution_cell()
-                    # Values is a compact, comma-separated enumeration
-                    # (e.g. "Female, Male") so reviewers see the allowed
-                    # set at a glance. The Distribution cell carries the
-                    # counts / percentages separately.
-                    values_cell = ", ".join(
-                        v for v, _ in info.top_values[:10]
-                    )
-
-                variable = _disambiguate_variable(
-                    cfg["variable"], table_name, seen_variables, rows
-                )
-                rows.append({
-                    "Category": recipe["category"],
-                    "Variable": variable,
-                    "Description": cfg["description"],
-                    "Schema": table_name,
-                    "Column(s)": col_name,
-                    "Criteria": "",
-                    "Values": values_cell,
-                    "Distribution": distribution_cell,
-                    "Completeness": f"{info.completeness_pct:.1f}%",
-                    "Extraction Type": extraction_type,
-                    "Notes": "",
-                })
-            continue
-
-        # --- static: hard-coded Unstructured rows for notes / documents.
-        # Emit a row only when (a) the table exists in the inventory AND
-        # (b) the configured source column exists on it. Silently
-        # fabricating a row with a fallback 100% completeness for a
-        # missing column would turn schema drift into a misleadingly
-        # perfect dictionary entry. We log the drift to stderr so the
-        # reviewer can fix the pack or the schema.
-        if mode == "static":
-            present_tables = {c.table for c in columns}
-            if table_name not in present_tables:
-                continue
-            for spec in recipe["rows"]:
-                info = lookup.get((table_name, spec["column"]))
-                if info is None:
-                    sys.stderr.write(
-                        f"  skipping static row '{spec['variable']}': "
-                        f"column '{spec['column']}' not found on "
-                        f"{schema}.{table_name}. Fix the pack or the "
-                        f"source schema.\n"
-                    )
-                    continue
-
-                completeness = f"{info.completeness_pct:.1f}%"
-                # Give the validator something in Values so the unstructured
-                # row does not trip missing_value_context. The point of the
-                # cell for unstructured rows is to tell a reviewer what
-                # kind of content lives in the source field, not to
-                # enumerate values.
-                values_cell = spec.get(
-                    "values", f"Unstructured content - see {spec['column']}."
-                )
-                distribution_cell = spec.get(
-                    "distribution", f"{info.row_count:,} records"
-                )
-                variable = _disambiguate_variable(
-                    spec["variable"], table_name, seen_variables, rows
-                )
-                rows.append({
-                    "Category": recipe["category"],
-                    "Variable": variable,
-                    "Description": spec["description"],
-                    "Schema": table_name,
-                    "Column(s)": spec["column"],
-                    "Criteria": spec.get("criteria", ""),
-                    "Values": values_cell,
-                    "Distribution": distribution_cell,
-                    "Completeness": completeness,
-                    "Extraction Type": spec["extraction_type"],
-                    "Notes": "",
-                })
-
-    return rows
 
 
 def write_curated_xlsx(
@@ -1485,7 +682,28 @@ def write_curated_xlsx(
     person_count: int | None,
     pack: Pack,
 ) -> None:
-    """Write a curated Century-format workbook: one row per business variable."""
+    """Write a simple data dictionary workbook.
+
+    Two sheets, nothing clever:
+
+      Summary     cohort / patient_count / table_count / column_count
+      Variables   one row per column of every accessible table, in the
+                  column layout of the Century reference PDF:
+                    Category | Variable | Description | Table(s) |
+                    Column(s) | Criteria | Values | Distribution |
+                    Median (IQR) | Completeness | Extraction Type |
+                    Notes
+
+    Distribution cell rules (by Postgres data type):
+      categorical types  ``Female: 620 (58.1%); Male: 440 (41.3%); ...``
+      numeric types      ``Min: X, Max: Y, Mean: M (std: S)``
+      date/timestamp     ``Min: YYYY-MM-DD, Max: YYYY-MM-DD``
+      text (unstructured)  blank
+
+    Median (IQR) cell is populated only for numeric types.
+    Category / Description / Criteria / Notes are left blank for the
+    reviewer to fill in.
+    """
     try:
         import pandas as pd
     except ImportError as exc:
@@ -1495,32 +713,41 @@ def write_curated_xlsx(
         )
         raise SystemExit(3) from exc
 
-    variables_rows = build_curated_variables(conn, schema, columns, pack)
-
     summary_rows = [
         {"metric": "cohort", "value": cohort},
-        {"metric": "output_kind", "value": "curated + all-columns"},
-        {"metric": "variable_count", "value": len(variables_rows)},
-        {"metric": "all_columns_count", "value": len(columns)},
-        {"metric": "source_table_count", "value": len(tables)},
+        {"metric": "table_count", "value": len(tables)},
+        {"metric": "column_count", "value": len(columns)},
     ]
     if person_count is not None:
         summary_rows.insert(1, {"metric": "patient_count", "value": person_count})
     summary_df = pd.DataFrame(summary_rows, columns=["metric", "value"])
 
-    curated_tables = sorted({row["Schema"] for row in variables_rows})
-    tables_df = pd.DataFrame(
-        [
-            {
-                "table": t.name,
-                "row_count": t.row_count,
-                "column_count": t.column_count,
-                "included_in_dictionary": "yes" if t.name in curated_tables else "no",
-                "description": "",
-            }
-            for t in tables
-        ]
-    )
+    variables_rows: list[dict[str, str]] = []
+    for col in columns:
+        kind = _classify_metric_kind(col.data_type)
+        extraction_type = "Unstructured" if kind == "unstructured" else "Structured"
+        # ``Distribution`` carries whichever typed summary was computed
+        # for this column. Continuous rows get the Min/Max/Mean(std) form;
+        # date rows get Min/Max; categorical rows get the value-count list.
+        distribution_cell = col.value_distribution or col.numeric_summary
+        # ``Values`` is a compact comma-joined list of the top categorical
+        # values (no counts), mirroring the Alzheimer's reference.
+        values_cell = ", ".join(v for v, _ in col.top_values[:10])
+
+        variables_rows.append({
+            "Category": "",
+            "Variable": col.column,
+            "Description": "",
+            "Table(s)": col.table,
+            "Column(s)": col.column,
+            "Criteria": "",
+            "Values": values_cell,
+            "Distribution": distribution_cell,
+            "Median (IQR)": col.median_iqr,
+            "Completeness": f"{col.completeness_pct:.1f}%",
+            "Extraction Type": extraction_type,
+            "Notes": "",
+        })
 
     variables_df = pd.DataFrame(
         variables_rows,
@@ -1528,69 +755,130 @@ def write_curated_xlsx(
             "Category",
             "Variable",
             "Description",
-            "Schema",
+            "Table(s)",
             "Column(s)",
             "Criteria",
             "Values",
             "Distribution",
+            "Median (IQR)",
             "Completeness",
             "Extraction Type",
             "Notes",
         ],
     )
 
-    # ``All Columns`` sheet: one row per column on every non-skipped
-    # table, matching what VS Code's PostgreSQL explorer would show.
-    # ``Sampled=no`` marks columns the pack excluded from sampling
-    # (plumbing like ``*_id`` / ``*_source_value`` or flagged sensitive
-    # names) so their null-count and top-values stay empty. Tables in
-    # pack.tables_to_skip remain excluded entirely - PII-class source
-    # tables don't reach this sheet.
-    all_columns_df = pd.DataFrame(
-        [
-            {
-                "Schema": col.table,
-                "Column": col.column,
-                "Data Type": col.data_type,
-                "Nullable": "yes" if col.is_nullable else "no",
-                "Sampled": "no" if col.dropped else "yes",
-                "Row Count": col.row_count,
-                "Null Count": "" if col.dropped else col.null_count,
-                "Completeness": "" if col.dropped else f"{col.completeness_pct:.1f}%",
-                "Top Values": col.distribution_cell(),
-            }
-            for col in columns
-        ],
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        variables_df.to_excel(writer, sheet_name="Variables", index=False)
+
+    # Print the full validate command including --cohort so the user
+    print(
+        f"\nWrote dictionary -> {out_path}\n"
+        f"  {len(variables_rows)} column(s) across {len(tables)} source table(s)\n"
+        f"  Fill in Category / Description / Criteria where blank",
+        file=sys.stderr,
+    )
+
+
+def write_curated_html(
+    columns: list[ColumnInfo],
+    tables: list[TableInfo],
+    out_path: Path,
+    cohort: str,
+    person_count: int | None,
+) -> None:
+    """Write the same data as ``write_curated_xlsx`` to an HTML file.
+
+    Two tables - Summary and Variables - in the column layout of the
+    Century reference PDF. Styled so it's readable straight in a browser
+    without a stylesheet, but light enough to paste into an email.
+    """
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        sys.stderr.write(
+            "pandas is not installed; install it to emit HTML: "
+            "pip install pandas\n"
+        )
+        raise SystemExit(3) from exc
+
+    summary_rows = [
+        {"metric": "cohort", "value": cohort},
+        {"metric": "table_count", "value": len(tables)},
+        {"metric": "column_count", "value": len(columns)},
+    ]
+    if person_count is not None:
+        summary_rows.insert(1, {"metric": "patient_count", "value": person_count})
+    summary_df = pd.DataFrame(summary_rows, columns=["metric", "value"])
+
+    variables_rows: list[dict[str, str]] = []
+    for col in columns:
+        kind = _classify_metric_kind(col.data_type)
+        extraction_type = "Unstructured" if kind == "unstructured" else "Structured"
+        distribution_cell = col.value_distribution or col.numeric_summary
+        values_cell = ", ".join(v for v, _ in col.top_values[:10])
+        variables_rows.append({
+            "Category": "",
+            "Variable": col.column,
+            "Description": "",
+            "Table(s)": col.table,
+            "Column(s)": col.column,
+            "Criteria": "",
+            "Values": values_cell,
+            "Distribution": distribution_cell,
+            "Median (IQR)": col.median_iqr,
+            "Completeness": f"{col.completeness_pct:.1f}%",
+            "Extraction Type": extraction_type,
+            "Notes": "",
+        })
+    variables_df = pd.DataFrame(
+        variables_rows,
         columns=[
-            "Schema",
-            "Column",
-            "Data Type",
-            "Nullable",
-            "Sampled",
-            "Row Count",
-            "Null Count",
-            "Completeness",
-            "Top Values",
+            "Category", "Variable", "Description",
+            "Table(s)", "Column(s)", "Criteria",
+            "Values", "Distribution", "Median (IQR)",
+            "Completeness", "Extraction Type", "Notes",
         ],
     )
 
-    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        summary_df.to_excel(writer, sheet_name="Summary", index=False)
-        tables_df.to_excel(writer, sheet_name="Tables", index=False)
-        variables_df.to_excel(writer, sheet_name="Variables", index=False)
-        all_columns_df.to_excel(writer, sheet_name="All Columns", index=False)
+    summary_html = summary_df.to_html(index=False, escape=True, border=0)
+    variables_html = variables_df.to_html(index=False, escape=True, border=0)
 
-    # Print the full validate command including --cohort so the user
-    # picks up the pack's validator overlay (e.g. cohort-specific
-    # schemas like 'infusion' that the built-in defaults don't know
-    # about). Without --cohort the overlay is skipped and the
-    # validator re-fires unexpected_schema_value warnings.
+    page = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Dictionary — {cohort}</title>
+<style>
+  body {{ font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+          margin: 24px; color: #222; }}
+  h1 {{ font-size: 1.4rem; margin-bottom: 4px; }}
+  h2 {{ font-size: 1.1rem; margin-top: 28px; color: #444; }}
+  table {{ border-collapse: collapse; font-size: 0.88rem;
+           margin-top: 8px; }}
+  th, td {{ border: 1px solid #ccc; padding: 6px 10px;
+            vertical-align: top; text-align: left; }}
+  th {{ background: #f2f4f7; font-weight: 600; }}
+  tr:nth-child(even) td {{ background: #fafbfc; }}
+  caption {{ caption-side: top; padding: 4px 0; font-weight: 600; }}
+</style>
+</head>
+<body>
+<h1>Data Dictionary</h1>
+<div>Cohort: <code>{cohort}</code></div>
+
+<h2>Summary</h2>
+{summary_html}
+
+<h2>Variables</h2>
+{variables_html}
+</body>
+</html>
+"""
+    out_path.write_text(page, encoding="utf-8")
     print(
-        f"\nWrote curated dictionary -> {out_path}\n"
-        f"  {len(variables_rows)} variable(s) covering {len(curated_tables)} source table(s)\n"
-        f"  Fill in Description (and review Category) where blank\n"
-        f"  Then validate: python validate_dictionary.py "
-        f"--input {out_path} --cohort {pack.slug}",
+        f"\nWrote dictionary -> {out_path}\n"
+        f"  {len(variables_rows)} column(s) across {len(tables)} source table(s)",
         file=sys.stderr,
     )
 
@@ -1629,35 +917,28 @@ def _parser() -> argparse.ArgumentParser:
         help="List available cohort packs and exit.",
     )
     parser.add_argument(
-        "--out-csv",
-        type=Path,
-        default=None,
-        help="Write raw introspection to this CSV (one row per column).",
-    )
-    parser.add_argument(
         "--out-xlsx",
         type=Path,
         default=None,
         help=(
-            "Write a curated Century-style dictionary workbook "
-            "(one row per business variable; fact tables collapsed by "
-            "concept_name). This is usually what you want."
+            "Write the dictionary as an Excel workbook (Summary + "
+            "Variables, one row per column of every table)."
         ),
     )
     parser.add_argument(
-        "--out-xlsx-raw",
+        "--out-html",
         type=Path,
         default=None,
         help=(
-            "Write the raw inventory as a workbook (one row per source "
-            "column; includes every plumbing field). Useful for QA only."
+            "Write the dictionary as a single-page HTML file. Can be "
+            "combined with --out-xlsx."
         ),
     )
     parser.add_argument(
         "--sample-values",
         type=int,
         default=5,
-        help="Top-N frequent values per column (0 to disable).",
+        help="Top-N frequent values per categorical column (0 to disable).",
     )
     parser.add_argument(
         "--list-schemas",
@@ -1776,8 +1057,6 @@ def _main(argv: list[str] | None = None) -> int:
         )
         person_count = fetch_person_count(conn, schema_name)
 
-        # The curated writer needs an open connection to enumerate concepts,
-        # so run it inside the ``with`` block.
         if args.out_xlsx:
             write_curated_xlsx(
                 conn=conn,
@@ -1789,21 +1068,17 @@ def _main(argv: list[str] | None = None) -> int:
                 person_count=person_count,
                 pack=pack,
             )
+        if args.out_html:
+            write_curated_html(
+                columns=columns,
+                tables=tables,
+                out_path=args.out_html,
+                cohort=pack.cohort_name,
+                person_count=person_count,
+            )
 
     if not quiet:
         print_tree(columns)
-
-    if args.out_csv:
-        write_raw_csv(columns, args.out_csv)
-
-    if args.out_xlsx_raw:
-        write_dictionary_xlsx(
-            columns=columns,
-            tables=tables,
-            out_path=args.out_xlsx_raw,
-            cohort=pack.cohort_name,
-            person_count=person_count,
-        )
 
     return 0 if columns else 1
 
