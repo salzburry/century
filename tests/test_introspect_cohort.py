@@ -519,6 +519,23 @@ class BuildCuratedVariablesTests(unittest.TestCase):
         single failed test rather than killing the whole suite."""
         self.assertTrue(issubclass(ic.MissingDependencyError, RuntimeError))
 
+    def test_invalid_cohort_name_exits_cleanly(self) -> None:
+        """A wrong --cohort should print a user-facing error and exit 1,
+        not print a full traceback."""
+        import contextlib, io
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = ic.main(["--cohort", "does_not_exist_xyz"])
+
+        self.assertEqual(code, 1)
+        stderr = err.getvalue()
+        self.assertIn("cohort pack missing", stderr)
+        # Should not be a Python traceback.
+        self.assertNotIn("Traceback", stderr)
+        # Should hint at --list-cohorts.
+        self.assertIn("--list-cohorts", stderr)
+
     def test_split_by_type_fallback_when_no_rows(self) -> None:
         """If the categorical-for-concept query returns nothing (drug type
         declared in the pack but no rows in data), the split row must
@@ -672,6 +689,34 @@ class ValidatorProfileOverrideTests(unittest.TestCase):
     def test_scalar_overlay_replaces(self) -> None:
         self.vd.apply_profile_overrides({"cohort_name": "another_cohort"})
         self.assertEqual(self.vd.COHORT_NAME, "another_cohort")
+
+    def test_repeated_apply_is_idempotent(self) -> None:
+        """Calling apply_profile_overrides twice must not stack.
+        The second call's result must equal the single-call result."""
+        self.vd.apply_profile_overrides({"required_columns": ["extra_a"]})
+        self.vd.apply_profile_overrides({"required_columns": ["extra_b"]})
+        self.assertIn("extra_b", self.vd.REQUIRED_COLUMNS)
+        self.assertNotIn(
+            "extra_a", self.vd.REQUIRED_COLUMNS,
+            "the first overlay leaked into the second apply - overrides are not idempotent",
+        )
+
+    def test_reset_restores_defaults(self) -> None:
+        """reset_profile_overrides() must undo every prior overlay."""
+        baseline_cohort = self.vd.COHORT_NAME
+        baseline_cols = list(self.vd.REQUIRED_COLUMNS)
+        baseline_extraction = set(self.vd.ALLOWED_EXTRACTION_TYPES)
+
+        self.vd.apply_profile_overrides({
+            "cohort_name": "x",
+            "required_columns": ["extra"],
+            "allowed_extraction_types": ["New"],
+        })
+        self.vd.reset_profile_overrides()
+
+        self.assertEqual(self.vd.COHORT_NAME, baseline_cohort)
+        self.assertEqual(self.vd.REQUIRED_COLUMNS, baseline_cols)
+        self.assertEqual(self.vd.ALLOWED_EXTRACTION_TYPES, baseline_extraction)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -44,11 +44,11 @@ Typical usage::
     # column - useful only for QA. Descriptions on the curated workbook
     # are intentionally blank; fill them in before circulating.
 
-    python validate_dictionary.py --input mtc_aat_cohort.xlsx
+    python validate_dictionary.py --input mtc_aat_cohort.xlsx --cohort mtc_aat
 
-Dependencies::
+Dependencies (see ``requirements.txt``)::
 
-    pip install 'psycopg[binary]' pandas openpyxl
+    pip install 'psycopg[binary]' pandas openpyxl pyyaml
 """
 
 from __future__ import annotations
@@ -525,9 +525,12 @@ def write_dictionary_xlsx(
         variables_df.to_excel(writer, sheet_name="Variables", index=False)
 
     print(
-        f"\nWrote dictionary workbook -> {out_path}\n"
-        "  Fill in Category / Description / Criteria / Extraction Type\n"
-        f"  Then validate: python validate_dictionary.py --input {out_path}",
+        f"\nWrote raw inventory workbook -> {out_path}\n"
+        "  QA use only; one row per source column, not a clinical\n"
+        "  dictionary. Category / Description / Extraction Type are\n"
+        "  blank and Variable is a table/column placeholder, so this\n"
+        "  workbook does not validate cleanly. Use --out-xlsx for\n"
+        "  the curated, validator-ready workbook.",
         file=sys.stderr,
     )
 
@@ -563,6 +566,7 @@ PACKS_DIR = Path(__file__).resolve().parent / "packs"
 class Pack:
     """Merged runtime view of ``packs/core.yaml`` + ``packs/cohorts/<x>.yaml``."""
 
+    slug: str  # pack filename stem, e.g. "mtc_aat" - used in CLI hints
     cohort_name: str
     schema_name: str
     tables_to_skip: set[str]
@@ -618,6 +622,7 @@ def load_pack(cohort: str, packs_dir: Path = PACKS_DIR) -> Pack:
         )
 
     return Pack(
+        slug=cohort,
         cohort_name=str(cohort_name),
         schema_name=str(schema_name),
         tables_to_skip=set(merged.get("tables_to_skip", [])),
@@ -1394,11 +1399,17 @@ def write_curated_xlsx(
         tables_df.to_excel(writer, sheet_name="Tables", index=False)
         variables_df.to_excel(writer, sheet_name="Variables", index=False)
 
+    # Print the full validate command including --cohort so the user
+    # picks up the pack's validator overlay (e.g. cohort-specific
+    # schemas like 'infusion' that the built-in defaults don't know
+    # about). Without --cohort the overlay is skipped and the
+    # validator re-fires unexpected_schema_value warnings.
     print(
         f"\nWrote curated dictionary -> {out_path}\n"
         f"  {len(variables_rows)} variable(s) covering {len(curated_tables)} source table(s)\n"
         f"  Fill in Description (and review Category) where blank\n"
-        f"  Then validate: python validate_dictionary.py --input {out_path}",
+        f"  Then validate: python validate_dictionary.py "
+        f"--input {out_path} --cohort {pack.slug}",
         file=sys.stderr,
     )
 
@@ -1484,9 +1495,34 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point with friendly handling of the expected failure modes.
+
+    Expected exceptions that should *not* surface as a traceback:
+
+      MissingDependencyError  - pyyaml / psycopg not installed
+      FileNotFoundError       - wrong --cohort name, no .env credentials,
+                                missing input workbook
+      ValueError              - malformed pack YAML, unsupported source
+                                type on --input
+
+    Everything else is a genuine crash and is allowed to propagate so
+    the stacktrace lands in the log where someone can diagnose it.
+    """
     try:
         return _main(argv)
     except MissingDependencyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        if "cohort pack missing" in str(exc):
+            print(
+                "hint: run 'python introspect_cohort.py --list-cohorts' "
+                "to see available packs.",
+                file=sys.stderr,
+            )
+        return 1
+    except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
