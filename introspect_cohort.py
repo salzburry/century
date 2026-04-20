@@ -1,33 +1,43 @@
 #!/usr/bin/env python3
-"""Introspect a Postgres schema (default: ``mtc_aat_cohort``) and dump its
-tables, columns, data types, row counts, and NULL completeness so the output
-can seed a clinical coding dictionary draft.
+"""Introspect a Postgres schema (default: ``mtc_aat_cohort``) and optionally
+write a Century-format dictionary workbook straight out of the database.
 
-Run it locally where you have DB access (my sandbox doesn't). The warehouse
-connection is read from environment variables so nothing sensitive is
-hard-coded.
+One file, end-to-end:
 
-Required env vars (or pass the equivalent ``--`` flags):
+    1. Connect to the warehouse using the standard PG* env vars.
+    2. Walk every table in the target schema.
+    3. For every column, collect data type, row count, NULL count,
+       completeness %, and the top-N frequent values.
+    4. Print a tree to stdout and, if requested, write the draft to CSV
+       and/or an XLSX workbook with Summary / Tables / Variables sheets
+       that ``validate_dictionary.py`` can read directly.
+
+You still fill in ``category``, ``description``, ``criteria``, ``extraction_type``
+by hand (the schema does not know those). Everything else is pre-populated.
+
+Required env vars (or the equivalent ``--`` flags):
     PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD
 
 Optional:
     PGSSLMODE   (default: require - typical for RDS/Aurora)
 
-Example usage::
+Typical usage::
 
     export PGHOST=chealth-stage-db.ct4u6ogcouw8.us-east-1.rds.amazonaws.com
-    export PGPORT=5432
     export PGDATABASE=clinical
     export PGUSER=onkar
     export PGPASSWORD='***'
 
-    python introspect_cohort.py                         # prints to stdout
-    python introspect_cohort.py --schema mtc_aat_cohort --out cohort.csv
-    python introspect_cohort.py --schema mtc_aat_cohort --sample-values 5
+    python introspect_cohort.py                                    # tree only
+    python introspect_cohort.py --out-csv fields.csv               # + CSV
+    python introspect_cohort.py --out-xlsx mtc_aat_cohort.xlsx     # + workbook
+
+    # then edit the XLSX (category/description/criteria/extraction_type)
+    python validate_dictionary.py --input mtc_aat_cohort.xlsx
 
 Dependencies::
 
-    pip install psycopg[binary]
+    pip install 'psycopg[binary]' pandas openpyxl
 """
 
 from __future__ import annotations
@@ -42,9 +52,7 @@ from pathlib import Path
 try:
     import psycopg  # psycopg 3.x
 except ImportError:  # pragma: no cover
-    sys.stderr.write(
-        "psycopg is not installed. Run: pip install 'psycopg[binary]'\n"
-    )
+    sys.stderr.write("psycopg is not installed. Run: pip install 'psycopg[binary]'\n")
     raise SystemExit(1)
 
 
@@ -108,6 +116,8 @@ ORDER BY n DESC
 LIMIT %s;
 """
 
+PERSON_COUNT_SQL_TEMPLATE = 'SELECT COUNT(*) FROM "{schema}".person;'
+
 
 # --------------------------------------------------------------------------- #
 # Dataclasses
@@ -126,23 +136,44 @@ class ColumnInfo:
     completeness_pct: float  # 0-100
     top_values: list[tuple[str, int]]
 
-    def to_row(self) -> dict[str, str]:
-        return {
-            "schema": self.schema,
-            "table": self.table,
-            "column": self.column,
-            "data_type": self.data_type,
-            "is_nullable": "yes" if self.is_nullable else "no",
-            "row_count": str(self.row_count),
-            "null_count": str(self.null_count),
-            "completeness_pct": f"{self.completeness_pct:.1f}",
-            "top_values": "; ".join(f"{v}: {n}" for v, n in self.top_values),
-        }
+    def distribution_cell(self) -> str:
+        if not self.top_values:
+            return ""
+        parts = []
+        for value, count in self.top_values:
+            display = value if len(value) <= 60 else value[:57] + "..."
+            parts.append(f"{display}: {count}")
+        return "; ".join(parts)
+
+
+@dataclass
+class TableInfo:
+    name: str
+    row_count: int
+    column_count: int
 
 
 # --------------------------------------------------------------------------- #
-# Main flow
+# Introspection
 # --------------------------------------------------------------------------- #
+
+
+# Types we compute top-N distributions for. Long free text gets skipped.
+SAMPLEABLE_TYPES = {
+    "character varying",
+    "varchar",
+    "text",
+    "character",
+    "name",
+    "integer",
+    "bigint",
+    "smallint",
+    "numeric",
+    "real",
+    "double precision",
+    "boolean",
+    "date",
+}
 
 
 def introspect(
@@ -150,13 +181,9 @@ def introspect(
     schema: str,
     sample_values: int,
     include_top_for_types: set[str],
-) -> list[ColumnInfo]:
-    """Walk every table/column in ``schema`` and collect structural + QC info.
-
-    ``include_top_for_types`` controls which data types we compute top-N values
-    for (skip them on long free-text columns to keep the script fast).
-    """
-    results: list[ColumnInfo] = []
+) -> tuple[list[ColumnInfo], list[TableInfo]]:
+    columns_out: list[ColumnInfo] = []
+    tables_out: list[TableInfo] = []
 
     with conn.cursor() as cur:
         cur.execute(LIST_TABLES_SQL, (schema,))
@@ -164,7 +191,7 @@ def introspect(
 
     if not tables:
         sys.stderr.write(f"No tables found in schema '{schema}'.\n")
-        return results
+        return columns_out, tables_out
 
     for table in tables:
         with conn.cursor() as cur:
@@ -174,7 +201,11 @@ def introspect(
             cur.execute(LIST_COLUMNS_SQL, (schema, table))
             columns = cur.fetchall()
 
-        print(f"  {schema}.{table}  ({row_count:,} rows, {len(columns)} cols)", file=sys.stderr)
+        tables_out.append(TableInfo(name=table, row_count=row_count, column_count=len(columns)))
+        print(
+            f"  {schema}.{table}  ({row_count:,} rows, {len(columns)} cols)",
+            file=sys.stderr,
+        )
 
         for col_row in columns:
             column_name, data_type, is_nullable_str, _max_len, _prec = col_row
@@ -201,11 +232,9 @@ def introspect(
                         )
                         top_values = [(str(v), int(n)) for v, n in cur.fetchall()]
 
-            completeness = 0.0
-            if row_count > 0:
-                completeness = (1 - null_count / row_count) * 100
+            completeness = (1 - null_count / row_count) * 100 if row_count > 0 else 0.0
 
-            results.append(
+            columns_out.append(
                 ColumnInfo(
                     schema=schema,
                     table=table,
@@ -219,7 +248,24 @@ def introspect(
                 )
             )
 
-    return results
+    return columns_out, tables_out
+
+
+def fetch_person_count(conn: psycopg.Connection, schema: str) -> int | None:
+    """Best-effort patient count from ``{schema}.person``; None if absent."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(PERSON_COUNT_SQL_TEMPLATE.format(schema=schema))
+            row = cur.fetchone()
+        return int(row[0]) if row else None
+    except Exception:
+        conn.rollback()
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Output: stdout tree
+# --------------------------------------------------------------------------- #
 
 
 def print_tree(columns: list[ColumnInfo]) -> None:
@@ -237,7 +283,12 @@ def print_tree(columns: list[ColumnInfo]) -> None:
         )
 
 
-def write_csv(columns: list[ColumnInfo], out_path: Path) -> None:
+# --------------------------------------------------------------------------- #
+# Output: CSV (raw introspection)
+# --------------------------------------------------------------------------- #
+
+
+def write_raw_csv(columns: list[ColumnInfo], out_path: Path) -> None:
     fieldnames = [
         "schema",
         "table",
@@ -253,8 +304,102 @@ def write_csv(columns: list[ColumnInfo], out_path: Path) -> None:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         for col in columns:
-            writer.writerow(col.to_row())
-    print(f"\nWrote {len(columns)} rows -> {out_path}", file=sys.stderr)
+            writer.writerow({
+                "schema": col.schema,
+                "table": col.table,
+                "column": col.column,
+                "data_type": col.data_type,
+                "is_nullable": "yes" if col.is_nullable else "no",
+                "row_count": col.row_count,
+                "null_count": col.null_count,
+                "completeness_pct": f"{col.completeness_pct:.1f}",
+                "top_values": col.distribution_cell(),
+            })
+    print(f"\nWrote raw CSV -> {out_path}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------- #
+# Output: Century-format XLSX dictionary draft
+# --------------------------------------------------------------------------- #
+
+
+def write_dictionary_xlsx(
+    columns: list[ColumnInfo],
+    tables: list[TableInfo],
+    out_path: Path,
+    cohort: str,
+    person_count: int | None,
+) -> None:
+    """Write a Summary / Tables / Variables workbook the validator can read.
+
+    ``category``, ``description``, ``criteria``, ``extraction_type`` and
+    ``notes`` are left blank on purpose - fill them in after reviewing.
+    """
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        sys.stderr.write(
+            "pandas is not installed; install it to emit XLSX: "
+            "pip install pandas openpyxl\n"
+        )
+        raise SystemExit(3) from exc
+
+    summary_rows = [
+        {"metric": "cohort", "value": cohort},
+        {"metric": "table_count", "value": len(tables)},
+        {"metric": "column_count", "value": len(columns)},
+    ]
+    if person_count is not None:
+        summary_rows.insert(1, {"metric": "patient_count", "value": person_count})
+
+    summary_df = pd.DataFrame(summary_rows, columns=["metric", "value"])
+
+    tables_df = pd.DataFrame(
+        [
+            {
+                "table": t.name,
+                "row_count": t.row_count,
+                "column_count": t.column_count,
+                "description": "",
+            }
+            for t in tables
+        ]
+    )
+
+    variables_rows = []
+    for col in columns:
+        variables_rows.append({
+            # Blank columns for the user to fill in:
+            "Category": "",
+            # Prefill Variable as "<table>.<column>" so rows stay unique even
+            # when the same column (value_as_number, concept_id, ...) appears
+            # in several tables. Rename to the display label ("AAT level",
+            # "Heart rate", ...) during review.
+            "Variable": f"{col.table}.{col.column}",
+            "Description": "",
+            # Auto-populated from the warehouse:
+            "Schema": col.table,
+            "Column(s)": col.column,
+            "Criteria": "",
+            "Values": col.top_values[0][0] if col.top_values else "",
+            "Distribution": col.distribution_cell(),
+            "Completeness": f"{col.completeness_pct:.1f}%",
+            "Extraction Type": "Structured",
+            "Notes": "",
+        })
+    variables_df = pd.DataFrame(variables_rows)
+
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        tables_df.to_excel(writer, sheet_name="Tables", index=False)
+        variables_df.to_excel(writer, sheet_name="Variables", index=False)
+
+    print(
+        f"\nWrote dictionary workbook -> {out_path}\n"
+        "  Fill in Category / Description / Criteria / Extraction Type\n"
+        f"  Then validate: python validate_dictionary.py --input {out_path}",
+        file=sys.stderr,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -262,34 +407,36 @@ def write_csv(columns: list[ColumnInfo], out_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-# Types worth computing TOP-N distributions for. Skip long/unstructured types.
-SAMPLEABLE_TYPES = {
-    "character varying",
-    "varchar",
-    "text",
-    "character",
-    "name",
-    "integer",
-    "bigint",
-    "smallint",
-    "numeric",
-    "real",
-    "double precision",
-    "boolean",
-    "date",
-}
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Introspect a Postgres schema to seed a dictionary draft."
+        description=(
+            "Introspect a Postgres schema and (optionally) emit a Century-format "
+            "dictionary workbook drafted straight from the database."
+        )
     )
-    parser.add_argument("--schema", default="mtc_aat_cohort",
-                        help="Schema to introspect (default: mtc_aat_cohort).")
-    parser.add_argument("--out", type=Path, default=None,
-                        help="Write results to this CSV path as well as stdout.")
-    parser.add_argument("--sample-values", type=int, default=5,
-                        help="Top-N frequent values per column (0 to disable).")
+    parser.add_argument(
+        "--schema",
+        default="mtc_aat_cohort",
+        help="Schema to introspect (default: mtc_aat_cohort).",
+    )
+    parser.add_argument(
+        "--out-csv",
+        type=Path,
+        default=None,
+        help="Write raw introspection to this CSV (one row per column).",
+    )
+    parser.add_argument(
+        "--out-xlsx",
+        type=Path,
+        default=None,
+        help="Write a Century-format dictionary workbook (Summary/Tables/Variables).",
+    )
+    parser.add_argument(
+        "--sample-values",
+        type=int,
+        default=5,
+        help="Top-N frequent values per column (0 to disable).",
+    )
 
     # Optional overrides for env-var credentials.
     parser.add_argument("--host")
@@ -305,21 +452,34 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     conn_kwargs = build_conn_kwargs(args)
 
-    print(f"Connecting to {conn_kwargs['host']}:{conn_kwargs['port']}/"
-          f"{conn_kwargs['dbname']} as {conn_kwargs['user']}...", file=sys.stderr)
+    print(
+        f"Connecting to {conn_kwargs['host']}:{conn_kwargs['port']}/"
+        f"{conn_kwargs['dbname']} as {conn_kwargs['user']}...",
+        file=sys.stderr,
+    )
 
     with psycopg.connect(**conn_kwargs) as conn:
-        columns = introspect(
+        columns, tables = introspect(
             conn,
             schema=args.schema,
             sample_values=args.sample_values,
             include_top_for_types=SAMPLEABLE_TYPES,
         )
+        person_count = fetch_person_count(conn, args.schema)
 
     print_tree(columns)
 
-    if args.out:
-        write_csv(columns, args.out)
+    if args.out_csv:
+        write_raw_csv(columns, args.out_csv)
+
+    if args.out_xlsx:
+        write_dictionary_xlsx(
+            columns=columns,
+            tables=tables,
+            out_path=args.out_xlsx,
+            cohort=args.schema,
+            person_count=person_count,
+        )
 
     return 0 if columns else 1
 
