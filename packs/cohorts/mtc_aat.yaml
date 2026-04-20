@@ -1,16 +1,7 @@
 # Century cohort pack — mtc_aat_cohort.
 #
 # Declares the cohort's display name and the actual Postgres schema the
-# introspector walks. Nothing else is required here for the generator.
-#
-# The optional ``validator:`` section is read by validate_dictionary.py
-# (when --cohort mtc_aat is passed) as an overlay on the validator's
-# built-in defaults. Omit it entirely if you're not running the
-# validator against this cohort.
+# introspector walks. That's all the generator needs.
 
 cohort_name: mtc_aat_cohort
 schema_name: mtc__aat_cohort
-
-validator:
-  recommended_schema_values:
-    - infusion   # mtc-specific table that isn't in the OMOP built-in list
