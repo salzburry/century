@@ -1,0 +1,20 @@
+# Runtime dependencies for the Century dictionary tooling.
+#
+# Install once per environment:
+#
+#     pip install -r requirements.txt
+#
+# Rough split by use-case:
+#
+#   pandas, openpyxl            - validate_dictionary.py reads/writes xlsx
+#   pyyaml                      - introspect_cohort.py loads cohort packs
+#   psycopg[binary]             - introspect_cohort.py connects to Postgres
+#
+# If you only want to validate an existing workbook, pandas + openpyxl +
+# pyyaml (for --cohort flag) are enough; psycopg is only needed to
+# generate a new workbook.
+
+pandas>=2.0
+openpyxl>=3.1
+pyyaml>=6.0
+psycopg[binary]>=3.1
