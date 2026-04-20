@@ -950,6 +950,53 @@ def _column_lookup(columns: list[ColumnInfo]) -> dict[tuple[str, str], ColumnInf
     return {(c.table, c.column): c for c in columns}
 
 
+_VARIABLE_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _normalize_variable_key(name: str) -> str:
+    """Dedupe key for Variable labels. Mirrors the validator's
+    normalize_token: lowercase, collapse non-alphanumerics to underscores.
+    """
+    return _VARIABLE_NORMALIZE_RE.sub("_", str(name).strip().lower()).strip("_")
+
+
+def _disambiguate_variable(
+    variable: str,
+    table_name: str,
+    seen: dict[str, int],
+    rows: list[dict[str, str]],
+) -> str:
+    """Ensure ``variable`` is unique under the validator's dedupe key.
+
+    If the normalized form of ``variable`` was already emitted, append
+    ``" (<table>)"``. If that's also taken, fall back to a numeric
+    suffix ``" (<table> N)"``. Updates ``seen`` to point at the latest
+    emission so long names that truncate to the same prefix don't
+    collide silently.
+    """
+    key = _normalize_variable_key(variable)
+    if key not in seen:
+        seen[key] = len(rows)
+        return variable
+
+    # First try table-qualified disambiguation - keeps the row readable.
+    candidate = f"{variable} ({table_name})"
+    candidate_key = _normalize_variable_key(candidate)
+    if candidate_key not in seen:
+        seen[candidate_key] = len(rows)
+        return candidate
+
+    # Fall back to a numeric suffix if even the table form collides.
+    suffix = 2
+    while True:
+        candidate = f"{variable} ({table_name} {suffix})"
+        candidate_key = _normalize_variable_key(candidate)
+        if candidate_key not in seen:
+            seen[candidate_key] = len(rows)
+            return candidate
+        suffix += 1
+
+
 def build_curated_variables(
     conn: psycopg.Connection,
     schema: str,
@@ -963,9 +1010,15 @@ def build_curated_variables(
     querying the distinct concept_name values and emitting one row per concept.
     Demographic tables produce one row per curated column. Documents emit
     hard-coded Unstructured rows.
+
+    Variable labels are deduplicated under the validator's normalization
+    rule before emission: a collision gets a ``(<table>)`` suffix so the
+    validator never fires ``duplicate_variable`` on our own output.
     """
     lookup = _column_lookup(columns)
     rows: list[dict[str, str]] = []
+    # Shared across every row so dedupe spans all modes, not just per_concept.
+    seen_variables: dict[str, int] = {}
 
     for table_name, recipe in pack.curation_rules.items():
         mode = recipe["mode"]
@@ -1035,6 +1088,9 @@ def build_curated_variables(
                     distribution = f"{name}: {total}"  # fall back to concept count
 
                 variable = name if len(name) <= 64 else name[:61] + "..."
+                variable = _disambiguate_variable(
+                    variable, table_name, seen_variables, rows
+                )
                 description = recipe.get(
                     "description_template",
                     "Concept '{name}' captured for the patient.",
@@ -1065,9 +1121,12 @@ def build_curated_variables(
             )
             values_cell = ", ".join(name for name, _ in concepts[:20])
             distribution_cell = "; ".join(f"{n}: {c}" for n, c in concepts[:5])
+            variable = _disambiguate_variable(
+                recipe["variable"], table_name, seen_variables, rows
+            )
             rows.append({
                 "Category": recipe["category"],
-                "Variable": recipe["variable"],
+                "Variable": variable,
                 "Description": recipe["description"],
                 "Schema": table_name,
                 "Column(s)": recipe["value_column"],
@@ -1134,9 +1193,12 @@ def build_curated_variables(
                     else f"{info.completeness_pct:.1f}%"
                 )
 
+                variable = _disambiguate_variable(
+                    split_cfg["variable"], table_name, seen_variables, rows
+                )
                 rows.append({
                     "Category": split_cfg["category"],
-                    "Variable": split_cfg["variable"],
+                    "Variable": variable,
                     "Description": split_cfg["description"],
                     "Schema": table_name,
                     "Column(s)": recipe["value_column"],
@@ -1191,9 +1253,12 @@ def build_curated_variables(
                         v for v, _ in info.top_values[:10]
                     )
 
+                variable = _disambiguate_variable(
+                    cfg["variable"], table_name, seen_variables, rows
+                )
                 rows.append({
                     "Category": recipe["category"],
-                    "Variable": cfg["variable"],
+                    "Variable": variable,
                     "Description": cfg["description"],
                     "Schema": table_name,
                     "Column(s)": col_name,
@@ -1240,9 +1305,12 @@ def build_curated_variables(
                 distribution_cell = spec.get(
                     "distribution", f"{info.row_count:,} records"
                 )
+                variable = _disambiguate_variable(
+                    spec["variable"], table_name, seen_variables, rows
+                )
                 rows.append({
                     "Category": recipe["category"],
-                    "Variable": spec["variable"],
+                    "Variable": variable,
                     "Description": spec["description"],
                     "Schema": table_name,
                     "Column(s)": spec["column"],
