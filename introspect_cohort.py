@@ -218,23 +218,8 @@ class TableInfo:
 # Introspection
 # --------------------------------------------------------------------------- #
 
-
-# Types we compute top-N distributions for. Long free text gets skipped.
-SAMPLEABLE_TYPES = {
-    "character varying",
-    "varchar",
-    "text",
-    "character",
-    "name",
-    "integer",
-    "bigint",
-    "smallint",
-    "numeric",
-    "real",
-    "double precision",
-    "boolean",
-    "date",
-}
+# Sampleable types are supplied via the core pack (``sampleable_types``);
+# see ``Pack`` in the pack-loader section below.
 
 
 def introspect(
@@ -474,235 +459,94 @@ def write_dictionary_xlsx(
 
 
 # --------------------------------------------------------------------------- #
-# Curation rules (how to collapse the raw inventory to Century-format rows)
+# Pack loader (core + cohort rules from YAML)
 # --------------------------------------------------------------------------- #
 
-# Tables dropped entirely - PII plumbing / vendor-specific tokens.
-TABLES_TO_SKIP: set[str] = {
-    "dv_tokenized_profile_data",
-}
 
-# Specific column names to drop even if they live on an otherwise-kept table
-# (PHI pushed down into the warehouse but not intended as analytic variables).
-SENSITIVE_COLUMNS: set[str] = {
-    "ssn",
-    "first_name",
-    "last_name",
-    "middle_name",
-    "email",
-    "phone",
-    "cellphone",
-    "address1",
-    "address2",
-    "street",
-    "record_id_tokenized",
-    "patient_id_tokenized",
-    "encryption_key",
-    "file_name",
-    "s3_uri",
-    "document_text",
-    "document_s3_uri",
-}
-
-# Regex patterns applied to every column - things that are plumbing, not data.
-DROP_COLUMN_REGEXES = [
-    re.compile(p) for p in (
-        r".*_source_concept_id$",
-        r".*_source_concept_name$",
-        r".*_source_value$",
-        r".*_type_concept_id$",
-        r".*_type_source_value$",
-        r"^airflow_.*",
-        r".*_event_id$",
-        # IDs and FKs - keep concept_names, drop the numeric join keys.
-        r".*_concept_id$",
-        r"^provider_id$",
-        r"^visit_detail_id$",
-        r"^visit_occurrence_id$",
-        r"^care_site_id$",
-        r"^payer_plan_period_id$",
-        r"^location_id$",
+try:
+    import yaml  # PyYAML
+except ImportError:  # pragma: no cover
+    sys.stderr.write(
+        "PyYAML is not installed. Run: pip install pyyaml\n"
     )
-]
+    raise SystemExit(1)
 
-# Per-table curation recipes. Keys are unqualified table names. Each recipe
-# emits zero or more business-variable rows (one row per concept for fact
-# tables, or one row per listed column for demographic-style tables).
-#
-#   ``mode`` values:
-#     "per_concept"          - one row per distinct ``group_by`` value
-#                              (observations, measurements)
-#     "single_row_with_list" - one row; distinct group values go in Values
-#                              (condition_occurrence, visit_occurrence)
-#     "split_by_type"        - one row per value of ``group_by`` using the
-#                              per-value override in ``splits``
-#                              (drug_exposure: Prescriptions vs
-#                              Administrations)
-#     "keep_columns"         - one row per named column (person / location /
-#                              payer_plan_period demographics)
-#     "static"               - emit the hard-coded rows verbatim
-#                              (note / document unstructured rows)
-CURATION_RULES: dict[str, dict[str, Any]] = {
-    "observation": {
-        "category": "Observation",
-        "mode": "per_concept",
-        "group_by": "observation_concept_name",
-        "value_column": "value_as_number",
-        "criteria_template": "observation_concept_name = '{name}'",
-        "description_template": "Observation '{name}' captured at the office visit.",
-        "extraction_type": "Structured",
-        "max_concepts": 30,
-    },
-    "measurement": {
-        "category": "Labs",
-        "mode": "per_concept",
-        "group_by": "measurement_concept_name",
-        "value_column": "value_as_number",
-        "criteria_template": "measurement_concept_name = '{name}'",
-        "description_template": "Laboratory measurement '{name}' recorded for the patient.",
-        "extraction_type": "Structured",
-        "max_concepts": 30,
-    },
-    "condition_occurrence": {
-        "category": "Diagnosis",
-        "mode": "single_row_with_list",
-        "variable": "Diagnosis",
-        "description": "Medical diagnoses and conditions recorded for the patient.",
-        "group_by": "condition_concept_name",
-        "value_column": "condition_concept_name",
-        "extraction_type": "Structured",
-        "max_values": 50,
-    },
-    "drug_exposure": {
-        "category": "Prescriptions",
-        "mode": "split_by_type",
-        "group_by": "drug_type_concept_name",
-        "value_column": "drug_concept_name",
-        "criteria_template": "drug_type_concept_name = '{name}'",
-        "extraction_type": "Structured",
-        "splits": {
-            "EHR prescription": {
-                "variable": "Prescriptions",
-                "category": "Prescriptions",
-                "description": "Medications prescribed to the patient.",
-            },
-            "EHR administration record": {
-                "variable": "Administrations",
-                "category": "Administrations",
-                "description": "Administrations recorded for the patient.",
-            },
-        },
-    },
-    "procedure_occurrence": {
-        "category": "Procedures",
-        "mode": "single_row_with_list",
-        "variable": "Procedures",
-        "description": "Procedures recorded for the patient.",
-        "group_by": "procedure_concept_name",
-        "value_column": "procedure_concept_name",
-        "extraction_type": "Structured",
-        "max_values": 50,
-    },
-    "visit_occurrence": {
-        "category": "Visits",
-        "mode": "single_row_with_list",
-        "variable": "Visit Type and Date",
-        "description": "The type of healthcare visit or encounter.",
-        "group_by": "visit_concept_name",
-        "value_column": "visit_concept_name",
-        "extraction_type": "Structured",
-        "max_values": 20,
-    },
-    "person": {
-        "category": "Demographics",
-        "mode": "keep_columns",
-        "columns": {
-            "gender_concept_name": {
-                "variable": "Sex",
-                "description": "Biological sex at birth.",
-            },
-            "race_concept_name": {
-                "variable": "Race",
-                "description": "Self-identified racial category.",
-            },
-            "ethnicity_concept_name": {
-                "variable": "Ethnicity",
-                "description": "Self-identified ethnicity.",
-            },
-            "year_of_birth": {
-                "variable": "BirthYear",
-                "description": "Year the patient was born.",
-            },
-        },
-    },
-    "location": {
-        "category": "Demographics",
-        "mode": "keep_columns",
-        "columns": {
-            "zip": {
-                "variable": "ZIP Code",
-                "description": "Patient ZIP code (full or first 3 digits).",
-            },
-            "state": {
-                "variable": "State",
-                "description": "Patient state of residence.",
-            },
-        },
-    },
-    "payer_plan_period": {
-        "category": "Demographics",
-        "mode": "keep_columns",
-        "columns": {
-            "payer_concept_name": {
-                "variable": "Payer",
-                "description": "Insurance payer responsible for the visit.",
-            },
-            "plan_type_concept_name": {
-                "variable": "Plan Type",
-                "description": "Insurance plan type.",
-            },
-        },
-    },
-    "note": {
-        "category": "Documents",
-        "mode": "static",
-        "rows": [
-            {
-                "variable": "Clinical Note",
-                "description": "Free text of the office visit clinical note.",
-                "column": "note_text",
-                "criteria": "",
-                "extraction_type": "Unstructured",
-            }
+
+PACKS_DIR = Path(__file__).resolve().parent / "packs"
+
+
+@dataclass
+class Pack:
+    """Merged runtime view of ``packs/core.yaml`` + ``packs/cohorts/<x>.yaml``."""
+
+    cohort_name: str
+    schema_name: str
+    tables_to_skip: set[str]
+    sensitive_columns: set[str]
+    drop_column_patterns: list[re.Pattern[str]]
+    sampleable_types: set[str]
+    curation_rules: dict[str, dict[str, Any]]
+
+
+def _deep_merge(base: Any, overlay: Any) -> Any:
+    """Merge ``overlay`` onto ``base`` with the rules we agreed on:
+
+    * dicts → deep-merge (recurse per-key)
+    * lists → append (overlay extends base; stable order)
+    * scalars → replace
+
+    Neither side is mutated.
+    """
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged: dict[str, Any] = {**base}
+        for key, value in overlay.items():
+            merged[key] = _deep_merge(base.get(key), value) if key in base else value
+        return merged
+    if isinstance(base, list) and isinstance(overlay, list):
+        return [*base, *overlay]
+    return overlay
+
+
+def load_pack(cohort: str, packs_dir: Path = PACKS_DIR) -> Pack:
+    """Load ``packs/core.yaml`` then overlay ``packs/cohorts/<cohort>.yaml``."""
+    core_path = packs_dir / "core.yaml"
+    cohort_path = packs_dir / "cohorts" / f"{cohort}.yaml"
+    if not core_path.is_file():
+        raise FileNotFoundError(f"core pack missing: {core_path}")
+    if not cohort_path.is_file():
+        raise FileNotFoundError(
+            f"cohort pack missing: {cohort_path}. Available: "
+            + ", ".join(
+                sorted(p.stem for p in (packs_dir / "cohorts").glob("*.yaml"))
+            )
+        )
+
+    core_data = yaml.safe_load(core_path.read_text(encoding="utf-8")) or {}
+    cohort_data = yaml.safe_load(cohort_path.read_text(encoding="utf-8")) or {}
+    merged = _deep_merge(core_data, cohort_data)
+
+    cohort_name = merged.get("cohort_name")
+    schema_name = merged.get("schema_name")
+    if not cohort_name or not schema_name:
+        raise ValueError(
+            f"cohort pack {cohort_path} must define cohort_name and schema_name"
+        )
+
+    return Pack(
+        cohort_name=str(cohort_name),
+        schema_name=str(schema_name),
+        tables_to_skip=set(merged.get("tables_to_skip", [])),
+        sensitive_columns=set(merged.get("sensitive_columns", [])),
+        drop_column_patterns=[
+            re.compile(p) for p in merged.get("drop_column_patterns", [])
         ],
-    },
-    "document": {
-        "category": "Documents",
-        "mode": "static",
-        "rows": [
-            {
-                "variable": "Document",
-                "description": "Scanned PDFs (MRI, EKG, PET scan, infusion notes, etc.).",
-                "column": "document_type_concept_name",
-                "criteria": "",
-                "extraction_type": "Unstructured",
-            }
-        ],
-    },
-    "infusion": {
-        "category": "Administrations",
-        "mode": "static",
-        "rows": [
-            {
-                "variable": "Infusion Note",
-                "description": "Free text or PDF of the infusion note.",
-                "column": "note_text",
-                "criteria": "",
-                "extraction_type": "Unstructured",
-            }
-        ],
-    },
-}
+        sampleable_types=set(merged.get("sampleable_types", [])),
+        curation_rules=dict(merged.get("curation_rules", {})),
+    )
+
+
+def available_cohorts(packs_dir: Path = PACKS_DIR) -> list[str]:
+    return sorted(p.stem for p in (packs_dir / "cohorts").glob("*.yaml"))
 
 
 DISTINCT_CONCEPTS_SQL_TEMPLATE = """
@@ -715,12 +559,12 @@ LIMIT %s;
 """
 
 
-def _column_is_dropped(table: str, column: str) -> bool:
-    if table in TABLES_TO_SKIP:
+def _column_is_dropped(table: str, column: str, pack: Pack) -> bool:
+    if table in pack.tables_to_skip:
         return True
-    if column in SENSITIVE_COLUMNS:
+    if column in pack.sensitive_columns:
         return True
-    for pattern in DROP_COLUMN_REGEXES:
+    for pattern in pack.drop_column_patterns:
         if pattern.match(column):
             return True
     return False
@@ -759,9 +603,10 @@ def build_curated_variables(
     conn: psycopg.Connection,
     schema: str,
     columns: list[ColumnInfo],
+    pack: Pack,
 ) -> list[dict[str, str]]:
-    """Apply ``CURATION_RULES`` to the raw inventory and return Century-format
-    Variables-sheet rows ready for ``pd.DataFrame``.
+    """Apply ``pack.curation_rules`` to the raw inventory and return
+    Century-format Variables-sheet rows ready for ``pd.DataFrame``.
 
     Rows for fact tables (observation, measurement, etc.) are produced by
     querying the distinct concept_name values and emitting one row per concept.
@@ -771,7 +616,7 @@ def build_curated_variables(
     lookup = _column_lookup(columns)
     rows: list[dict[str, str]] = []
 
-    for table_name, recipe in CURATION_RULES.items():
+    for table_name, recipe in pack.curation_rules.items():
         mode = recipe["mode"]
 
         # --- per_concept: one dictionary row per distinct concept_name value
@@ -911,6 +756,7 @@ def write_curated_xlsx(
     out_path: Path,
     cohort: str,
     person_count: int | None,
+    pack: Pack,
 ) -> None:
     """Write a curated Century-format workbook: one row per business variable."""
     try:
@@ -922,7 +768,7 @@ def write_curated_xlsx(
         )
         raise SystemExit(3) from exc
 
-    variables_rows = build_curated_variables(conn, schema, columns)
+    variables_rows = build_curated_variables(conn, schema, columns, pack)
 
     summary_rows = [
         {"metric": "cohort", "value": cohort},
@@ -993,9 +839,25 @@ def _parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument(
+        "--cohort",
+        default="mtc_aat",
+        help=(
+            "Cohort pack to load from packs/cohorts/<cohort>.yaml "
+            "(default: mtc_aat). Use --list-cohorts to see available packs."
+        ),
+    )
+    parser.add_argument(
         "--schema",
-        default="mtc_aat_cohort",
-        help="Schema to introspect (default: mtc_aat_cohort).",
+        default=None,
+        help=(
+            "Override the pack's schema_name. Default: the schema_name "
+            "declared in the cohort pack."
+        ),
+    )
+    parser.add_argument(
+        "--list-cohorts",
+        action="store_true",
+        help="List available cohort packs and exit.",
     )
     parser.add_argument(
         "--out-csv",
@@ -1046,6 +908,16 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+
+    if args.list_cohorts:
+        for name in available_cohorts():
+            print(name)
+        return 0
+
+    pack = load_pack(args.cohort)
+    schema_name = args.schema or pack.schema_name
+    print(f"Loaded pack '{args.cohort}' (schema={schema_name})", file=sys.stderr)
+
     conn_kwargs = build_conn_kwargs(args)
 
     print(
@@ -1067,23 +939,24 @@ def main(argv: list[str] | None = None) -> int:
 
         columns, tables = introspect(
             conn,
-            schema=args.schema,
+            schema=schema_name,
             sample_values=args.sample_values,
-            include_top_for_types=SAMPLEABLE_TYPES,
+            include_top_for_types=pack.sampleable_types,
         )
-        person_count = fetch_person_count(conn, args.schema)
+        person_count = fetch_person_count(conn, schema_name)
 
         # The curated writer needs an open connection to enumerate concepts,
         # so run it inside the ``with`` block.
         if args.out_xlsx:
             write_curated_xlsx(
                 conn=conn,
-                schema=args.schema,
+                schema=schema_name,
                 columns=columns,
                 tables=tables,
                 out_path=args.out_xlsx,
-                cohort=args.schema,
+                cohort=pack.cohort_name,
                 person_count=person_count,
+                pack=pack,
             )
 
     print_tree(columns)
@@ -1096,7 +969,7 @@ def main(argv: list[str] | None = None) -> int:
             columns=columns,
             tables=tables,
             out_path=args.out_xlsx_raw,
-            cohort=args.schema,
+            cohort=pack.cohort_name,
             person_count=person_count,
         )
 

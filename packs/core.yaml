@@ -1,0 +1,69 @@
+# Century core pack — rules shared by every cohort dictionary build.
+#
+# Overlaid by packs/cohorts/<cohort>.yaml. Merge rules:
+#   - lists: append (cohort adds to core's list)
+#   - scalars: replace
+#   - dicts: deep-merge
+#
+# Anything specific to a single cohort (schema name, per-table recipes,
+# concept_name limits) belongs in the cohort pack, not here.
+
+# Tables dropped entirely. PII plumbing, vendor-specific linkage tokens, etc.
+tables_to_skip:
+  - dv_tokenized_profile_data
+
+# Columns that may sit on otherwise-kept tables but should never appear in a
+# published dictionary. Matched by exact column name (case-sensitive).
+sensitive_columns:
+  - ssn
+  - first_name
+  - last_name
+  - middle_name
+  - email
+  - phone
+  - cellphone
+  - address1
+  - address2
+  - street
+  - record_id_tokenized
+  - patient_id_tokenized
+  - encryption_key
+  - file_name
+  - s3_uri
+  - document_text
+  - document_s3_uri
+
+# Regex patterns applied to every column. Anything that matches is plumbing,
+# not a clinical variable.
+drop_column_patterns:
+  - .*_source_concept_id$
+  - .*_source_concept_name$
+  - .*_source_value$
+  - .*_type_concept_id$
+  - .*_type_source_value$
+  - ^airflow_.*
+  - .*_event_id$
+  - .*_concept_id$
+  - ^provider_id$
+  - ^visit_detail_id$
+  - ^visit_occurrence_id$
+  - ^care_site_id$
+  - ^payer_plan_period_id$
+  - ^location_id$
+
+# Postgres data types worth computing top-N distributions for. Long free text
+# gets skipped on purpose so we do not pull note bodies into the summary.
+sampleable_types:
+  - character varying
+  - varchar
+  - text
+  - character
+  - name
+  - integer
+  - bigint
+  - smallint
+  - numeric
+  - real
+  - double precision
+  - boolean
+  - date
