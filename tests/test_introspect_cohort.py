@@ -723,8 +723,10 @@ class EndToEndTests(unittest.TestCase):
             # The curated workbook must also carry an "All Columns" sheet
             # with one row per introspected column - a flat inventory
             # alongside the curated dictionary. Every row must have a
-            # non-empty Schema and Column so the sheet is usable on its
-            # own, and every row must declare whether it was sampled.
+            # non-empty Schema and Column, a numeric Null Count /
+            # Completeness (computed for every column regardless of
+            # Values Sampled), and a Values Sampled flag telling the
+            # reviewer whether Top Values was populated.
             import pandas as pd
             sheets = pd.read_excel(out, sheet_name=None)
             self.assertIn("All Columns", sheets)
@@ -732,12 +734,18 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(len(all_cols), len(columns))
             self.assertEqual(
                 set(all_cols.columns),
-                {"Schema", "Column", "Data Type", "Nullable", "Sampled",
-                 "Row Count", "Null Count", "Completeness", "Top Values"},
+                {"Schema", "Column", "Data Type", "Nullable",
+                 "Row Count", "Null Count", "Completeness",
+                 "Values Sampled", "Top Values"},
             )
             self.assertFalse(all_cols["Schema"].isna().any())
             self.assertFalse(all_cols["Column"].isna().any())
-            self.assertTrue(set(all_cols["Sampled"].unique()).issubset({"yes", "no"}))
+            self.assertTrue(
+                set(all_cols["Values Sampled"].unique()).issubset({"yes", "no"})
+            )
+            # Null Count and Completeness are populated on every row.
+            self.assertFalse(all_cols["Null Count"].isna().any())
+            self.assertFalse(all_cols["Completeness"].isna().any())
         finally:
             out.unlink(missing_ok=True)
 

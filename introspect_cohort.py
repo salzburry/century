@@ -267,24 +267,34 @@ def introspect(
 ) -> tuple[list[ColumnInfo], list[TableInfo]]:
     """Walk the target schema and return ``(columns, tables)``.
 
-    The ``pack`` drives two kinds of filter:
+    Policy for a dictionary-as-documentation workflow:
 
-    * Tables named in ``pack.tables_to_skip`` are excluded wholesale -
-      no row count, no column listing, no null-count queries. Keeps
-      PII / vendor linkage tables (``dv_tokenized_profile_data``,
-      ``standard_profile_data_model``) out of the inventory entirely.
+    * **Every column of every accessible table** appears in the
+      inventory. ``tables_to_skip`` no longer hides a table; reviewers
+      need the full schema view to decide what to keep.
 
-    * Individual columns that match ``pack.sensitive_columns`` (exact
-      name) or ``pack.drop_column_patterns`` (regex) are still *listed*
-      in the inventory (so reviewers see the full field set) but they
-      carry ``dropped=True`` and we skip the null-count / top-value
-      queries against them. Completeness / null_count remain 0. The
-      curated ``Variables`` sheet ignores dropped rows; the
-      ``All Columns`` sheet surfaces them.
+    * **Null count + completeness is computed for every column** with
+      real row counts so reviewers can judge coverage up front. This
+      is aggregate structural info - no actual values land in the
+      workbook.
 
-    Top-value sampling on kept columns is additionally gated by
-    ``pack.sampleable_types`` so long free-text columns never have
-    their contents selected.
+    * **Top-value sampling is still gated** - it's the part that puts
+      raw content into the sheet. A column is excluded from top-value
+      sampling when any of the following are true, and it carries
+      ``dropped=True`` as a marker:
+
+        - its table is in ``pack.tables_to_skip``
+          (dv_tokenized_profile_data, standard_profile_data_model)
+        - its name is in ``pack.sensitive_columns`` (ssn, first_name, ...)
+        - its name matches ``pack.drop_column_patterns`` (OMOP plumbing)
+
+      Dropped columns still get completeness; they just don't leak
+      concrete values (SSN strings, Datavant tokens, full dates of
+      birth) into an exported workbook.
+
+    * Kept columns are additionally gated by ``pack.sampleable_types``
+      for the top-value query so long free-text columns never have
+      their contents selected.
     """
     columns_out: list[ColumnInfo] = []
     tables_out: list[TableInfo] = []
@@ -310,7 +320,7 @@ def introspect(
     skipped_tables = sorted(t for t in tables if t in pack.tables_to_skip)
     if skipped_tables and not quiet:
         print(
-            f"  (listing without sampling, per pack.tables_to_skip: "
+            f"  (top-value sampling skipped per pack.tables_to_skip: "
             f"{', '.join(skipped_tables)})",
             file=sys.stderr,
         )
@@ -318,25 +328,16 @@ def introspect(
     for table in tables:
         table_is_skipped = table in pack.tables_to_skip
 
-        # Always list columns for every table the user can see, so the
-        # All Columns inventory matches the real schema. Skipped tables
-        # contribute name/type only - no row count, no null queries, no
-        # value sampling - keeping the cost bounded and any row-level
-        # PII unread.
         with conn.cursor() as cur:
+            cur.execute(ROW_COUNT_SQL_TEMPLATE.format(schema=schema, table=table))
+            row_count = cur.fetchone()[0]
+
             cur.execute(LIST_COLUMNS_SQL, (schema, table))
             raw_columns = cur.fetchall()
 
-        if table_is_skipped:
-            row_count = 0
-        else:
-            with conn.cursor() as cur:
-                cur.execute(ROW_COUNT_SQL_TEMPLATE.format(schema=schema, table=table))
-                row_count = cur.fetchone()[0]
-
-        # Partition into sampleable vs "dropped" (plumbing / sensitive /
-        # skipped-table). Dropped columns are still recorded in the
-        # inventory; we just do not run further queries against them.
+        # Partition by "do we sample the values?" The null-count query
+        # runs on every column regardless, because aggregate nulls are
+        # not PHI.
         dropped_names = {
             row[0] for row in raw_columns
             if table_is_skipped or _column_is_dropped(table, row[0], pack)
@@ -346,19 +347,13 @@ def introspect(
             TableInfo(name=table, row_count=row_count, column_count=len(raw_columns))
         )
         if not quiet:
-            if table_is_skipped:
-                print(
-                    f"  {schema}.{table}  ({len(raw_columns)} cols, not sampled)",
-                    file=sys.stderr,
-                )
-            else:
-                n_not_sampled = len(dropped_names)
-                print(
-                    f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
-                    + (f", {n_not_sampled} not sampled" if n_not_sampled else "")
-                    + ")",
-                    file=sys.stderr,
-                )
+            n_no_values = len(dropped_names)
+            print(
+                f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
+                + (f", {n_no_values} values not sampled" if n_no_values else "")
+                + ")",
+                file=sys.stderr,
+            )
 
         for col_row in raw_columns:
             column_name, data_type, is_nullable_str, _max_len, _prec = col_row
@@ -368,34 +363,50 @@ def introspect(
             null_count = 0
             top_values: list[tuple[str, int]] = []
 
-            if row_count > 0 and not is_dropped:
+            if row_count > 0:
+                # Null count runs on every column - aggregate structural
+                # info, no values captured.
                 with conn.cursor() as cur:
-                    cur.execute(
-                        NULL_COUNT_SQL_TEMPLATE.format(
-                            schema=schema, table=table, column=column_name
+                    try:
+                        cur.execute(
+                            NULL_COUNT_SQL_TEMPLATE.format(
+                                schema=schema, table=table, column=column_name
+                            )
                         )
-                    )
-                    null_count = cur.fetchone()[0]
+                        null_count = cur.fetchone()[0]
+                    except Exception as exc:
+                        # e.g. column-level permission denial; the
+                        # column stays listed but without stats.
+                        sys.stderr.write(
+                            f"  null-count failed on {table}.{column_name}: {exc}\n"
+                        )
+                        conn.rollback()
+                        null_count = 0
 
+                    # Top values only when the column isn't sensitive /
+                    # plumbing / on a skipped table, AND its type is
+                    # sampleable (no free-text pulls).
                     if (
-                        sample_values > 0
+                        not is_dropped
+                        and sample_values > 0
                         and data_type in pack.sampleable_types
                     ):
-                        cur.execute(
-                            TOP_VALUES_SQL_TEMPLATE.format(
-                                schema=schema, table=table, column=column_name
-                            ),
-                            (sample_values,),
-                        )
-                        top_values = [(str(v), int(n)) for v, n in cur.fetchall()]
+                        try:
+                            cur.execute(
+                                TOP_VALUES_SQL_TEMPLATE.format(
+                                    schema=schema, table=table, column=column_name
+                                ),
+                                (sample_values,),
+                            )
+                            top_values = [(str(v), int(n)) for v, n in cur.fetchall()]
+                        except Exception as exc:
+                            sys.stderr.write(
+                                f"  top-values failed on {table}.{column_name}: {exc}\n"
+                            )
+                            conn.rollback()
+                            top_values = []
 
-            # Completeness is only meaningful when we actually ran the
-            # null-count query. For dropped / skipped-table columns it
-            # stays 0.
-            if row_count > 0 and not is_dropped:
-                completeness = (1 - null_count / row_count) * 100
-            else:
-                completeness = 0.0
+            completeness = (1 - null_count / row_count) * 100 if row_count > 0 else 0.0
 
             columns_out.append(
                 ColumnInfo(
@@ -1539,13 +1550,16 @@ def write_curated_xlsx(
         ],
     )
 
-    # ``All Columns`` sheet: one row per column on every non-skipped
-    # table, matching what VS Code's PostgreSQL explorer would show.
-    # ``Sampled=no`` marks columns the pack excluded from sampling
-    # (plumbing like ``*_id`` / ``*_source_value`` or flagged sensitive
-    # names) so their null-count and top-values stay empty. Tables in
-    # pack.tables_to_skip remain excluded entirely - PII-class source
-    # tables don't reach this sheet.
+    # ``All Columns`` sheet: one row per column on every accessible
+    # table. Null Count + Completeness are real for every column (they
+    # are structural aggregates, not content). ``Values Sampled``
+    # marks whether the top-N value query ran:
+    #
+    #   yes   columns + counts + example top values are populated
+    #   no    columns + counts populated; Top Values blank because
+    #         the column is sensitive, matched a plumbing pattern,
+    #         sits on a pack.tables_to_skip table, or is a long
+    #         free-text type. No concrete values were read.
     all_columns_df = pd.DataFrame(
         [
             {
@@ -1553,10 +1567,10 @@ def write_curated_xlsx(
                 "Column": col.column,
                 "Data Type": col.data_type,
                 "Nullable": "yes" if col.is_nullable else "no",
-                "Sampled": "no" if col.dropped else "yes",
                 "Row Count": col.row_count,
-                "Null Count": "" if col.dropped else col.null_count,
-                "Completeness": "" if col.dropped else f"{col.completeness_pct:.1f}%",
+                "Null Count": col.null_count,
+                "Completeness": f"{col.completeness_pct:.1f}%",
+                "Values Sampled": "no" if col.dropped else "yes",
                 "Top Values": col.distribution_cell(),
             }
             for col in columns
@@ -1566,10 +1580,10 @@ def write_curated_xlsx(
             "Column",
             "Data Type",
             "Nullable",
-            "Sampled",
             "Row Count",
             "Null Count",
             "Completeness",
+            "Values Sampled",
             "Top Values",
         ],
     )
