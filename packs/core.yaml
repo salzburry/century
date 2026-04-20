@@ -51,14 +51,15 @@ drop_column_patterns:
   - ^payer_plan_period_id$
   - ^location_id$
 
-# Postgres data types worth computing top-N distributions for. Long free text
-# gets skipped on purpose so we do not pull note bodies into the summary.
+# Postgres data types worth computing top-N distributions for during *raw*
+# introspection (the --out-xlsx-raw path). Long free-text / narrative types
+# are intentionally omitted so note bodies, document URIs, etc. don't leak
+# into the summary. If a cohort has legitimate `text`-typed columns worth
+# sampling (rare in OMOP - concept_name fields are usually varchar), extend
+# this list in that cohort's pack.
 sampleable_types:
   - character varying
   - varchar
-  - text
-  - character
-  - name
   - integer
   - bigint
   - smallint

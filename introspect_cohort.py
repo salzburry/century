@@ -53,11 +53,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-try:
-    import psycopg  # psycopg 3.x
-except ImportError:  # pragma: no cover
-    sys.stderr.write("psycopg is not installed. Run: pip install 'psycopg[binary]'\n")
-    raise SystemExit(1)
+# NOTE: psycopg is imported lazily inside ``_require_psycopg()`` so the
+# module can be imported for offline tasks (``--list-cohorts``, unit tests
+# that stub the connection) without the DB driver installed. Type hints use
+# string forward references via ``from __future__ import annotations``, so
+# referencing ``psycopg.Connection`` in a signature does not trigger the
+# import.
+def _require_psycopg():
+    """Lazy import the ``psycopg`` driver, or exit with a clear install hint."""
+    try:
+        import psycopg  # noqa: F401 - returned for local use
+        return psycopg
+    except ImportError as exc:
+        raise SystemExit(
+            "psycopg is not installed. Run: pip install 'psycopg[binary]'"
+        ) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -881,6 +891,22 @@ def build_curated_variables(
                 if n_num + n_str + n_concept == 0:
                     value_column = fallback_col
 
+                # Per-concept completeness for the column we actually show.
+                # The ``info`` completeness (looked up from the grouping
+                # column) would describe concept_name coverage, not the
+                # value column, and would overstate sparse concepts. Using
+                # the shape counts avoids another round-trip.
+                column_populated = {
+                    "value_as_number": n_num,
+                    "value_as_string": n_str,
+                    "value_as_concept_name": n_concept,
+                }.get(value_column, 0)
+                row_completeness = (
+                    f"{(100 * column_populated / total):.1f}%"
+                    if total > 0
+                    else "0.0%"
+                )
+
                 if variable_type == "continuous":
                     distribution = _summarize_continuous(
                         conn, schema, table_name, value_column,
@@ -911,7 +937,7 @@ def build_curated_variables(
                     "Criteria": recipe["criteria_template"].format(name=name),
                     "Values": "",
                     "Distribution": distribution,
-                    "Completeness": f"{info.completeness_pct:.1f}%",
+                    "Completeness": row_completeness,
                     "Extraction Type": recipe["extraction_type"],
                     "Notes": "",
                 })
@@ -950,6 +976,25 @@ def build_curated_variables(
             if info is None:
                 continue
             for drug_type, split_cfg in recipe["splits"].items():
+                # Scope the top-N of ``value_column`` to rows where
+                # ``group_by = drug_type``. Fills Values + Distribution so
+                # the validator does not warn missing_value_context.
+                distribution = _summarize_categorical_for_concept(
+                    conn,
+                    schema,
+                    table_name,
+                    recipe["value_column"],
+                    concept_col=group_col,
+                    concept_value=drug_type,
+                )
+                # Derive a compact Values cell from the same top-N (drug
+                # names only, no counts/pct) so reviewers see a quick
+                # example without re-running a query.
+                values_cell = ", ".join(
+                    seg.split(":", 1)[0].strip()
+                    for seg in distribution.split(";")
+                    if seg.strip()
+                )[:400]  # keep the cell manageable in Excel
                 rows.append({
                     "Category": split_cfg["category"],
                     "Variable": split_cfg["variable"],
@@ -957,8 +1002,8 @@ def build_curated_variables(
                     "Schema": table_name,
                     "Column(s)": recipe["value_column"],
                     "Criteria": recipe["criteria_template"].format(name=drug_type),
-                    "Values": "",
-                    "Distribution": "",
+                    "Values": values_cell,
+                    "Distribution": distribution,
                     "Completeness": f"{info.completeness_pct:.1f}%",
                     "Extraction Type": recipe["extraction_type"],
                     "Notes": "",
@@ -1028,6 +1073,18 @@ def build_curated_variables(
                 completeness = (
                     f"{info.completeness_pct:.1f}%" if info else "100%"
                 )
+                # Give the validator something in Values so the unstructured
+                # row does not trip missing_value_context. The point of the
+                # cell for unstructured rows is to tell a reviewer what
+                # kind of content lives in the source field, not to
+                # enumerate values.
+                values_cell = spec.get(
+                    "values", f"Unstructured content - see {spec['column']}."
+                )
+                distribution_cell = spec.get(
+                    "distribution",
+                    f"{info.row_count:,} records" if info else "",
+                )
                 rows.append({
                     "Category": recipe["category"],
                     "Variable": spec["variable"],
@@ -1035,8 +1092,8 @@ def build_curated_variables(
                     "Schema": table_name,
                     "Column(s)": spec["column"],
                     "Criteria": spec.get("criteria", ""),
-                    "Values": "",
-                    "Distribution": "",
+                    "Values": values_cell,
+                    "Distribution": distribution_cell,
                     "Completeness": completeness,
                     "Extraction Type": spec["extraction_type"],
                     "Notes": "",
@@ -1223,6 +1280,7 @@ def main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
     )
 
+    psycopg = _require_psycopg()
     with psycopg.connect(**conn_kwargs) as conn:
         if args.list_schemas:
             with conn.cursor() as cur:
