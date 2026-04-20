@@ -257,6 +257,7 @@ def introspect(
     schema: str,
     sample_values: int,
     pack: "Pack",
+    quiet: bool = False,
 ) -> tuple[list[ColumnInfo], list[TableInfo]]:
     """Walk the target schema and return ``(columns, tables)``.
 
@@ -282,7 +283,7 @@ def introspect(
         table_rows = cur.fetchall()
         tables = [row[0] for row in table_rows]
         view_count = sum(1 for _, t in table_rows if t == "VIEW")
-        if view_count:
+        if view_count and not quiet:
             print(
                 f"  (found {view_count} VIEW(s) in '{schema}' - included in output)",
                 file=sys.stderr,
@@ -290,7 +291,7 @@ def introspect(
 
     skipped_tables = [t for t in tables if t in pack.tables_to_skip]
     tables = [t for t in tables if t not in pack.tables_to_skip]
-    if skipped_tables:
+    if skipped_tables and not quiet:
         print(
             f"  (skipped {len(skipped_tables)} table(s) per pack.tables_to_skip: "
             f"{', '.join(sorted(skipped_tables))})",
@@ -324,12 +325,13 @@ def introspect(
         tables_out.append(
             TableInfo(name=table, row_count=row_count, column_count=len(raw_columns))
         )
-        print(
-            f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
-            + (f", {dropped} filtered" if dropped else "")
-            + ")",
-            file=sys.stderr,
-        )
+        if not quiet:
+            print(
+                f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
+                + (f", {dropped} filtered" if dropped else "")
+                + ")",
+                file=sys.stderr,
+            )
 
         for col_row in visible_columns:
             column_name, data_type, is_nullable_str, _max_len, _prec = col_row
@@ -713,19 +715,56 @@ def _fetch_concept_value_shape(
     table: str,
     group_col: str,
     limit: int,
+    available_value_cols: set[str] | None = None,
 ) -> list[tuple[str, int, int, int, int]]:
     """Return ``[(concept, total, n_num, n_str, n_concept), ...]`` for a fact
     table, ranked by total count. Used to auto-pick the value column per
     concept in per_concept mode.
+
+    Warehouse OMOP variants don't all carry every ``value_as_*`` column.
+    ``available_value_cols`` is the subset of {value_as_number,
+    value_as_string, value_as_concept_name} that the actual table has,
+    usually derived from the already-introspected ``ColumnInfo`` list.
+    Columns that are absent from the table are reported back as ``0`` so
+    ``_pick_value_column`` still picks sensibly without requiring extra
+    round-trips on a schema that lacks them.
+    """
+    available = available_value_cols or {
+        "value_as_number",
+        "value_as_string",
+        "value_as_concept_name",
+    }
+
+    # Build the SELECT so it only references columns that actually exist.
+    # Missing columns contribute ``0`` to the result.
+    def col_or_zero(name: str, expr: str) -> str:
+        return expr if name in available else "0"
+
+    count_num = col_or_zero("value_as_number", 'COUNT("value_as_number")')
+    count_str = col_or_zero(
+        "value_as_string",
+        'COUNT(NULLIF(TRIM("value_as_string"::text), \'\'))',
+    )
+    count_concept = col_or_zero(
+        "value_as_concept_name", 'COUNT("value_as_concept_name")'
+    )
+
+    sql = f"""
+        SELECT
+          "{group_col}"::text AS name,
+          COUNT(*) AS total,
+          {count_num} AS n_num,
+          {count_str} AS n_str,
+          {count_concept} AS n_concept
+        FROM "{schema}"."{table}"
+        WHERE "{group_col}" IS NOT NULL
+        GROUP BY "{group_col}"
+        ORDER BY total DESC
+        LIMIT %s;
     """
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                CONCEPT_VALUE_SHAPE_SQL_TEMPLATE.format(
-                    schema=schema, table=table, group_col=group_col
-                ),
-                (limit,),
-            )
+            cur.execute(sql, (limit,))
             return [
                 (str(row[0]), int(row[1]), int(row[2]), int(row[3]), int(row[4]))
                 for row in cur.fetchall()
@@ -957,6 +996,56 @@ def _column_lookup(columns: list[ColumnInfo]) -> dict[tuple[str, str], ColumnInf
 
 _VARIABLE_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
 
+# Characters the validator's VARIABLE_NAME_PATTERN accepts after the
+# leading letter. Anything outside this class (e.g. "[", "]", "#", ":",
+# "," typical of LOINC concept names) has to be rewritten into a safe
+# form so auto-generated rows don't fail invalid_variable_name.
+_VARIABLE_ALLOWED_CHAR_RE = re.compile(r"[A-Za-z0-9 _/().\-]")
+
+
+def _sanitize_variable_label(name: str) -> str:
+    """Rewrite ``name`` into a label that matches the validator's
+    VARIABLE_NAME_PATTERN while staying as readable as possible.
+
+    LOINC / clinical concept names routinely contain ``[``, ``]``, ``#``,
+    ``:``, ``,``, ``{``, ``}``. The validator's default pattern rejects
+    those. Rather than relaxing the pattern (which would also accept
+    garbage like ``!@$%``), we map:
+
+      * ``[`` / ``]`` / ``{`` / ``}``  -> dropped
+      * ``#`` / ``:`` / ``,`` / ``;``  -> dropped
+      * any other char outside the allowed class -> underscore
+      * runs of whitespace/underscores         -> collapsed to a single space
+      * leading / trailing whitespace          -> stripped
+
+    If the first char ends up non-alphabetic, we prepend ``V_`` so the
+    label still matches ``^[A-Za-z]...``. Preserves the original name
+    via the Criteria cell upstream.
+    """
+    if not name:
+        return ""
+
+    # Drop square / curly brackets and punctuation we can safely remove
+    # without mangling the readable form.
+    cleaned = re.sub(r"[\[\]{}#:,;]", "", name)
+    # Map anything else outside the allowed class to a space; collapse runs.
+    cleaned = "".join(
+        ch if _VARIABLE_ALLOWED_CHAR_RE.match(ch) else " " for ch in cleaned
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    if not cleaned:
+        return "Unnamed concept"
+    if not cleaned[0].isalpha():
+        cleaned = "V_" + cleaned
+
+    # Cap at 64 chars (upstream truncation invariant) but end the label on
+    # a word boundary if possible so reviewers don't see "...".
+    if len(cleaned) > 64:
+        cap = cleaned[:64].rsplit(" ", 1)[0]
+        cleaned = cap if len(cap) >= 32 else cleaned[:61] + "..."
+    return cleaned
+
 
 def _normalize_variable_key(name: str) -> str:
     """Dedupe key for Variable labels. Mirrors the validator's
@@ -1038,9 +1127,24 @@ def build_curated_variables(
             info = lookup.get((table_name, group_col))
             if info is None:
                 continue
+
+            # Only reference value_as_* columns that actually live on this
+            # table (some OMOP variants omit value_as_string on measurement,
+            # for instance). The inventory we already have tells us which
+            # columns are present without a second information_schema hit.
+            available_value_cols = {
+                c.column for c in columns
+                if c.table == table_name
+                and c.column in {
+                    "value_as_number",
+                    "value_as_string",
+                    "value_as_concept_name",
+                }
+            }
             shapes = _fetch_concept_value_shape(
                 conn, schema, table_name, group_col,
                 recipe.get("max_concepts", 30),
+                available_value_cols=available_value_cols,
             )
             if not shapes:
                 # Fall back to simple concept count if the shape query failed.
@@ -1092,7 +1196,10 @@ def build_curated_variables(
                 if not distribution:
                     distribution = f"{name}: {total}"  # fall back to concept count
 
-                variable = name if len(name) <= 64 else name[:61] + "..."
+                # Sanitize the concept name into a validator-safe display
+                # label; the raw name survives in the Criteria cell so the
+                # mapping back to source is not lost.
+                variable = _sanitize_variable_label(name)
                 variable = _disambiguate_variable(
                     variable, table_name, seen_variables, rows
                 )
@@ -1483,6 +1590,16 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Connect, list every accessible schema + object count, then exit.",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help=(
+            "Suppress operational stderr chatter (connection line, "
+            "per-table progress, column tree). Errors and the "
+            "'Wrote ...' summary still print so the caller knows the "
+            "result. Safer for piping into reports."
+        ),
+    )
 
     # Optional overrides for env-var credentials.
     parser.add_argument("--host")
@@ -1529,6 +1646,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    quiet = bool(getattr(args, "quiet", False))
+
+    def chatter(msg: str) -> None:
+        """Operational log-line helper. Suppressed under --quiet so the
+        host / user / per-table chatter doesn't end up in exported
+        reports or shoulder-surfed screenshots."""
+        if not quiet:
+            print(msg, file=sys.stderr)
 
     if args.list_cohorts:
         for name in available_cohorts():
@@ -1539,10 +1664,9 @@ def _main(argv: list[str] | None = None) -> int:
     # cohort pack. Handle it before we try to load one.
     if args.list_schemas:
         conn_kwargs = build_conn_kwargs(args)
-        print(
+        chatter(
             f"Connecting to {conn_kwargs['host']}:{conn_kwargs['port']}/"
-            f"{conn_kwargs['dbname']} as {conn_kwargs['user']}...",
-            file=sys.stderr,
+            f"{conn_kwargs['dbname']} as {conn_kwargs['user']}..."
         )
         psycopg = _require_psycopg()
         with psycopg.connect(**conn_kwargs) as conn:
@@ -1557,14 +1681,13 @@ def _main(argv: list[str] | None = None) -> int:
 
     pack = load_pack(args.cohort)
     schema_name = args.schema or pack.schema_name
-    print(f"Loaded pack '{args.cohort}' (schema={schema_name})", file=sys.stderr)
+    chatter(f"Loaded pack '{args.cohort}' (schema={schema_name})")
 
     conn_kwargs = build_conn_kwargs(args)
 
-    print(
+    chatter(
         f"Connecting to {conn_kwargs['host']}:{conn_kwargs['port']}/"
-        f"{conn_kwargs['dbname']} as {conn_kwargs['user']}...",
-        file=sys.stderr,
+        f"{conn_kwargs['dbname']} as {conn_kwargs['user']}..."
     )
 
     psycopg = _require_psycopg()
@@ -1575,6 +1698,7 @@ def _main(argv: list[str] | None = None) -> int:
             schema=schema_name,
             sample_values=args.sample_values,
             pack=pack,
+            quiet=quiet,
         )
         person_count = fetch_person_count(conn, schema_name)
 
@@ -1592,7 +1716,8 @@ def _main(argv: list[str] | None = None) -> int:
                 pack=pack,
             )
 
-    print_tree(columns)
+    if not quiet:
+        print_tree(columns)
 
     if args.out_csv:
         write_raw_csv(columns, args.out_csv)

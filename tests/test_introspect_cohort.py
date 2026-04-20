@@ -453,6 +453,83 @@ class BuildCuratedVariablesTests(unittest.TestCase):
         sex = [r for r in rows if r["Variable"] == "Sex"][0]
         self.assertEqual(sex["Values"], "Female, Male, Non-binary")
 
+    def test_measurement_without_value_as_string_does_not_error(self) -> None:
+        """Warehouse variants where ``measurement.value_as_string`` is
+        absent must not crash the per_concept path. The generator
+        should detect the missing column from the inventory and build
+        a COUNT SELECT that skips it, returning n_str = 0."""
+
+        def router(sql, params=None):
+            if 'COUNT("value_as_string"' in sql:
+                # If the generator still emits the old hardcoded SELECT
+                # this branch would fire, which is exactly the bug.
+                raise AssertionError(
+                    "value_as_string was referenced even though it's not in "
+                    "the inventory - schema drift was not respected"
+                )
+            if 'COUNT("value_as_number")' in sql or 'n_num' in sql:
+                # Simulate Postgres returning (name, total, n_num, 0, n_concept)
+                return {"rows": [("AAT level", 100, 60, 0, 40)]}
+            if "PERCENTILE_CONT" in sql:
+                return {"row": ("10", "20", "30", "40", "50")}
+            if "WITH scoped AS" in sql:
+                return {"rows": [("positive", 30, 50.0), ("negative", 30, 50.0)]}
+            return {}
+
+        # Inventory advertises measurement with no value_as_string column.
+        columns = [
+            _col("measurement", "measurement_concept_name", row_count=100),
+            _col("measurement", "value_as_number", row_count=100),
+            _col("measurement", "value_as_concept_name", row_count=100),
+        ]
+        rows = self._run(columns, router)
+        labs = [r for r in rows if r["Schema"] == "measurement"]
+        self.assertTrue(labs, "measurement rows should still be emitted")
+
+    def test_loinc_style_names_are_sanitized_for_validator(self) -> None:
+        """Raw LOINC concept names (with '[', ']', '#', ':', '/') must
+        be rewritten so the emitted Variable matches the validator's
+        VARIABLE_NAME_PATTERN. The raw name survives elsewhere (it's
+        still in the Criteria)."""
+
+        loinc = "C reactive protein [Mass/volume] in Serum or Plasma by High sensitivity method"
+
+        def router(sql, params=None):
+            if 'COUNT("value_as_number")' in sql or 'n_num' in sql:
+                return {"rows": [(loinc, 100, 100, 0, 0)]}
+            if "PERCENTILE_CONT" in sql:
+                return {"row": ("0.1", "1.0", "2.0", "5.0", "20.0")}
+            return {}
+
+        rows = self._run(
+            [_col("measurement", "measurement_concept_name")], router
+        )
+        lab = [r for r in rows if r["Schema"] == "measurement"][0]
+        variable = lab["Variable"]
+        # No forbidden characters.
+        for ch in "[]#:,{}":
+            self.assertNotIn(ch, variable)
+        # Validator pattern accepts it.
+        import re as _re
+        self.assertTrue(
+            _re.fullmatch(r"^[A-Za-z][A-Za-z0-9 _/().\-]*$", variable),
+            f"sanitized label still does not match VARIABLE_NAME_PATTERN: {variable!r}",
+        )
+        # Raw LOINC is preserved in Criteria.
+        self.assertIn(loinc, lab["Criteria"])
+
+    def test_standard_profile_data_model_is_skipped(self) -> None:
+        """PHI-class ingest echo must not appear in the inventory."""
+        # Verified indirectly: the pack has it in tables_to_skip.
+        pack = ic.load_pack("mtc_aat")
+        self.assertIn("standard_profile_data_model", pack.tables_to_skip)
+
+    def test_infusion_recipe_is_absent(self) -> None:
+        """The mtc_aat pack should no longer carry an 'infusion' recipe -
+        the warehouse table is drug_exposure-shaped, not a notes table."""
+        pack = ic.load_pack("mtc_aat")
+        self.assertNotIn("infusion", pack.curation_rules)
+
     def test_per_concept_duplicate_names_get_disambiguated(self) -> None:
         """Two distinct concept rows that normalize to the same Variable
         key must get a ``(table)`` suffix so the validator does not fire

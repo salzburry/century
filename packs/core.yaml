@@ -8,9 +8,14 @@
 # Anything specific to a single cohort (schema name, per-table recipes,
 # concept_name limits) belongs in the cohort pack, not here.
 
-# Tables dropped entirely. PII plumbing, vendor-specific linkage tokens, etc.
+# Tables dropped entirely. PII plumbing, vendor-specific linkage tokens,
+# raw ingest echoes with PHI-grade fields, etc.
 tables_to_skip:
   - dv_tokenized_profile_data
+  # Ingest-side table: raw "gold standard" profile rows that include
+  # full date_of_birth, city/state/zip, and free-text admit_diagnosis.
+  # HIPAA-identifier-class content; not intended as an analytic source.
+  - standard_profile_data_model
 
 # Columns that may sit on otherwise-kept tables but should never appear in a
 # published dictionary. Matched by exact column name (case-sensitive).
