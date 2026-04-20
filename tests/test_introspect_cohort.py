@@ -724,7 +724,7 @@ class EndToEndTests(unittest.TestCase):
             # with one row per introspected column - a flat inventory
             # alongside the curated dictionary. Every row must have a
             # non-empty Schema and Column so the sheet is usable on its
-            # own.
+            # own, and every row must declare whether it was sampled.
             import pandas as pd
             sheets = pd.read_excel(out, sheet_name=None)
             self.assertIn("All Columns", sheets)
@@ -732,11 +732,12 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(len(all_cols), len(columns))
             self.assertEqual(
                 set(all_cols.columns),
-                {"Schema", "Column", "Data Type", "Nullable",
+                {"Schema", "Column", "Data Type", "Nullable", "Sampled",
                  "Row Count", "Null Count", "Completeness", "Top Values"},
             )
             self.assertFalse(all_cols["Schema"].isna().any())
             self.assertFalse(all_cols["Column"].isna().any())
+            self.assertTrue(set(all_cols["Sampled"].unique()).issubset({"yes", "no"}))
         finally:
             out.unlink(missing_ok=True)
 
