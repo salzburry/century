@@ -145,6 +145,55 @@ SOURCE_COLUMN_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?$")
 PACKS_DIR = Path(__file__).resolve().parent / "packs"
 
 
+# Immutable snapshot of the compiled-in defaults captured at import time.
+# ``apply_profile_overrides`` always merges against this snapshot, not the
+# current in-memory state, so the function is idempotent: calling it twice
+# with different overlays no longer stacks settings from the first call on
+# top of the second. Long-lived processes (notebooks, wrappers, automation)
+# can also call ``reset_profile_overrides()`` between validations to drop
+# any overlay entirely.
+#
+# Deep-copied where needed so later code mutating the live globals doesn't
+# also mutate the snapshot.
+import copy as _copy
+
+_DEFAULTS = {
+    "COHORT_NAME": COHORT_NAME,
+    "REQUIRED_SHEETS": _copy.deepcopy(REQUIRED_SHEETS),
+    "REQUIRED_COLUMNS": list(REQUIRED_COLUMNS),
+    "REQUIRED_NON_EMPTY_COLUMNS": list(REQUIRED_NON_EMPTY_COLUMNS),
+    "COLUMN_ORDER": list(COLUMN_ORDER),
+    "COLUMN_ALIASES": _copy.deepcopy(COLUMN_ALIASES),
+    "ALLOWED_EXTRACTION_TYPES": set(ALLOWED_EXTRACTION_TYPES),
+    "RECOMMENDED_SCHEMA_VALUES": set(RECOMMENDED_SCHEMA_VALUES),
+    "VARIABLE_NAME_PATTERN": VARIABLE_NAME_PATTERN,
+}
+
+
+def reset_profile_overrides() -> None:
+    """Restore every validator constant to its compiled-in default.
+
+    Useful for long-lived processes (notebooks, API servers) that
+    validate multiple cohorts in sequence. Not strictly required if the
+    caller always applies a full profile before each run, but the
+    safest way to guarantee no cross-contamination.
+    """
+    global COHORT_NAME, REQUIRED_SHEETS, REQUIRED_COLUMNS
+    global REQUIRED_NON_EMPTY_COLUMNS, COLUMN_ORDER, COLUMN_ALIASES
+    global ALLOWED_EXTRACTION_TYPES, RECOMMENDED_SCHEMA_VALUES
+    global VARIABLE_NAME_PATTERN
+
+    COHORT_NAME = _DEFAULTS["COHORT_NAME"]
+    REQUIRED_SHEETS = _copy.deepcopy(_DEFAULTS["REQUIRED_SHEETS"])
+    REQUIRED_COLUMNS = list(_DEFAULTS["REQUIRED_COLUMNS"])
+    REQUIRED_NON_EMPTY_COLUMNS = list(_DEFAULTS["REQUIRED_NON_EMPTY_COLUMNS"])
+    COLUMN_ORDER = list(_DEFAULTS["COLUMN_ORDER"])
+    COLUMN_ALIASES = _copy.deepcopy(_DEFAULTS["COLUMN_ALIASES"])
+    ALLOWED_EXTRACTION_TYPES = set(_DEFAULTS["ALLOWED_EXTRACTION_TYPES"])
+    RECOMMENDED_SCHEMA_VALUES = set(_DEFAULTS["RECOMMENDED_SCHEMA_VALUES"])
+    VARIABLE_NAME_PATTERN = _DEFAULTS["VARIABLE_NAME_PATTERN"]
+
+
 def _deep_merge(base: Any, overlay: Any) -> Any:
     """Same merge semantics as the generator: lists append, scalars replace,
     dicts deep-merge. Used when a cohort pack's ``validator`` section extends
@@ -161,10 +210,17 @@ def _deep_merge(base: Any, overlay: Any) -> Any:
 
 
 def apply_profile_overrides(profile: dict[str, Any]) -> None:
-    """Overlay ``profile`` onto the module-level validator constants.
+    """Overlay ``profile`` onto the validator constants.
 
     ``profile`` follows the schema of the optional ``validator:`` block in a
     cohort pack. Anything missing falls back to the compiled-in default.
+
+    **Idempotent**: merges against the compiled-in *defaults snapshot*, not
+    the current (possibly already-overlaid) state. Calling
+    ``apply_profile_overrides(A)`` then ``apply_profile_overrides(B)``
+    is equivalent to applying ``B`` once - the first call's settings
+    don't stack on top. That matters for long-running processes
+    (notebooks, API servers) that validate multiple cohorts.
 
     Merge semantics are uniform across every field and match the generator:
 
@@ -181,6 +237,10 @@ def apply_profile_overrides(profile: dict[str, Any]) -> None:
     global REQUIRED_NON_EMPTY_COLUMNS, COLUMN_ORDER, COLUMN_ALIASES
     global ALLOWED_EXTRACTION_TYPES, RECOMMENDED_SCHEMA_VALUES
     global VARIABLE_NAME_PATTERN
+
+    # Start every override application from the pristine defaults so the
+    # function is idempotent and reset-free for callers.
+    reset_profile_overrides()
 
     if "cohort_name" in profile:
         COHORT_NAME = str(profile["cohort_name"])
