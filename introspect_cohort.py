@@ -130,11 +130,25 @@ def build_conn_kwargs(args: argparse.Namespace) -> dict[str, str]:
 # --------------------------------------------------------------------------- #
 
 LIST_TABLES_SQL = """
-SELECT table_name
+SELECT table_name, table_type
 FROM information_schema.tables
 WHERE table_schema = %s
-  AND table_type = 'BASE TABLE'
+  AND table_type IN ('BASE TABLE', 'VIEW')
 ORDER BY table_name;
+"""
+
+LIST_SCHEMAS_SQL = """
+SELECT n.nspname AS schema_name,
+       COUNT(c.oid) FILTER (
+         WHERE c.relkind IN ('r', 'v', 'm', 'f', 'p')
+       ) AS object_count
+FROM pg_namespace n
+LEFT JOIN pg_class c ON c.relnamespace = n.oid
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+  AND n.nspname NOT LIKE 'pg_temp_%'
+  AND n.nspname NOT LIKE 'pg_toast_temp_%'
+GROUP BY n.nspname
+ORDER BY n.nspname;
 """
 
 LIST_COLUMNS_SQL = """
@@ -230,10 +244,20 @@ def introspect(
 
     with conn.cursor() as cur:
         cur.execute(LIST_TABLES_SQL, (schema,))
-        tables = [row[0] for row in cur.fetchall()]
+        table_rows = cur.fetchall()
+        tables = [row[0] for row in table_rows]
+        view_count = sum(1 for _, t in table_rows if t == "VIEW")
+        if view_count:
+            print(
+                f"  (found {view_count} VIEW(s) in '{schema}' - included in output)",
+                file=sys.stderr,
+            )
 
     if not tables:
-        sys.stderr.write(f"No tables found in schema '{schema}'.\n")
+        sys.stderr.write(
+            f"No tables or views found in schema '{schema}'. "
+            "Run with --list-schemas to see what the DB user can actually read.\n"
+        )
         return columns_out, tables_out
 
     for table in tables:
@@ -480,6 +504,11 @@ def _parser() -> argparse.ArgumentParser:
         default=5,
         help="Top-N frequent values per column (0 to disable).",
     )
+    parser.add_argument(
+        "--list-schemas",
+        action="store_true",
+        help="Connect, list every accessible schema + object count, then exit.",
+    )
 
     # Optional overrides for env-var credentials.
     parser.add_argument("--host")
@@ -502,6 +531,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     with psycopg.connect(**conn_kwargs) as conn:
+        if args.list_schemas:
+            with conn.cursor() as cur:
+                cur.execute(LIST_SCHEMAS_SQL)
+                rows = cur.fetchall()
+            print(f"{'schema':<45} objects")
+            print("-" * 55)
+            for name, count in rows:
+                print(f"{name:<45} {count}")
+            return 0
+
         columns, tables = introspect(
             conn,
             schema=args.schema,
