@@ -369,6 +369,158 @@ class BuildCuratedVariablesTests(unittest.TestCase):
         self.assertTrue(note["Values"])
         self.assertIn("5,000", note["Distribution"])
 
+    def test_split_by_type_fallback_when_no_rows(self) -> None:
+        """If the categorical-for-concept query returns nothing (drug type
+        declared in the pack but no rows in data), the split row must
+        still carry non-empty Values + Distribution so the validator
+        doesn't warn missing_value_context."""
+
+        def router(sql, params):
+            if "WITH scoped AS" in sql:
+                return {"rows": []}   # simulate zero matching rows
+            return {}
+
+        rows = self._run(
+            [_col("drug_exposure", "drug_type_concept_name")], router
+        )
+        for drug_row in [r for r in rows if r["Schema"] == "drug_exposure"]:
+            self.assertTrue(
+                drug_row["Values"] and drug_row["Distribution"],
+                f"empty split row {drug_row['Variable']} should still have "
+                f"Values + Distribution filled, got {drug_row!r}",
+            )
+            self.assertIn("no rows", drug_row["Distribution"])
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end: introspect -> curated XLSX -> validator  (locks the two
+# sides of the pipeline together so we notice if one drifts)
+# --------------------------------------------------------------------------- #
+
+
+class EndToEndTests(unittest.TestCase):
+    """A curated workbook produced by write_curated_xlsx must validate
+    cleanly under validate_dictionary.validate_source."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = PROJECT_ROOT / "tests" / ".tmp"
+        cls.tmp.mkdir(parents=True, exist_ok=True)
+
+    def test_curated_workbook_validates_cleanly(self) -> None:
+        import uuid
+        import validate_dictionary as vd
+
+        pack = ic.load_pack("mtc_aat")
+
+        # A minimal but realistic-looking inventory: demographics + one
+        # fact-table per mode so every branch fires.
+        columns = [
+            _col("person", "gender_concept_name", top_values=[("Female", 620)]),
+            _col("person", "year_of_birth", data_type="integer"),
+            _col("observation", "observation_concept_name", row_count=80000),
+            _col("measurement", "measurement_concept_name", row_count=40000),
+            _col("condition_occurrence", "condition_concept_name", row_count=50000),
+            _col("drug_exposure", "drug_type_concept_name", row_count=30000),
+            _col("visit_occurrence", "visit_concept_name", row_count=20000),
+            _col("note", "note_text", row_count=5000),
+        ]
+        tables = [ic.TableInfo(t, 1, 1) for t in {c.table for c in columns}]
+
+        def router(sql, params=None):
+            if 'COUNT("value_as_number")' in sql:
+                table = re.search(r'FROM "[^"]+"\."([^"]+)"', sql).group(1)
+                return {"rows": {
+                    "observation": [("Heart rate", 1200, 1200, 0, 0)],
+                    "measurement": [("AAT level", 450, 450, 0, 0)],
+                }.get(table, [])}
+            if "PERCENTILE_CONT" in sql:
+                return {"row": ("1924", "1948", "1958", "1968", "2002")}
+            if "WITH scoped AS" in sql:
+                return {"rows": [("Prolastin 1000 MG", 400, 50.0)]}
+            if 'GROUP BY "condition_concept_name"' in sql or 'GROUP BY "visit_concept_name"' in sql:
+                return {"rows": [("Alpha-1 antitrypsin deficiency", 900), ("COPD", 700)]}
+            if "ORDER BY COUNT(*) DESC" in sql:
+                return {"rows": [("Female", 620, 62.0), ("Male", 370, 37.0)]}
+            return {}
+
+        conn = _stub_conn(router)
+
+        out = self.tmp / f"e2e_{uuid.uuid4().hex}.xlsx"
+        try:
+            # Swallow the writer's stderr summary so the test output stays clean.
+            import contextlib, io
+            with contextlib.redirect_stderr(io.StringIO()):
+                ic.write_curated_xlsx(
+                    conn=conn,
+                    schema=pack.schema_name,
+                    columns=columns,
+                    tables=tables,
+                    out_path=out,
+                    cohort=pack.cohort_name,
+                    person_count=1000,
+                    pack=pack,
+                )
+
+            # Apply the AAT cohort overlay before validating so that any
+            # cohort-specific schemas (infusion, etc.) are recognised.
+            vd.apply_profile_overrides(vd.load_cohort_profile("mtc_aat"))
+            try:
+                result = vd.validate_source(out, verbose=False)
+                self.assertEqual("passed", result.status)
+                self.assertEqual(0, result.error_count)
+            finally:
+                # Leave module globals the way the other tests expect them.
+                # importlib.reload resets the defaults.
+                import importlib
+                importlib.reload(vd)
+        finally:
+            out.unlink(missing_ok=True)
+
+
+class ValidatorProfileOverrideTests(unittest.TestCase):
+    """Lock down the merge semantics of apply_profile_overrides."""
+
+    def setUp(self) -> None:
+        import importlib
+        import validate_dictionary as vd
+        importlib.reload(vd)   # fresh defaults for each test
+        self.vd = vd
+
+    def tearDown(self) -> None:
+        import importlib
+        importlib.reload(self.vd)
+
+    def test_list_overlay_appends(self) -> None:
+        baseline = list(self.vd.REQUIRED_COLUMNS)
+        self.vd.apply_profile_overrides({"required_columns": ["extra_col"]})
+        self.assertEqual(
+            self.vd.REQUIRED_COLUMNS, baseline + ["extra_col"],
+            "required_columns should append, not replace",
+        )
+
+    def test_set_overlay_unions(self) -> None:
+        baseline = set(self.vd.ALLOWED_EXTRACTION_TYPES)
+        self.vd.apply_profile_overrides(
+            {"allowed_extraction_types": ["Curated"]}
+        )
+        self.assertIn("Curated", self.vd.ALLOWED_EXTRACTION_TYPES)
+        self.assertTrue(baseline.issubset(self.vd.ALLOWED_EXTRACTION_TYPES))
+
+    def test_dict_overlay_deep_merges(self) -> None:
+        self.vd.apply_profile_overrides({
+            "column_aliases": {"variable": ["variable_label"]}
+        })
+        self.assertIn("variable_label", self.vd.COLUMN_ALIASES["variable"])
+        self.assertIn(
+            "variable", self.vd.COLUMN_ALIASES["variable"],
+            "deep-merge must keep base aliases too",
+        )
+
+    def test_scalar_overlay_replaces(self) -> None:
+        self.vd.apply_profile_overrides({"cohort_name": "another_cohort"})
+        self.assertEqual(self.vd.COHORT_NAME, "another_cohort")
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

@@ -292,14 +292,18 @@ class ValidationResult:
     source_path: str
     source_kind: str
     status: str
+    cohort: str = ""  # snapshotted from COHORT_NAME at construction time
     error_count: int = 0
     warning_count: int = 0
     info_count: int = 0
     issues: list[Issue] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        # ``cohort`` is captured at build-time (see _build_result) so that a
+        # later call to apply_profile_overrides doesn't change the JSON
+        # report we hand back to the caller.
         return {
-            "cohort": COHORT_NAME,
+            "cohort": self.cohort or COHORT_NAME,
             "source_path": self.source_path,
             "source_kind": self.source_kind,
             "status": self.status,
@@ -875,6 +879,7 @@ def _build_result(
         source_path=str(source.resolve()),
         source_kind=source_kind,
         status="passed" if error_count == 0 else "failed",
+        cohort=COHORT_NAME,
         error_count=error_count,
         warning_count=warning_count,
         info_count=info_count,

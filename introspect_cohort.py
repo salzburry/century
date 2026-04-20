@@ -5,15 +5,24 @@ write a Century-format dictionary workbook straight out of the database.
 One file, end-to-end:
 
     1. Connect to the warehouse using the standard PG* env vars.
-    2. Walk every table in the target schema.
-    3. For every column, collect data type, row count, NULL count,
+    2. Walk every table in the target schema (skipping anything listed in
+       the cohort pack's ``tables_to_skip`` / ``sensitive_columns`` /
+       ``drop_column_patterns``).
+    3. For every kept column, collect data type, row count, NULL count,
        completeness %, and the top-N frequent values.
-    4. Print a tree to stdout and, if requested, write the draft to CSV
-       and/or an XLSX workbook with Summary / Tables / Variables sheets
-       that ``validate_dictionary.py`` can read directly.
+    4. Print a tree to stdout and, if requested, emit the draft in one
+       or both shapes:
+         * ``--out-xlsx``      curated Century-style workbook -
+           one row per business variable, validates cleanly against
+           ``validate_dictionary.py``.
+         * ``--out-xlsx-raw``  full inventory - one row per source
+           column. Intended for QA only. It *does not* validate: rows
+           carry no category / description, and the Variable prefill is
+           a ``table/column`` placeholder meant to be renamed.
 
-You still fill in ``category``, ``description``, ``criteria``, ``extraction_type``
-by hand (the schema does not know those). Everything else is pre-populated.
+You still fill in ``category``, ``description``, and in some cases
+``criteria`` for the curated workbook by hand; everything else is
+pre-populated.
 
 Required env vars (or the equivalent ``--`` flags):
     PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD
@@ -106,10 +115,12 @@ def load_dotenv(path: Path) -> int:
 
 
 # Auto-load ``.env`` from the script's directory on import. Running from a
-# different cwd still works.
+# different cwd still works. We only log the count when the module is being
+# run as the CLI entry point - when imported for tests, keep silent so the
+# test output stays clean.
 _DOTENV_PATH = Path(__file__).resolve().parent / ".env"
 _loaded = load_dotenv(_DOTENV_PATH)
-if _loaded:
+if _loaded and __name__ == "__main__":
     print(f"Loaded {_loaded} value(s) from {_DOTENV_PATH}", file=sys.stderr)
 
 
@@ -478,11 +489,14 @@ def write_dictionary_xlsx(
         variables_rows.append({
             # Blank columns for the user to fill in:
             "Category": "",
-            # Prefill Variable as "<table>.<column>" so rows stay unique even
-            # when the same column (value_as_number, concept_id, ...) appears
-            # in several tables. Rename to the display label ("AAT level",
-            # "Heart rate", ...) during review.
-            "Variable": f"{col.table}.{col.column}",
+            # Prefill Variable as "<table>/<column>" so rows stay unique
+            # even when the same column (value_as_number, concept_id, ...)
+            # appears in several tables. The "/" separator keeps the cell
+            # within the validator's VARIABLE_NAME_PATTERN in case anyone
+            # ever feeds a raw workbook through the validator. Rename to
+            # the display label ("AAT level", "Heart rate", ...) during
+            # review.
+            "Variable": f"{col.table}/{col.column}",
             "Description": "",
             # Auto-populated from the warehouse:
             "Schema": col.table,
@@ -1331,6 +1345,26 @@ def main(argv: list[str] | None = None) -> int:
             print(name)
         return 0
 
+    # --list-schemas is diagnostic and shouldn't require a working
+    # cohort pack. Handle it before we try to load one.
+    if args.list_schemas:
+        conn_kwargs = build_conn_kwargs(args)
+        print(
+            f"Connecting to {conn_kwargs['host']}:{conn_kwargs['port']}/"
+            f"{conn_kwargs['dbname']} as {conn_kwargs['user']}...",
+            file=sys.stderr,
+        )
+        psycopg = _require_psycopg()
+        with psycopg.connect(**conn_kwargs) as conn:
+            with conn.cursor() as cur:
+                cur.execute(LIST_SCHEMAS_SQL)
+                rows = cur.fetchall()
+        print(f"{'schema':<45} objects")
+        print("-" * 55)
+        for name, count in rows:
+            print(f"{name:<45} {count}")
+        return 0
+
     pack = load_pack(args.cohort)
     schema_name = args.schema or pack.schema_name
     print(f"Loaded pack '{args.cohort}' (schema={schema_name})", file=sys.stderr)
@@ -1345,15 +1379,6 @@ def main(argv: list[str] | None = None) -> int:
 
     psycopg = _require_psycopg()
     with psycopg.connect(**conn_kwargs) as conn:
-        if args.list_schemas:
-            with conn.cursor() as cur:
-                cur.execute(LIST_SCHEMAS_SQL)
-                rows = cur.fetchall()
-            print(f"{'schema':<45} objects")
-            print("-" * 55)
-            for name, count in rows:
-                print(f"{name:<45} {count}")
-            return 0
 
         columns, tables = introspect(
             conn,
