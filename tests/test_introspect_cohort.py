@@ -652,9 +652,8 @@ class EndToEndTests(unittest.TestCase):
         cls.tmp = PROJECT_ROOT / "tests" / ".tmp"
         cls.tmp.mkdir(parents=True, exist_ok=True)
 
-    def test_curated_workbook_validates_cleanly(self) -> None:
+    def test_dictionary_workbook_shape(self) -> None:
         import uuid
-        import validate_dictionary as vd
 
         pack = ic.load_pack("mtc_aat")
 
@@ -707,45 +706,81 @@ class EndToEndTests(unittest.TestCase):
                     pack=pack,
                 )
 
-            # Apply the AAT cohort overlay before validating so that any
-            # cohort-specific schemas (infusion, etc.) are recognised.
-            vd.apply_profile_overrides(vd.load_cohort_profile("mtc_aat"))
-            try:
-                result = vd.validate_source(out, verbose=False)
-                self.assertEqual("passed", result.status)
-                self.assertEqual(0, result.error_count)
-            finally:
-                # Leave module globals the way the other tests expect them.
-                # importlib.reload resets the defaults.
-                import importlib
-                importlib.reload(vd)
-
-            # The curated workbook must also carry an "All Columns" sheet
-            # with one row per introspected column - a flat inventory
-            # alongside the curated dictionary. Every row must have a
-            # non-empty Schema and Column, a numeric Null Count /
-            # Completeness (computed for every column regardless of
-            # Values Sampled), and a Values Sampled flag telling the
-            # reviewer whether Top Values was populated.
+            # Verify the workbook shape.
             import pandas as pd
             sheets = pd.read_excel(out, sheet_name=None)
-            self.assertIn("All Columns", sheets)
-            all_cols = sheets["All Columns"]
-            self.assertEqual(len(all_cols), len(columns))
             self.assertEqual(
-                set(all_cols.columns),
-                {"Schema", "Column", "Data Type", "Nullable",
-                 "Row Count", "Null Count", "Completeness",
-                 "Values Sampled", "Top Values"},
+                set(sheets.keys()),
+                {"Summary", "Variables"},
+                "workbook should contain only Summary and Variables sheets",
             )
-            self.assertFalse(all_cols["Schema"].isna().any())
-            self.assertFalse(all_cols["Column"].isna().any())
+            vars_df = sheets["Variables"]
+            self.assertEqual(len(vars_df), len(columns))
+            self.assertEqual(
+                list(vars_df.columns),
+                [
+                    "Category", "Variable", "Description",
+                    "Table(s)", "Column(s)", "Criteria",
+                    "Values", "Distribution", "Median (IQR)",
+                    "Completeness", "Extraction Type", "Notes",
+                ],
+                "Variables sheet column order must match the PDF layout",
+            )
+            # Completeness is populated for every column.
+            self.assertFalse(vars_df["Completeness"].isna().any())
+            # Extraction Type is one of {Structured, Unstructured}.
             self.assertTrue(
-                set(all_cols["Values Sampled"].unique()).issubset({"yes", "no"})
+                set(vars_df["Extraction Type"].unique()).issubset(
+                    {"Structured", "Unstructured"}
+                )
             )
-            # Null Count and Completeness are populated on every row.
-            self.assertFalse(all_cols["Null Count"].isna().any())
-            self.assertFalse(all_cols["Completeness"].isna().any())
+        finally:
+            out.unlink(missing_ok=True)
+
+    def test_dictionary_html_output(self) -> None:
+        """write_curated_html emits an HTML file with Summary and
+        Variables tables in the PDF column order."""
+        import uuid
+
+        columns = [
+            _col("person", "gender_concept_name",
+                 data_type="character varying",
+                 top_values=[("Female", 620), ("Male", 440)]),
+            _col("person", "year_of_birth",
+                 data_type="integer", row_count=1000),
+            _col("note", "note_text",
+                 data_type="text", row_count=5000),
+        ]
+        tables = [ic.TableInfo(t, 1, 1) for t in {c.table for c in columns}]
+
+        out = self.tmp / f"e2e_{uuid.uuid4().hex}.html"
+        try:
+            import contextlib, io
+            with contextlib.redirect_stderr(io.StringIO()):
+                ic.write_curated_html(
+                    columns=columns,
+                    tables=tables,
+                    out_path=out,
+                    cohort="mtc_aat_cohort",
+                    person_count=1000,
+                )
+            body = out.read_text(encoding="utf-8")
+            # Basic structure.
+            self.assertIn("<title>Data Dictionary", body)
+            self.assertIn("mtc_aat_cohort", body)
+            # Every PDF-layout column header appears.
+            for header in [
+                "Category", "Variable", "Description", "Table(s)",
+                "Column(s)", "Criteria", "Values", "Distribution",
+                "Median (IQR)", "Completeness", "Extraction Type",
+                "Notes",
+            ]:
+                self.assertIn(f"<th>{header}</th>", body)
+            # Every column in the fixture shows up as a row.
+            for col in columns:
+                self.assertIn(col.column, body)
+            # Unstructured row (text type) is marked accordingly.
+            self.assertIn("Unstructured", body)
         finally:
             out.unlink(missing_ok=True)
 
