@@ -38,7 +38,6 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 # NOTE: psycopg is imported lazily inside ``_require_psycopg()`` so the
 # module can be imported for offline tasks (``--list-cohorts``, unit tests
