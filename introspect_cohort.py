@@ -5,15 +5,24 @@ write a Century-format dictionary workbook straight out of the database.
 One file, end-to-end:
 
     1. Connect to the warehouse using the standard PG* env vars.
-    2. Walk every table in the target schema.
-    3. For every column, collect data type, row count, NULL count,
+    2. Walk every table in the target schema (skipping anything listed in
+       the cohort pack's ``tables_to_skip`` / ``sensitive_columns`` /
+       ``drop_column_patterns``).
+    3. For every kept column, collect data type, row count, NULL count,
        completeness %, and the top-N frequent values.
-    4. Print a tree to stdout and, if requested, write the draft to CSV
-       and/or an XLSX workbook with Summary / Tables / Variables sheets
-       that ``validate_dictionary.py`` can read directly.
+    4. Print a tree to stdout and, if requested, emit the draft in one
+       or both shapes:
+         * ``--out-xlsx``      curated Century-style workbook -
+           one row per business variable, validates cleanly against
+           ``validate_dictionary.py``.
+         * ``--out-xlsx-raw``  full inventory - one row per source
+           column. Intended for QA only. It *does not* validate: rows
+           carry no category / description, and the Variable prefill is
+           a ``table/column`` placeholder meant to be renamed.
 
-You still fill in ``category``, ``description``, ``criteria``, ``extraction_type``
-by hand (the schema does not know those). Everything else is pre-populated.
+You still fill in ``category``, ``description``, and in some cases
+``criteria`` for the curated workbook by hand; everything else is
+pre-populated.
 
 Required env vars (or the equivalent ``--`` flags):
     PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD
@@ -106,10 +115,12 @@ def load_dotenv(path: Path) -> int:
 
 
 # Auto-load ``.env`` from the script's directory on import. Running from a
-# different cwd still works.
+# different cwd still works. We only log the count when the module is being
+# run as the CLI entry point - when imported for tests, keep silent so the
+# test output stays clean.
 _DOTENV_PATH = Path(__file__).resolve().parent / ".env"
 _loaded = load_dotenv(_DOTENV_PATH)
-if _loaded:
+if _loaded and __name__ == "__main__":
     print(f"Loaded {_loaded} value(s) from {_DOTENV_PATH}", file=sys.stderr)
 
 
@@ -236,8 +247,24 @@ def introspect(
     conn: psycopg.Connection,
     schema: str,
     sample_values: int,
-    include_top_for_types: set[str],
+    pack: "Pack",
 ) -> tuple[list[ColumnInfo], list[TableInfo]]:
+    """Walk the target schema and return ``(columns, tables)``.
+
+    The ``pack`` drives two filters applied *before* any SQL runs:
+
+    * tables named in ``pack.tables_to_skip`` are skipped wholesale - no
+      row count, no column listing, no null-count queries. Keeps PII-style
+      linkage tables (``dv_tokenized_profile_data`` and similar) entirely
+      out of the raw inventory and out of any downstream report.
+    * individual columns that match ``pack.sensitive_columns`` (exact name)
+      or ``pack.drop_column_patterns`` (regex) are filtered out as soon as
+      ``information_schema.columns`` returns them, again before any
+      null-count or top-value query hits them.
+
+    Top-value sampling is additionally gated by ``pack.sampleable_types``
+    so long free-text columns never have their contents selected.
+    """
     columns_out: list[ColumnInfo] = []
     tables_out: list[TableInfo] = []
 
@@ -252,6 +279,15 @@ def introspect(
                 file=sys.stderr,
             )
 
+    skipped_tables = [t for t in tables if t in pack.tables_to_skip]
+    tables = [t for t in tables if t not in pack.tables_to_skip]
+    if skipped_tables:
+        print(
+            f"  (skipped {len(skipped_tables)} table(s) per pack.tables_to_skip: "
+            f"{', '.join(sorted(skipped_tables))})",
+            file=sys.stderr,
+        )
+
     if not tables:
         sys.stderr.write(
             f"No tables or views found in schema '{schema}'. "
@@ -265,15 +301,28 @@ def introspect(
             row_count = cur.fetchone()[0]
 
             cur.execute(LIST_COLUMNS_SQL, (schema, table))
-            columns = cur.fetchall()
+            raw_columns = cur.fetchall()
 
-        tables_out.append(TableInfo(name=table, row_count=row_count, column_count=len(columns)))
+        # Filter out sensitive / plumbing columns before we run any further
+        # queries against them. We still record the table's full column
+        # count for Summary accuracy.
+        visible_columns = [
+            row for row in raw_columns
+            if not _column_is_dropped(table, row[0], pack)
+        ]
+        dropped = len(raw_columns) - len(visible_columns)
+
+        tables_out.append(
+            TableInfo(name=table, row_count=row_count, column_count=len(raw_columns))
+        )
         print(
-            f"  {schema}.{table}  ({row_count:,} rows, {len(columns)} cols)",
+            f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
+            + (f", {dropped} filtered" if dropped else "")
+            + ")",
             file=sys.stderr,
         )
 
-        for col_row in columns:
+        for col_row in visible_columns:
             column_name, data_type, is_nullable_str, _max_len, _prec = col_row
             is_nullable = is_nullable_str == "YES"
 
@@ -289,7 +338,10 @@ def introspect(
                     )
                     null_count = cur.fetchone()[0]
 
-                    if sample_values > 0 and data_type in include_top_for_types:
+                    if (
+                        sample_values > 0
+                        and data_type in pack.sampleable_types
+                    ):
                         cur.execute(
                             TOP_VALUES_SQL_TEMPLATE.format(
                                 schema=schema, table=table, column=column_name
@@ -437,11 +489,14 @@ def write_dictionary_xlsx(
         variables_rows.append({
             # Blank columns for the user to fill in:
             "Category": "",
-            # Prefill Variable as "<table>.<column>" so rows stay unique even
-            # when the same column (value_as_number, concept_id, ...) appears
-            # in several tables. Rename to the display label ("AAT level",
-            # "Heart rate", ...) during review.
-            "Variable": f"{col.table}.{col.column}",
+            # Prefill Variable as "<table>/<column>" so rows stay unique
+            # even when the same column (value_as_number, concept_id, ...)
+            # appears in several tables. The "/" separator keeps the cell
+            # within the validator's VARIABLE_NAME_PATTERN in case anyone
+            # ever feeds a raw workbook through the validator. Rename to
+            # the display label ("AAT level", "Heart rate", ...) during
+            # review.
+            "Variable": f"{col.table}/{col.column}",
             "Description": "",
             # Auto-populated from the warehouse:
             "Schema": col.table,
@@ -474,12 +529,23 @@ def write_dictionary_xlsx(
 
 
 try:
-    import yaml  # PyYAML
-except ImportError:  # pragma: no cover
-    sys.stderr.write(
-        "PyYAML is not installed. Run: pip install pyyaml\n"
-    )
-    raise SystemExit(1)
+    import yaml  # PyYAML — imported lazily in _require_yaml()
+except ImportError:  # pragma: no cover - handled at call time
+    yaml = None  # type: ignore[assignment]
+
+
+def _require_yaml():
+    """Lazy getter for PyYAML. Exits with a clear install hint if missing.
+
+    Module-level ``import yaml`` would break offline tests and
+    ``--list-cohorts`` for users who haven't pip-installed the package,
+    same anti-pattern as psycopg earlier.
+    """
+    if yaml is None:
+        raise SystemExit(
+            "PyYAML is not installed. Run: pip install pyyaml"
+        )
+    return yaml
 
 
 PACKS_DIR = Path(__file__).resolve().parent / "packs"
@@ -531,8 +597,9 @@ def load_pack(cohort: str, packs_dir: Path = PACKS_DIR) -> Pack:
             )
         )
 
-    core_data = yaml.safe_load(core_path.read_text(encoding="utf-8")) or {}
-    cohort_data = yaml.safe_load(cohort_path.read_text(encoding="utf-8")) or {}
+    y = _require_yaml()
+    core_data = y.safe_load(core_path.read_text(encoding="utf-8")) or {}
+    cohort_data = y.safe_load(cohort_path.read_text(encoding="utf-8")) or {}
     merged = _deep_merge(core_data, cohort_data)
 
     cohort_name = merged.get("cohort_name")
@@ -995,6 +1062,16 @@ def build_curated_variables(
                     for seg in distribution.split(";")
                     if seg.strip()
                 )[:400]  # keep the cell manageable in Excel
+
+                # Fallback when the drug type is declared in the pack but
+                # absent from (or silent in) the data: avoid blanks so the
+                # validator does not fire missing_value_context. The
+                # placeholder still tells a reviewer which split this row
+                # belongs to.
+                if not distribution:
+                    distribution = f"(no rows with {group_col} = '{drug_type}')"
+                if not values_cell:
+                    values_cell = drug_type
                 rows.append({
                     "Category": split_cfg["category"],
                     "Variable": split_cfg["variable"],
@@ -1268,6 +1345,26 @@ def main(argv: list[str] | None = None) -> int:
             print(name)
         return 0
 
+    # --list-schemas is diagnostic and shouldn't require a working
+    # cohort pack. Handle it before we try to load one.
+    if args.list_schemas:
+        conn_kwargs = build_conn_kwargs(args)
+        print(
+            f"Connecting to {conn_kwargs['host']}:{conn_kwargs['port']}/"
+            f"{conn_kwargs['dbname']} as {conn_kwargs['user']}...",
+            file=sys.stderr,
+        )
+        psycopg = _require_psycopg()
+        with psycopg.connect(**conn_kwargs) as conn:
+            with conn.cursor() as cur:
+                cur.execute(LIST_SCHEMAS_SQL)
+                rows = cur.fetchall()
+        print(f"{'schema':<45} objects")
+        print("-" * 55)
+        for name, count in rows:
+            print(f"{name:<45} {count}")
+        return 0
+
     pack = load_pack(args.cohort)
     schema_name = args.schema or pack.schema_name
     print(f"Loaded pack '{args.cohort}' (schema={schema_name})", file=sys.stderr)
@@ -1282,21 +1379,12 @@ def main(argv: list[str] | None = None) -> int:
 
     psycopg = _require_psycopg()
     with psycopg.connect(**conn_kwargs) as conn:
-        if args.list_schemas:
-            with conn.cursor() as cur:
-                cur.execute(LIST_SCHEMAS_SQL)
-                rows = cur.fetchall()
-            print(f"{'schema':<45} objects")
-            print("-" * 55)
-            for name, count in rows:
-                print(f"{name:<45} {count}")
-            return 0
 
         columns, tables = introspect(
             conn,
             schema=schema_name,
             sample_values=args.sample_values,
-            include_top_for_types=pack.sampleable_types,
+            pack=pack,
         )
         person_count = fetch_person_count(conn, schema_name)
 

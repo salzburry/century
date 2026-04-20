@@ -33,8 +33,13 @@ sensitive_columns:
   - document_text
   - document_s3_uri
 
-# Regex patterns applied to every column. Anything that matches is plumbing,
-# not a clinical variable.
+# Regex patterns applied to every column. Anything that matches is plumbing
+# (surrogate keys, source-value echoes, audit fields), not a clinical
+# variable, so it is skipped before any query runs. Applied in introspect()
+# before null-count / top-value queries, so sensitive columns never read.
+# There is no "un-drop" list: if a cohort needs one of these kept (e.g.
+# visit_concept_id for a downstream join), override the full list in the
+# cohort pack. Merge appends, so write the override carefully.
 drop_column_patterns:
   - .*_source_concept_id$
   - .*_source_concept_name$

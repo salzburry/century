@@ -164,9 +164,18 @@ def apply_profile_overrides(profile: dict[str, Any]) -> None:
     """Overlay ``profile`` onto the module-level validator constants.
 
     ``profile`` follows the schema of the optional ``validator:`` block in a
-    cohort pack. Anything missing falls back to the compiled-in default. The
-    merge is in-place on module globals so every step function picks up the
-    overrides without threading a config argument through each call.
+    cohort pack. Anything missing falls back to the compiled-in default.
+
+    Merge semantics are uniform across every field and match the generator:
+
+      * lists  -> append (overlay extends base; stable order)
+      * dicts  -> deep-merge (recurse per-key)
+      * scalars/strings -> replace
+
+    Sets are round-tripped through their list representation so they honor
+    the same append rule. The merge is in-place on module globals so every
+    step function picks up the overrides without threading a config
+    argument through each call.
     """
     global COHORT_NAME, REQUIRED_SHEETS, REQUIRED_COLUMNS
     global REQUIRED_NON_EMPTY_COLUMNS, COLUMN_ORDER, COLUMN_ALIASES
@@ -180,25 +189,34 @@ def apply_profile_overrides(profile: dict[str, Any]) -> None:
         REQUIRED_SHEETS = _deep_merge(REQUIRED_SHEETS, profile["required_sheets"])
 
     if "required_columns" in profile:
-        REQUIRED_COLUMNS = list(profile["required_columns"])
+        REQUIRED_COLUMNS = _deep_merge(REQUIRED_COLUMNS, list(profile["required_columns"]))
 
     if "required_non_empty_columns" in profile:
-        REQUIRED_NON_EMPTY_COLUMNS = list(profile["required_non_empty_columns"])
+        REQUIRED_NON_EMPTY_COLUMNS = _deep_merge(
+            REQUIRED_NON_EMPTY_COLUMNS, list(profile["required_non_empty_columns"])
+        )
 
     if "column_order" in profile:
-        COLUMN_ORDER = list(profile["column_order"])
+        COLUMN_ORDER = _deep_merge(COLUMN_ORDER, list(profile["column_order"]))
 
     if "column_aliases" in profile:
         COLUMN_ALIASES = _deep_merge(COLUMN_ALIASES, profile["column_aliases"])
 
     if "allowed_extraction_types" in profile:
-        ALLOWED_EXTRACTION_TYPES = (
-            ALLOWED_EXTRACTION_TYPES | set(profile["allowed_extraction_types"])
+        # list-append + dedupe via set, so the rule stays consistent.
+        ALLOWED_EXTRACTION_TYPES = set(
+            _deep_merge(
+                sorted(ALLOWED_EXTRACTION_TYPES),
+                list(profile["allowed_extraction_types"]),
+            )
         )
 
     if "recommended_schema_values" in profile:
-        RECOMMENDED_SCHEMA_VALUES = (
-            RECOMMENDED_SCHEMA_VALUES | set(profile["recommended_schema_values"])
+        RECOMMENDED_SCHEMA_VALUES = set(
+            _deep_merge(
+                sorted(RECOMMENDED_SCHEMA_VALUES),
+                list(profile["recommended_schema_values"]),
+            )
         )
 
     if "variable_name_pattern" in profile:
@@ -274,14 +292,18 @@ class ValidationResult:
     source_path: str
     source_kind: str
     status: str
+    cohort: str = ""  # snapshotted from COHORT_NAME at construction time
     error_count: int = 0
     warning_count: int = 0
     info_count: int = 0
     issues: list[Issue] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        # ``cohort`` is captured at build-time (see _build_result) so that a
+        # later call to apply_profile_overrides doesn't change the JSON
+        # report we hand back to the caller.
         return {
-            "cohort": COHORT_NAME,
+            "cohort": self.cohort or COHORT_NAME,
             "source_path": self.source_path,
             "source_kind": self.source_kind,
             "status": self.status,
@@ -616,32 +638,37 @@ def step_check_rows(frame: pd.DataFrame, sheet_name: str) -> list[Issue]:
             else:
                 seen_variables[normalized_variable] = excel_row
 
-        completeness = parse_percent_like(row.get("completeness", ""))
-        if completeness is None:
-            issues.append(
-                Issue(
-                    severity="error",
-                    code="invalid_completeness",
-                    message=(
-                        "Completeness must be numeric - percent like '98.4%' "
-                        "or decimal like '0.984'."
-                    ),
-                    sheet=sheet_name,
-                    row=excel_row,
-                    column="completeness",
+        # Skip typed completeness checks when the cell is blank - the
+        # ``blank_required_value`` error above already flags it once.
+        # Reporting it twice just inflates the error count.
+        completeness_raw = row.get("completeness", "")
+        if not is_blank(completeness_raw):
+            completeness = parse_percent_like(completeness_raw)
+            if completeness is None:
+                issues.append(
+                    Issue(
+                        severity="error",
+                        code="invalid_completeness",
+                        message=(
+                            "Completeness must be numeric - percent like '98.4%' "
+                            "or decimal like '0.984'."
+                        ),
+                        sheet=sheet_name,
+                        row=excel_row,
+                        column="completeness",
+                    )
                 )
-            )
-        elif not 0 <= completeness <= 100:
-            issues.append(
-                Issue(
-                    severity="error",
-                    code="completeness_out_of_range",
-                    message="Completeness must fall between 0 and 100 percent.",
-                    sheet=sheet_name,
-                    row=excel_row,
-                    column="completeness",
+            elif not 0 <= completeness <= 100:
+                issues.append(
+                    Issue(
+                        severity="error",
+                        code="completeness_out_of_range",
+                        message="Completeness must fall between 0 and 100 percent.",
+                        sheet=sheet_name,
+                        row=excel_row,
+                        column="completeness",
+                    )
                 )
-            )
 
         extraction_type = display_value(row.get("extraction_type", ""))
         normalized_extraction_type = normalize_token(extraction_type)
@@ -660,33 +687,24 @@ def step_check_rows(frame: pd.DataFrame, sheet_name: str) -> list[Issue]:
                 )
             )
 
+        # Skip ``missing_schema`` when the cell is blank - the
+        # ``blank_required_value`` error already covers it. Only emit
+        # unexpected-schema warnings when there's actually content.
         schemas = split_tokens(row.get("schema", ""))
-        if not schemas:
-            issues.append(
-                Issue(
-                    severity="error",
-                    code="missing_schema",
-                    message="At least one schema/table reference is required.",
-                    sheet=sheet_name,
-                    row=excel_row,
-                    column="schema",
-                )
-            )
-        else:
-            for schema in schemas:
-                if normalize_token(schema) not in recommended_schemas:
-                    issues.append(
-                        Issue(
-                            severity="warning",
-                            code="unexpected_schema_value",
-                            message=(
-                                f"Schema/table '{schema}' is not in the recommended list."
-                            ),
-                            sheet=sheet_name,
-                            row=excel_row,
-                            column="schema",
-                        )
+        for schema in schemas:
+            if normalize_token(schema) not in recommended_schemas:
+                issues.append(
+                    Issue(
+                        severity="warning",
+                        code="unexpected_schema_value",
+                        message=(
+                            f"Schema/table '{schema}' is not in the recommended list."
+                        ),
+                        sheet=sheet_name,
+                        row=excel_row,
+                        column="schema",
                     )
+                )
 
         for source_column in split_tokens(row.get("source_columns", "")):
             if not SOURCE_COLUMN_PATTERN.fullmatch(source_column):
@@ -861,6 +879,7 @@ def _build_result(
         source_path=str(source.resolve()),
         source_kind=source_kind,
         status="passed" if error_count == 0 else "failed",
+        cohort=COHORT_NAME,
         error_count=error_count,
         warning_count=warning_count,
         info_count=info_count,
