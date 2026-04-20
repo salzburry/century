@@ -226,6 +226,12 @@ class ColumnInfo:
     null_count: int
     completeness_pct: float  # 0-100
     top_values: list[tuple[str, int]]
+    # True when the column is on a kept table but was excluded from
+    # sampling (pack.sensitive_columns / pack.drop_column_patterns).
+    # We still list it in the full inventory so reviewers can see the
+    # complete field list; we just don't run null-count / top-value
+    # queries against it, and completeness/null_count stay at 0.
+    dropped: bool = False
 
     def distribution_cell(self) -> str:
         if not self.top_values:
@@ -261,19 +267,24 @@ def introspect(
 ) -> tuple[list[ColumnInfo], list[TableInfo]]:
     """Walk the target schema and return ``(columns, tables)``.
 
-    The ``pack`` drives two filters applied *before* any SQL runs:
+    The ``pack`` drives two kinds of filter:
 
-    * tables named in ``pack.tables_to_skip`` are skipped wholesale - no
-      row count, no column listing, no null-count queries. Keeps PII-style
-      linkage tables (``dv_tokenized_profile_data`` and similar) entirely
-      out of the raw inventory and out of any downstream report.
-    * individual columns that match ``pack.sensitive_columns`` (exact name)
-      or ``pack.drop_column_patterns`` (regex) are filtered out as soon as
-      ``information_schema.columns`` returns them, again before any
-      null-count or top-value query hits them.
+    * Tables named in ``pack.tables_to_skip`` are excluded wholesale -
+      no row count, no column listing, no null-count queries. Keeps
+      PII / vendor linkage tables (``dv_tokenized_profile_data``,
+      ``standard_profile_data_model``) out of the inventory entirely.
 
-    Top-value sampling is additionally gated by ``pack.sampleable_types``
-    so long free-text columns never have their contents selected.
+    * Individual columns that match ``pack.sensitive_columns`` (exact
+      name) or ``pack.drop_column_patterns`` (regex) are still *listed*
+      in the inventory (so reviewers see the full field set) but they
+      carry ``dropped=True`` and we skip the null-count / top-value
+      queries against them. Completeness / null_count remain 0. The
+      curated ``Variables`` sheet ignores dropped rows; the
+      ``All Columns`` sheet surfaces them.
+
+    Top-value sampling on kept columns is additionally gated by
+    ``pack.sampleable_types`` so long free-text columns never have
+    their contents selected.
     """
     columns_out: list[ColumnInfo] = []
     tables_out: list[TableInfo] = []
@@ -289,15 +300,6 @@ def introspect(
                 file=sys.stderr,
             )
 
-    skipped_tables = [t for t in tables if t in pack.tables_to_skip]
-    tables = [t for t in tables if t not in pack.tables_to_skip]
-    if skipped_tables and not quiet:
-        print(
-            f"  (skipped {len(skipped_tables)} table(s) per pack.tables_to_skip: "
-            f"{', '.join(sorted(skipped_tables))})",
-            file=sys.stderr,
-        )
-
     if not tables:
         sys.stderr.write(
             f"No tables or views found in schema '{schema}'. "
@@ -305,42 +307,68 @@ def introspect(
         )
         return columns_out, tables_out
 
-    for table in tables:
-        with conn.cursor() as cur:
-            cur.execute(ROW_COUNT_SQL_TEMPLATE.format(schema=schema, table=table))
-            row_count = cur.fetchone()[0]
+    skipped_tables = sorted(t for t in tables if t in pack.tables_to_skip)
+    if skipped_tables and not quiet:
+        print(
+            f"  (listing without sampling, per pack.tables_to_skip: "
+            f"{', '.join(skipped_tables)})",
+            file=sys.stderr,
+        )
 
+    for table in tables:
+        table_is_skipped = table in pack.tables_to_skip
+
+        # Always list columns for every table the user can see, so the
+        # All Columns inventory matches the real schema. Skipped tables
+        # contribute name/type only - no row count, no null queries, no
+        # value sampling - keeping the cost bounded and any row-level
+        # PII unread.
+        with conn.cursor() as cur:
             cur.execute(LIST_COLUMNS_SQL, (schema, table))
             raw_columns = cur.fetchall()
 
-        # Filter out sensitive / plumbing columns before we run any further
-        # queries against them. We still record the table's full column
-        # count for Summary accuracy.
-        visible_columns = [
-            row for row in raw_columns
-            if not _column_is_dropped(table, row[0], pack)
-        ]
-        dropped = len(raw_columns) - len(visible_columns)
+        if table_is_skipped:
+            row_count = 0
+        else:
+            with conn.cursor() as cur:
+                cur.execute(ROW_COUNT_SQL_TEMPLATE.format(schema=schema, table=table))
+                row_count = cur.fetchone()[0]
+
+        # Partition into sampleable vs "dropped" (plumbing / sensitive /
+        # skipped-table). Dropped columns are still recorded in the
+        # inventory; we just do not run further queries against them.
+        dropped_names = {
+            row[0] for row in raw_columns
+            if table_is_skipped or _column_is_dropped(table, row[0], pack)
+        }
 
         tables_out.append(
             TableInfo(name=table, row_count=row_count, column_count=len(raw_columns))
         )
         if not quiet:
-            print(
-                f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
-                + (f", {dropped} filtered" if dropped else "")
-                + ")",
-                file=sys.stderr,
-            )
+            if table_is_skipped:
+                print(
+                    f"  {schema}.{table}  ({len(raw_columns)} cols, not sampled)",
+                    file=sys.stderr,
+                )
+            else:
+                n_not_sampled = len(dropped_names)
+                print(
+                    f"  {schema}.{table}  ({row_count:,} rows, {len(raw_columns)} cols"
+                    + (f", {n_not_sampled} not sampled" if n_not_sampled else "")
+                    + ")",
+                    file=sys.stderr,
+                )
 
-        for col_row in visible_columns:
+        for col_row in raw_columns:
             column_name, data_type, is_nullable_str, _max_len, _prec = col_row
             is_nullable = is_nullable_str == "YES"
+            is_dropped = column_name in dropped_names
 
             null_count = 0
             top_values: list[tuple[str, int]] = []
 
-            if row_count > 0:
+            if row_count > 0 and not is_dropped:
                 with conn.cursor() as cur:
                     cur.execute(
                         NULL_COUNT_SQL_TEMPLATE.format(
@@ -361,7 +389,13 @@ def introspect(
                         )
                         top_values = [(str(v), int(n)) for v, n in cur.fetchall()]
 
-            completeness = (1 - null_count / row_count) * 100 if row_count > 0 else 0.0
+            # Completeness is only meaningful when we actually ran the
+            # null-count query. For dropped / skipped-table columns it
+            # stays 0.
+            if row_count > 0 and not is_dropped:
+                completeness = (1 - null_count / row_count) * 100
+            else:
+                completeness = 0.0
 
             columns_out.append(
                 ColumnInfo(
@@ -374,6 +408,7 @@ def introspect(
                     null_count=null_count,
                     completeness_pct=completeness,
                     top_values=top_values,
+                    dropped=is_dropped,
                 )
             )
 
@@ -1333,7 +1368,10 @@ def build_curated_variables(
         if mode == "keep_columns":
             for col_name, cfg in recipe["columns"].items():
                 info = lookup.get((table_name, col_name))
-                if info is None:
+                if info is None or info.dropped:
+                    # A column the pack wants to surface but the pack-level
+                    # safety filter excluded from sampling. Skip so we don't
+                    # emit a row whose stats are all zero.
                     continue
                 variable_type = cfg.get("variable_type", "categorical")
                 if variable_type == "identifier":
@@ -1501,13 +1539,13 @@ def write_curated_xlsx(
         ],
     )
 
-    # ``All Columns`` sheet: one row per introspected column, regardless of
-    # whether the curation rules used it. Gives reviewers the full field
-    # inventory alongside the curated dictionary without them having to
-    # open a second workbook. The raw dump still respects pack-level
-    # safety filters (tables_to_skip / sensitive_columns /
-    # drop_column_patterns) so PII-class fields do not leak through this
-    # sheet either - the sheet reflects what ``introspect()`` returned.
+    # ``All Columns`` sheet: one row per column on every non-skipped
+    # table, matching what VS Code's PostgreSQL explorer would show.
+    # ``Sampled=no`` marks columns the pack excluded from sampling
+    # (plumbing like ``*_id`` / ``*_source_value`` or flagged sensitive
+    # names) so their null-count and top-values stay empty. Tables in
+    # pack.tables_to_skip remain excluded entirely - PII-class source
+    # tables don't reach this sheet.
     all_columns_df = pd.DataFrame(
         [
             {
@@ -1515,9 +1553,10 @@ def write_curated_xlsx(
                 "Column": col.column,
                 "Data Type": col.data_type,
                 "Nullable": "yes" if col.is_nullable else "no",
+                "Sampled": "no" if col.dropped else "yes",
                 "Row Count": col.row_count,
-                "Null Count": col.null_count,
-                "Completeness": f"{col.completeness_pct:.1f}%",
+                "Null Count": "" if col.dropped else col.null_count,
+                "Completeness": "" if col.dropped else f"{col.completeness_pct:.1f}%",
                 "Top Values": col.distribution_cell(),
             }
             for col in columns
@@ -1527,6 +1566,7 @@ def write_curated_xlsx(
             "Column",
             "Data Type",
             "Nullable",
+            "Sampled",
             "Row Count",
             "Null Count",
             "Completeness",
