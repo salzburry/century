@@ -314,6 +314,61 @@ class BuildCuratedVariablesTests(unittest.TestCase):
         self.assertEqual(len(note), 1)
         self.assertEqual(note[0]["Extraction Type"], "Unstructured")
 
+    def test_per_concept_completeness_uses_picked_column(self) -> None:
+        """Heart rate concept fires 1000 times but only value_as_number is
+        populated 300 of them. Completeness must reflect the value column
+        (30%), not the concept_name column (100%)."""
+
+        def router(sql, params):
+            if 'COUNT("value_as_number")' in sql:
+                # (name, total, n_num, n_str, n_concept) -> 300/1000 numeric
+                return {"rows": [("Heart rate", 1000, 300, 0, 0)]}
+            if "PERCENTILE_CONT" in sql:
+                return {"row": ("40", "55", "65", "75", "120")}
+            return {}
+
+        rows = self._run([_col("observation", "observation_concept_name")], router)
+        hr = [r for r in rows if r["Variable"] == "Heart rate"][0]
+        self.assertEqual(hr["Completeness"], "30.0%")
+
+    def test_split_by_type_populates_values_and_distribution(self) -> None:
+        """The split rows must fill Values + Distribution so the validator
+        does not fire missing_value_context on every drug row."""
+
+        def router(sql, params):
+            if "WITH scoped AS" in sql:
+                # category per-concept top-N (drug_concept_name scoped to
+                # a specific drug_type_concept_name)
+                return {
+                    "rows": [
+                        ("Prolastin 1000 MG", 400, 50.0),
+                        ("Zemaira 1000 MG", 300, 37.5),
+                    ]
+                }
+            return {}
+
+        rows = self._run(
+            [_col("drug_exposure", "drug_type_concept_name")], router
+        )
+        for drug_row in [r for r in rows if r["Schema"] == "drug_exposure"]:
+            self.assertTrue(
+                drug_row["Values"] and drug_row["Distribution"],
+                f"split row {drug_row['Variable']} should have Values + "
+                f"Distribution filled, got {drug_row!r}",
+            )
+            self.assertIn("Prolastin", drug_row["Values"])
+
+    def test_static_row_has_values_and_distribution(self) -> None:
+        """Static rows (notes/documents) must populate Values + Distribution
+        so the validator does not warn on every unstructured row."""
+        rows = self._run(
+            [_col("note", "note_text", row_count=5000)],
+            lambda sql, params: {},
+        )
+        note = [r for r in rows if r["Variable"] == "Clinical Note"][0]
+        self.assertTrue(note["Values"])
+        self.assertIn("5,000", note["Distribution"])
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
