@@ -218,23 +218,8 @@ class TableInfo:
 # Introspection
 # --------------------------------------------------------------------------- #
 
-
-# Types we compute top-N distributions for. Long free text gets skipped.
-SAMPLEABLE_TYPES = {
-    "character varying",
-    "varchar",
-    "text",
-    "character",
-    "name",
-    "integer",
-    "bigint",
-    "smallint",
-    "numeric",
-    "real",
-    "double precision",
-    "boolean",
-    "date",
-}
+# Sampleable types are supplied via the core pack (``sampleable_types``);
+# see ``Pack`` in the pack-loader section below.
 
 
 def introspect(
@@ -474,235 +459,94 @@ def write_dictionary_xlsx(
 
 
 # --------------------------------------------------------------------------- #
-# Curation rules (how to collapse the raw inventory to Century-format rows)
+# Pack loader (core + cohort rules from YAML)
 # --------------------------------------------------------------------------- #
 
-# Tables dropped entirely - PII plumbing / vendor-specific tokens.
-TABLES_TO_SKIP: set[str] = {
-    "dv_tokenized_profile_data",
-}
 
-# Specific column names to drop even if they live on an otherwise-kept table
-# (PHI pushed down into the warehouse but not intended as analytic variables).
-SENSITIVE_COLUMNS: set[str] = {
-    "ssn",
-    "first_name",
-    "last_name",
-    "middle_name",
-    "email",
-    "phone",
-    "cellphone",
-    "address1",
-    "address2",
-    "street",
-    "record_id_tokenized",
-    "patient_id_tokenized",
-    "encryption_key",
-    "file_name",
-    "s3_uri",
-    "document_text",
-    "document_s3_uri",
-}
-
-# Regex patterns applied to every column - things that are plumbing, not data.
-DROP_COLUMN_REGEXES = [
-    re.compile(p) for p in (
-        r".*_source_concept_id$",
-        r".*_source_concept_name$",
-        r".*_source_value$",
-        r".*_type_concept_id$",
-        r".*_type_source_value$",
-        r"^airflow_.*",
-        r".*_event_id$",
-        # IDs and FKs - keep concept_names, drop the numeric join keys.
-        r".*_concept_id$",
-        r"^provider_id$",
-        r"^visit_detail_id$",
-        r"^visit_occurrence_id$",
-        r"^care_site_id$",
-        r"^payer_plan_period_id$",
-        r"^location_id$",
+try:
+    import yaml  # PyYAML
+except ImportError:  # pragma: no cover
+    sys.stderr.write(
+        "PyYAML is not installed. Run: pip install pyyaml\n"
     )
-]
+    raise SystemExit(1)
 
-# Per-table curation recipes. Keys are unqualified table names. Each recipe
-# emits zero or more business-variable rows (one row per concept for fact
-# tables, or one row per listed column for demographic-style tables).
-#
-#   ``mode`` values:
-#     "per_concept"          - one row per distinct ``group_by`` value
-#                              (observations, measurements)
-#     "single_row_with_list" - one row; distinct group values go in Values
-#                              (condition_occurrence, visit_occurrence)
-#     "split_by_type"        - one row per value of ``group_by`` using the
-#                              per-value override in ``splits``
-#                              (drug_exposure: Prescriptions vs
-#                              Administrations)
-#     "keep_columns"         - one row per named column (person / location /
-#                              payer_plan_period demographics)
-#     "static"               - emit the hard-coded rows verbatim
-#                              (note / document unstructured rows)
-CURATION_RULES: dict[str, dict[str, Any]] = {
-    "observation": {
-        "category": "Observation",
-        "mode": "per_concept",
-        "group_by": "observation_concept_name",
-        "value_column": "value_as_number",
-        "criteria_template": "observation_concept_name = '{name}'",
-        "description_template": "Observation '{name}' captured at the office visit.",
-        "extraction_type": "Structured",
-        "max_concepts": 30,
-    },
-    "measurement": {
-        "category": "Labs",
-        "mode": "per_concept",
-        "group_by": "measurement_concept_name",
-        "value_column": "value_as_number",
-        "criteria_template": "measurement_concept_name = '{name}'",
-        "description_template": "Laboratory measurement '{name}' recorded for the patient.",
-        "extraction_type": "Structured",
-        "max_concepts": 30,
-    },
-    "condition_occurrence": {
-        "category": "Diagnosis",
-        "mode": "single_row_with_list",
-        "variable": "Diagnosis",
-        "description": "Medical diagnoses and conditions recorded for the patient.",
-        "group_by": "condition_concept_name",
-        "value_column": "condition_concept_name",
-        "extraction_type": "Structured",
-        "max_values": 50,
-    },
-    "drug_exposure": {
-        "category": "Prescriptions",
-        "mode": "split_by_type",
-        "group_by": "drug_type_concept_name",
-        "value_column": "drug_concept_name",
-        "criteria_template": "drug_type_concept_name = '{name}'",
-        "extraction_type": "Structured",
-        "splits": {
-            "EHR prescription": {
-                "variable": "Prescriptions",
-                "category": "Prescriptions",
-                "description": "Medications prescribed to the patient.",
-            },
-            "EHR administration record": {
-                "variable": "Administrations",
-                "category": "Administrations",
-                "description": "Administrations recorded for the patient.",
-            },
-        },
-    },
-    "procedure_occurrence": {
-        "category": "Procedures",
-        "mode": "single_row_with_list",
-        "variable": "Procedures",
-        "description": "Procedures recorded for the patient.",
-        "group_by": "procedure_concept_name",
-        "value_column": "procedure_concept_name",
-        "extraction_type": "Structured",
-        "max_values": 50,
-    },
-    "visit_occurrence": {
-        "category": "Visits",
-        "mode": "single_row_with_list",
-        "variable": "Visit Type and Date",
-        "description": "The type of healthcare visit or encounter.",
-        "group_by": "visit_concept_name",
-        "value_column": "visit_concept_name",
-        "extraction_type": "Structured",
-        "max_values": 20,
-    },
-    "person": {
-        "category": "Demographics",
-        "mode": "keep_columns",
-        "columns": {
-            "gender_concept_name": {
-                "variable": "Sex",
-                "description": "Biological sex at birth.",
-            },
-            "race_concept_name": {
-                "variable": "Race",
-                "description": "Self-identified racial category.",
-            },
-            "ethnicity_concept_name": {
-                "variable": "Ethnicity",
-                "description": "Self-identified ethnicity.",
-            },
-            "year_of_birth": {
-                "variable": "BirthYear",
-                "description": "Year the patient was born.",
-            },
-        },
-    },
-    "location": {
-        "category": "Demographics",
-        "mode": "keep_columns",
-        "columns": {
-            "zip": {
-                "variable": "ZIP Code",
-                "description": "Patient ZIP code (full or first 3 digits).",
-            },
-            "state": {
-                "variable": "State",
-                "description": "Patient state of residence.",
-            },
-        },
-    },
-    "payer_plan_period": {
-        "category": "Demographics",
-        "mode": "keep_columns",
-        "columns": {
-            "payer_concept_name": {
-                "variable": "Payer",
-                "description": "Insurance payer responsible for the visit.",
-            },
-            "plan_type_concept_name": {
-                "variable": "Plan Type",
-                "description": "Insurance plan type.",
-            },
-        },
-    },
-    "note": {
-        "category": "Documents",
-        "mode": "static",
-        "rows": [
-            {
-                "variable": "Clinical Note",
-                "description": "Free text of the office visit clinical note.",
-                "column": "note_text",
-                "criteria": "",
-                "extraction_type": "Unstructured",
-            }
+
+PACKS_DIR = Path(__file__).resolve().parent / "packs"
+
+
+@dataclass
+class Pack:
+    """Merged runtime view of ``packs/core.yaml`` + ``packs/cohorts/<x>.yaml``."""
+
+    cohort_name: str
+    schema_name: str
+    tables_to_skip: set[str]
+    sensitive_columns: set[str]
+    drop_column_patterns: list[re.Pattern[str]]
+    sampleable_types: set[str]
+    curation_rules: dict[str, dict[str, Any]]
+
+
+def _deep_merge(base: Any, overlay: Any) -> Any:
+    """Merge ``overlay`` onto ``base`` with the rules we agreed on:
+
+    * dicts → deep-merge (recurse per-key)
+    * lists → append (overlay extends base; stable order)
+    * scalars → replace
+
+    Neither side is mutated.
+    """
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged: dict[str, Any] = {**base}
+        for key, value in overlay.items():
+            merged[key] = _deep_merge(base.get(key), value) if key in base else value
+        return merged
+    if isinstance(base, list) and isinstance(overlay, list):
+        return [*base, *overlay]
+    return overlay
+
+
+def load_pack(cohort: str, packs_dir: Path = PACKS_DIR) -> Pack:
+    """Load ``packs/core.yaml`` then overlay ``packs/cohorts/<cohort>.yaml``."""
+    core_path = packs_dir / "core.yaml"
+    cohort_path = packs_dir / "cohorts" / f"{cohort}.yaml"
+    if not core_path.is_file():
+        raise FileNotFoundError(f"core pack missing: {core_path}")
+    if not cohort_path.is_file():
+        raise FileNotFoundError(
+            f"cohort pack missing: {cohort_path}. Available: "
+            + ", ".join(
+                sorted(p.stem for p in (packs_dir / "cohorts").glob("*.yaml"))
+            )
+        )
+
+    core_data = yaml.safe_load(core_path.read_text(encoding="utf-8")) or {}
+    cohort_data = yaml.safe_load(cohort_path.read_text(encoding="utf-8")) or {}
+    merged = _deep_merge(core_data, cohort_data)
+
+    cohort_name = merged.get("cohort_name")
+    schema_name = merged.get("schema_name")
+    if not cohort_name or not schema_name:
+        raise ValueError(
+            f"cohort pack {cohort_path} must define cohort_name and schema_name"
+        )
+
+    return Pack(
+        cohort_name=str(cohort_name),
+        schema_name=str(schema_name),
+        tables_to_skip=set(merged.get("tables_to_skip", [])),
+        sensitive_columns=set(merged.get("sensitive_columns", [])),
+        drop_column_patterns=[
+            re.compile(p) for p in merged.get("drop_column_patterns", [])
         ],
-    },
-    "document": {
-        "category": "Documents",
-        "mode": "static",
-        "rows": [
-            {
-                "variable": "Document",
-                "description": "Scanned PDFs (MRI, EKG, PET scan, infusion notes, etc.).",
-                "column": "document_type_concept_name",
-                "criteria": "",
-                "extraction_type": "Unstructured",
-            }
-        ],
-    },
-    "infusion": {
-        "category": "Administrations",
-        "mode": "static",
-        "rows": [
-            {
-                "variable": "Infusion Note",
-                "description": "Free text or PDF of the infusion note.",
-                "column": "note_text",
-                "criteria": "",
-                "extraction_type": "Unstructured",
-            }
-        ],
-    },
-}
+        sampleable_types=set(merged.get("sampleable_types", [])),
+        curation_rules=dict(merged.get("curation_rules", {})),
+    )
+
+
+def available_cohorts(packs_dir: Path = PACKS_DIR) -> list[str]:
+    return sorted(p.stem for p in (packs_dir / "cohorts").glob("*.yaml"))
 
 
 DISTINCT_CONCEPTS_SQL_TEMPLATE = """
@@ -715,12 +559,242 @@ LIMIT %s;
 """
 
 
-def _column_is_dropped(table: str, column: str) -> bool:
-    if table in TABLES_TO_SKIP:
+# For per-concept rows on fact tables: one query returns, per concept,
+# how many rows populate value_as_number / value_as_string /
+# value_as_concept_name. Used to pick the right source column (and
+# implicitly, the variable_type) per concept.
+CONCEPT_VALUE_SHAPE_SQL_TEMPLATE = """
+SELECT
+  "{group_col}"::text AS name,
+  COUNT(*) AS total,
+  COUNT("value_as_number") AS n_num,
+  COUNT(NULLIF(TRIM("value_as_string"::text), '')) AS n_str,
+  COUNT("value_as_concept_name") AS n_concept
+FROM "{schema}"."{table}"
+WHERE "{group_col}" IS NOT NULL
+GROUP BY "{group_col}"
+ORDER BY total DESC
+LIMIT %s;
+"""
+
+
+# Continuous summary for a single column (optionally scoped to a concept).
+CONTINUOUS_SUMMARY_SQL_TEMPLATE = """
+SELECT
+  MIN("{column}")::text AS min_val,
+  PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY "{column}")::text AS q1,
+  PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY "{column}")::text AS median,
+  PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "{column}")::text AS q3,
+  MAX("{column}")::text AS max_val
+FROM "{schema}"."{table}"
+WHERE "{column}" IS NOT NULL {concept_filter};
+"""
+
+
+# Date summary (min / max) for a single column.
+DATE_SUMMARY_SQL_TEMPLATE = """
+SELECT
+  MIN("{column}")::text AS min_val,
+  MAX("{column}")::text AS max_val
+FROM "{schema}"."{table}"
+WHERE "{column}" IS NOT NULL;
+"""
+
+
+# Categorical top-N with percentages for a single column.
+CATEGORICAL_SUMMARY_SQL_TEMPLATE = """
+WITH total AS (
+    SELECT COUNT(*)::numeric AS n FROM "{schema}"."{table}"
+    WHERE "{column}" IS NOT NULL
+)
+SELECT "{column}"::text AS val, COUNT(*) AS n,
+       ROUND(100.0 * COUNT(*) / NULLIF((SELECT n FROM total), 0), 1) AS pct
+FROM "{schema}"."{table}"
+WHERE "{column}" IS NOT NULL
+GROUP BY "{column}"
+ORDER BY COUNT(*) DESC
+LIMIT %s;
+"""
+
+
+def _fetch_concept_value_shape(
+    conn: psycopg.Connection,
+    schema: str,
+    table: str,
+    group_col: str,
+    limit: int,
+) -> list[tuple[str, int, int, int, int]]:
+    """Return ``[(concept, total, n_num, n_str, n_concept), ...]`` for a fact
+    table, ranked by total count. Used to auto-pick the value column per
+    concept in per_concept mode.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                CONCEPT_VALUE_SHAPE_SQL_TEMPLATE.format(
+                    schema=schema, table=table, group_col=group_col
+                ),
+                (limit,),
+            )
+            return [
+                (str(row[0]), int(row[1]), int(row[2]), int(row[3]), int(row[4]))
+                for row in cur.fetchall()
+            ]
+    except Exception as exc:
+        sys.stderr.write(
+            f"  concept value-shape query failed on {table}.{group_col}: {exc}\n"
+        )
+        conn.rollback()
+        return []
+
+
+def _pick_value_column(n_num: int, n_str: int, n_concept: int) -> tuple[str, str]:
+    """Return ``(column_name, variable_type)`` for the most-populated
+    value_as_* on an OMOP fact row. Ties break toward value_as_number."""
+    best = max(n_num, n_str, n_concept)
+    if best == 0:
+        return "value_as_number", "continuous"
+    if n_num == best:
+        return "value_as_number", "continuous"
+    if n_str == best:
+        return "value_as_string", "categorical"
+    return "value_as_concept_name", "categorical"
+
+
+def _summarize_continuous(
+    conn: psycopg.Connection,
+    schema: str,
+    table: str,
+    column: str,
+    concept_col: str | None = None,
+    concept_value: str | None = None,
+) -> str:
+    """Return a ``Min: ..., Q1: ..., Median: ..., Q3: ..., Max: ...`` string."""
+    params: list[Any] = []
+    concept_filter = ""
+    if concept_col and concept_value is not None:
+        concept_filter = f'AND "{concept_col}" = %s'
+        params.append(concept_value)
+    sql = CONTINUOUS_SUMMARY_SQL_TEMPLATE.format(
+        schema=schema, table=table, column=column, concept_filter=concept_filter
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            row = cur.fetchone()
+        if not row or row[0] is None:
+            return ""
+        mn, q1, median, q3, mx = (str(v) if v is not None else "—" for v in row)
+        return f"Min: {mn}, Q1: {q1}, Median: {median}, Q3: {q3}, Max: {mx}"
+    except Exception as exc:
+        sys.stderr.write(
+            f"  continuous summary failed on {table}.{column}: {exc}\n"
+        )
+        conn.rollback()
+        return ""
+
+
+def _summarize_date(
+    conn: psycopg.Connection, schema: str, table: str, column: str
+) -> str:
+    """Return ``Min: YYYY-MM-DD, Max: YYYY-MM-DD`` for a date/timestamp column."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                DATE_SUMMARY_SQL_TEMPLATE.format(
+                    schema=schema, table=table, column=column
+                )
+            )
+            row = cur.fetchone()
+        if not row or row[0] is None:
+            return ""
+        return f"Min: {row[0]}, Max: {row[1]}"
+    except Exception as exc:
+        sys.stderr.write(f"  date summary failed on {table}.{column}: {exc}\n")
+        conn.rollback()
+        return ""
+
+
+def _summarize_categorical_for_concept(
+    conn: psycopg.Connection,
+    schema: str,
+    table: str,
+    column: str,
+    concept_col: str,
+    concept_value: str,
+    limit: int = 5,
+) -> str:
+    """Top-N values of ``column`` scoped to rows where ``concept_col =
+    concept_value``. Returns ``val: n (pct%); ...``.
+    """
+    sql = f"""
+        WITH scoped AS (
+            SELECT "{column}"::text AS val
+            FROM "{schema}"."{table}"
+            WHERE "{concept_col}" = %s AND "{column}" IS NOT NULL
+        )
+        SELECT val, COUNT(*) AS n,
+               ROUND(100.0 * COUNT(*) / NULLIF((SELECT COUNT(*) FROM scoped), 0), 1) AS pct
+        FROM scoped
+        GROUP BY val
+        ORDER BY COUNT(*) DESC
+        LIMIT %s;
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (concept_value, limit))
+            fetched = cur.fetchall()
+    except Exception as exc:
+        sys.stderr.write(
+            f"  categorical-for-concept failed on {table}.{column}: {exc}\n"
+        )
+        conn.rollback()
+        return ""
+    parts = []
+    for val, n, pct in fetched:
+        display = str(val) if len(str(val)) <= 60 else str(val)[:57] + "..."
+        pct_str = f"{pct:.1f}" if pct is not None else "—"
+        parts.append(f"{display}: {n} ({pct_str}%)")
+    return "; ".join(parts)
+
+
+def _summarize_categorical(
+    conn: psycopg.Connection,
+    schema: str,
+    table: str,
+    column: str,
+    limit: int = 5,
+) -> str:
+    """Return ``val1: n (pct%), val2: n (pct%), ...`` for a categorical column."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                CATEGORICAL_SUMMARY_SQL_TEMPLATE.format(
+                    schema=schema, table=table, column=column
+                ),
+                (limit,),
+            )
+            rows_out = cur.fetchall()
+        parts = []
+        for val, n, pct in rows_out:
+            display = str(val) if len(str(val)) <= 60 else str(val)[:57] + "..."
+            pct_str = f"{pct:.1f}" if pct is not None else "—"
+            parts.append(f"{display}: {n} ({pct_str}%)")
+        return "; ".join(parts)
+    except Exception as exc:
+        sys.stderr.write(
+            f"  categorical summary failed on {table}.{column}: {exc}\n"
+        )
+        conn.rollback()
+        return ""
+
+
+def _column_is_dropped(table: str, column: str, pack: Pack) -> bool:
+    if table in pack.tables_to_skip:
         return True
-    if column in SENSITIVE_COLUMNS:
+    if column in pack.sensitive_columns:
         return True
-    for pattern in DROP_COLUMN_REGEXES:
+    for pattern in pack.drop_column_patterns:
         if pattern.match(column):
             return True
     return False
@@ -759,9 +833,10 @@ def build_curated_variables(
     conn: psycopg.Connection,
     schema: str,
     columns: list[ColumnInfo],
+    pack: Pack,
 ) -> list[dict[str, str]]:
-    """Apply ``CURATION_RULES`` to the raw inventory and return Century-format
-    Variables-sheet rows ready for ``pd.DataFrame``.
+    """Apply ``pack.curation_rules`` to the raw inventory and return
+    Century-format Variables-sheet rows ready for ``pd.DataFrame``.
 
     Rows for fact tables (observation, measurement, etc.) are produced by
     querying the distinct concept_name values and emitting one row per concept.
@@ -771,34 +846,71 @@ def build_curated_variables(
     lookup = _column_lookup(columns)
     rows: list[dict[str, str]] = []
 
-    for table_name, recipe in CURATION_RULES.items():
+    for table_name, recipe in pack.curation_rules.items():
         mode = recipe["mode"]
 
-        # --- per_concept: one dictionary row per distinct concept_name value
+        # --- per_concept: one dictionary row per distinct concept_name value.
+        # Per concept, we look at the shape of value_as_number /
+        # value_as_string / value_as_concept_name to pick the right source
+        # column and variable type, then fetch a typed summary (continuous
+        # stats for numbers, top-N with pct for categoricals).
         if mode == "per_concept":
             group_col = recipe["group_by"]
             info = lookup.get((table_name, group_col))
             if info is None:
                 continue
-            concepts = _fetch_distinct_concepts(
-                conn, schema, table_name, group_col, recipe.get("max_concepts", 30)
+            shapes = _fetch_concept_value_shape(
+                conn, schema, table_name, group_col,
+                recipe.get("max_concepts", 30),
             )
-            for name, count in concepts:
-                variable = name
-                if len(variable) > 64:
-                    variable = variable[:61] + "..."
+            if not shapes:
+                # Fall back to simple concept count if the shape query failed.
+                for name, count in _fetch_distinct_concepts(
+                    conn, schema, table_name, group_col,
+                    recipe.get("max_concepts", 30),
+                ):
+                    shapes.append((name, count, 0, 0, 0))
+
+            fallback_col = recipe.get("value_column", "value_as_number")
+            for name, total, n_num, n_str, n_concept in shapes:
+                value_column, variable_type = _pick_value_column(
+                    n_num, n_str, n_concept
+                )
+                # Honour the pack's declared value_column if the data is
+                # ambiguous (total = 0 rows populated in any of them).
+                if n_num + n_str + n_concept == 0:
+                    value_column = fallback_col
+
+                if variable_type == "continuous":
+                    distribution = _summarize_continuous(
+                        conn, schema, table_name, value_column,
+                        concept_col=group_col, concept_value=name,
+                    )
+                else:
+                    # Categorical-within-concept: query distinct values of
+                    # the picked column, filtered to this concept.
+                    distribution = _summarize_categorical_for_concept(
+                        conn, schema, table_name, value_column,
+                        concept_col=group_col, concept_value=name,
+                    )
+
+                if not distribution:
+                    distribution = f"{name}: {total}"  # fall back to concept count
+
+                variable = name if len(name) <= 64 else name[:61] + "..."
                 description = recipe.get(
-                    "description_template", "Concept '{name}' captured for the patient."
+                    "description_template",
+                    "Concept '{name}' captured for the patient.",
                 ).format(name=name)
                 rows.append({
                     "Category": recipe["category"],
                     "Variable": variable,
                     "Description": description,
                     "Schema": table_name,
-                    "Column(s)": recipe["value_column"],
+                    "Column(s)": value_column,
                     "Criteria": recipe["criteria_template"].format(name=name),
                     "Values": "",
-                    "Distribution": f"{name}: {count}",
+                    "Distribution": distribution,
                     "Completeness": f"{info.completeness_pct:.1f}%",
                     "Extraction Type": recipe["extraction_type"],
                     "Notes": "",
@@ -853,12 +965,42 @@ def build_curated_variables(
                 })
             continue
 
-        # --- keep_columns: one row per named demographic column
+        # --- keep_columns: one row per named demographic column.
+        # Each column spec may carry ``variable_type`` to drive the summary:
+        #   categorical - top values with pct
+        #   continuous  - Min/Q1/Median/Q3/Max
+        #   date        - Min/Max
+        #   identifier  - row skipped entirely
+        #   free_text   - row emitted with Unstructured extraction, no stats
         if mode == "keep_columns":
             for col_name, cfg in recipe["columns"].items():
                 info = lookup.get((table_name, col_name))
                 if info is None:
                     continue
+                variable_type = cfg.get("variable_type", "categorical")
+                if variable_type == "identifier":
+                    continue
+
+                extraction_type = "Structured"
+                values_cell = ""
+                distribution_cell = ""
+
+                if variable_type == "continuous":
+                    distribution_cell = _summarize_continuous(
+                        conn, schema, table_name, col_name
+                    )
+                elif variable_type == "date":
+                    distribution_cell = _summarize_date(
+                        conn, schema, table_name, col_name
+                    )
+                elif variable_type == "free_text":
+                    extraction_type = "Unstructured"
+                else:  # categorical (default)
+                    distribution_cell = _summarize_categorical(
+                        conn, schema, table_name, col_name
+                    ) or info.distribution_cell()
+                    values_cell = info.top_values[0][0] if info.top_values else ""
+
                 rows.append({
                     "Category": recipe["category"],
                     "Variable": cfg["variable"],
@@ -866,10 +1008,10 @@ def build_curated_variables(
                     "Schema": table_name,
                     "Column(s)": col_name,
                     "Criteria": "",
-                    "Values": info.top_values[0][0] if info.top_values else "",
-                    "Distribution": info.distribution_cell(),
+                    "Values": values_cell,
+                    "Distribution": distribution_cell,
                     "Completeness": f"{info.completeness_pct:.1f}%",
-                    "Extraction Type": "Structured",
+                    "Extraction Type": extraction_type,
                     "Notes": "",
                 })
             continue
@@ -911,6 +1053,7 @@ def write_curated_xlsx(
     out_path: Path,
     cohort: str,
     person_count: int | None,
+    pack: Pack,
 ) -> None:
     """Write a curated Century-format workbook: one row per business variable."""
     try:
@@ -922,7 +1065,7 @@ def write_curated_xlsx(
         )
         raise SystemExit(3) from exc
 
-    variables_rows = build_curated_variables(conn, schema, columns)
+    variables_rows = build_curated_variables(conn, schema, columns, pack)
 
     summary_rows = [
         {"metric": "cohort", "value": cohort},
@@ -993,9 +1136,25 @@ def _parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument(
+        "--cohort",
+        default="mtc_aat",
+        help=(
+            "Cohort pack to load from packs/cohorts/<cohort>.yaml "
+            "(default: mtc_aat). Use --list-cohorts to see available packs."
+        ),
+    )
+    parser.add_argument(
         "--schema",
-        default="mtc_aat_cohort",
-        help="Schema to introspect (default: mtc_aat_cohort).",
+        default=None,
+        help=(
+            "Override the pack's schema_name. Default: the schema_name "
+            "declared in the cohort pack."
+        ),
+    )
+    parser.add_argument(
+        "--list-cohorts",
+        action="store_true",
+        help="List available cohort packs and exit.",
     )
     parser.add_argument(
         "--out-csv",
@@ -1046,6 +1205,16 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+
+    if args.list_cohorts:
+        for name in available_cohorts():
+            print(name)
+        return 0
+
+    pack = load_pack(args.cohort)
+    schema_name = args.schema or pack.schema_name
+    print(f"Loaded pack '{args.cohort}' (schema={schema_name})", file=sys.stderr)
+
     conn_kwargs = build_conn_kwargs(args)
 
     print(
@@ -1067,23 +1236,24 @@ def main(argv: list[str] | None = None) -> int:
 
         columns, tables = introspect(
             conn,
-            schema=args.schema,
+            schema=schema_name,
             sample_values=args.sample_values,
-            include_top_for_types=SAMPLEABLE_TYPES,
+            include_top_for_types=pack.sampleable_types,
         )
-        person_count = fetch_person_count(conn, args.schema)
+        person_count = fetch_person_count(conn, schema_name)
 
         # The curated writer needs an open connection to enumerate concepts,
         # so run it inside the ``with`` block.
         if args.out_xlsx:
             write_curated_xlsx(
                 conn=conn,
-                schema=args.schema,
+                schema=schema_name,
                 columns=columns,
                 tables=tables,
                 out_path=args.out_xlsx,
-                cohort=args.schema,
+                cohort=pack.cohort_name,
                 person_count=person_count,
+                pack=pack,
             )
 
     print_tree(columns)
@@ -1096,7 +1266,7 @@ def main(argv: list[str] | None = None) -> int:
             columns=columns,
             tables=tables,
             out_path=args.out_xlsx_raw,
-            cohort=args.schema,
+            cohort=pack.cohort_name,
             person_count=person_count,
         )
 
