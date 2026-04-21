@@ -86,6 +86,29 @@ class _Conn:
         pass
 
 
+def _var(**overrides) -> VariableRow:
+    """Constructor helper so tests only set the fields they care about."""
+    defaults = dict(
+        category="Diagnosis",
+        variable="Dx",
+        description="",
+        table="condition_occurrence",
+        column="condition_concept_name",
+        criteria="",
+        values="",
+        distribution="",
+        median_iqr="",
+        completeness_pct=None,
+        implemented="No",
+        patient_pct=None,
+        extraction_type="Structured",
+        notes="",
+        pii=False,
+    )
+    defaults.update(overrides)
+    return VariableRow(**defaults)
+
+
 # --------------------------------------------------------------------- #
 # P1 - % Patient denominator
 # --------------------------------------------------------------------- #
@@ -167,42 +190,31 @@ class VariablesPIITagsAndFilterTests(unittest.TestCase):
     def test_audience_filter_drops_pii_variables_for_sales(self):
         # Two variables: one PII, one not. Sales should keep only the
         # non-PII one in `variables`.
-        clean = VariableRow(
-            category="Diagnosis", variable="Dx", description="",
-            table="condition_occurrence", column="condition_concept_name",
-            criteria="", values="", distribution="",
-            implemented="Yes", patient_pct=42.0,
-            extraction_type="Structured", notes="", pii=False,
+        clean = _var(
+            variable="Dx", table="condition_occurrence",
+            column="condition_concept_name",
+            implemented="Yes", patient_pct=42.0, pii=False,
         )
-        pii = VariableRow(
-            category="Demographics", variable="ZIP", description="",
-            table="location", column="zip", criteria="",
-            values="", distribution="",
-            implemented="Yes", patient_pct=10.0,
-            extraction_type="Structured", notes="", pii=True,
+        pii = _var(
+            variable="ZIP", table="location", column="zip",
+            implemented="Yes", patient_pct=10.0, pii=True,
         )
         m = self._make_model([clean, pii])
         sales = filter_for_audience(m, "sales")
         self.assertEqual([v.variable for v in sales.variables], ["Dx"])
 
     def test_audience_filter_drops_pii_variables_for_pharma(self):
-        pii = VariableRow(
-            category="Demographics", variable="ZIP", description="",
-            table="location", column="zip", criteria="",
-            values="", distribution="",
-            implemented="Yes", patient_pct=10.0,
-            extraction_type="Structured", notes="", pii=True,
+        pii = _var(
+            variable="ZIP", table="location", column="zip",
+            implemented="Yes", patient_pct=10.0, pii=True,
         )
         m = self._make_model([pii])
         self.assertEqual(filter_for_audience(m, "pharma").variables, [])
 
     def test_technical_audience_keeps_pii(self):
-        pii = VariableRow(
-            category="Demographics", variable="ZIP", description="",
-            table="location", column="zip", criteria="",
-            values="", distribution="",
-            implemented="Yes", patient_pct=10.0,
-            extraction_type="Structured", notes="", pii=True,
+        pii = _var(
+            variable="ZIP", table="location", column="zip",
+            implemented="Yes", patient_pct=10.0, pii=True,
         )
         m = self._make_model([pii])
         self.assertEqual(len(filter_for_audience(m, "technical").variables), 1)
@@ -236,13 +248,14 @@ def _make_full_model() -> CohortModel:
             patient_pct=100.0, extraction_type="Structured",
             pii=False, notes="",
         )],
-        variables=[VariableRow(
+        variables=[_var(
             category="Demographics", variable="Birth Year",
             description="Year the patient was born.",
-            table="person", column="year_of_birth", criteria="",
-            values="1948", distribution="...", implemented="Yes",
-            patient_pct=100.0, extraction_type="Structured",
-            notes="", pii=False,
+            table="person", column="year_of_birth",
+            values="1948", distribution="...",
+            median_iqr="Median: 1948 (IQR: 1944-1952)",
+            completeness_pct=100.0,
+            implemented="Yes", patient_pct=100.0,
         )],
     )
 
@@ -330,7 +343,8 @@ class UnstructuredSkipTests(unittest.TestCase):
             "column": "note_text",
             "extraction_type": "Unstructured",
         }]
-        # Only count + patient queries are allowed; no GROUP BY.
+        # Criteria-count, nonnull-count, and patient-count queries —
+        # no GROUP BY pattern.
         conn = _Conn([
             ("COUNT(*)", (123,)),
             ("COUNT(DISTINCT", (40,)),
@@ -338,6 +352,7 @@ class UnstructuredSkipTests(unittest.TestCase):
         rows = resolve_variables(
             conn, "s", pack, total_patients=100,
             pii_pairs=set(), pii_patterns=[],
+            tables_with_person_id={"note"},
         )
         v = rows[0]
         self.assertEqual(v.implemented, "Yes")
@@ -360,9 +375,256 @@ class UnstructuredSkipTests(unittest.TestCase):
         rows = resolve_variables(
             conn, "s", pack, total_patients=10,
             pii_pairs=set(), pii_patterns=[],
+            tables_with_person_id={"note"},
         )
         self.assertEqual(rows[0].values, "")
         self.assertIn("not aggregated", rows[0].distribution)
+
+
+# --------------------------------------------------------------------- #
+# P1 - Median (IQR) + Completeness on Page 4
+# --------------------------------------------------------------------- #
+
+
+class MedianIQRAndCompletenessTests(unittest.TestCase):
+
+    def test_numeric_column_gets_median_iqr_and_completeness(self):
+        pack = [{
+            "category": "Vitals", "variable": "Body Weight",
+            "table": "observation", "column": "value_as_number",
+            "criteria": "observation_concept_name = 'Body weight'",
+            "extraction_type": "Structured",
+        }]
+        # Resolver runs in this order:
+        #   1. COUNT(*) WHERE criteria              -> 1000 (denominator)
+        #   2. COUNT(*) WHERE criteria AND NOT NULL -> 800  (numerator)
+        #   3. GROUP BY value_as_number (top-10)    -> two rows
+        #   4. PERCENTILE_CONT(0.25/0.5/0.75)       -> (150, 170, 190)
+        #   5. COUNT(DISTINCT person_id)            -> 400
+
+        class _Conn2:
+            """COUNT(*) is called twice; state lives on the conn so each
+            cursor() call sees the right count in sequence."""
+            def __init__(self):
+                self._count_sequence = [1000, 800]
+                self._count_idx = 0
+
+            def cursor(self):
+                conn = self
+
+                class _Cur:
+                    def execute(self, sql, *params):
+                        if "PERCENTILE_CONT" in sql:
+                            self._next = ("150", "170", "190")
+                        elif "GROUP BY" in sql:
+                            self._next = [("170", 5), ("180", 3)]
+                        elif "COUNT(DISTINCT" in sql:
+                            self._next = (400,)
+                        elif "COUNT(*)" in sql:
+                            i = conn._count_idx
+                            self._next = (conn._count_sequence[i],)
+                            conn._count_idx += 1
+                        else:
+                            raise AssertionError(f"unexpected SQL: {sql!r}")
+
+                    def fetchone(self):
+                        return self._next
+
+                    def fetchall(self):
+                        return self._next
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *exc):
+                        return False
+
+                return _Cur()
+
+            def rollback(self):
+                pass
+
+        rows = resolve_variables(
+            _Conn2(), "s", pack, total_patients=1000,
+            pii_pairs=set(), pii_patterns=[],
+            tables_with_person_id={"observation"},
+            column_types={("observation", "value_as_number"): "numeric"},
+        )
+        v = rows[0]
+        self.assertEqual(v.completeness_pct, 80.0)   # 800 / 1000
+        self.assertIn("Median: 170", v.median_iqr)
+        self.assertIn("IQR: 150-190", v.median_iqr)
+        self.assertEqual(v.implemented, "Yes")
+        self.assertEqual(v.patient_pct, 40.0)        # 400 / 1000
+
+    def test_categorical_column_has_no_median_iqr(self):
+        pack = [{
+            "category": "Diagnosis", "variable": "Dx",
+            "table": "condition_occurrence",
+            "column": "condition_concept_name",
+            "extraction_type": "Structured",
+        }]
+        conn = _Conn([
+            ("GROUP BY", [("Alzheimer's", 100)]),
+            ("COUNT(DISTINCT", (50,)),
+            ("COUNT(*)", (200,)),
+        ])
+        rows = resolve_variables(
+            conn, "s", pack, total_patients=1000,
+            pii_pairs=set(), pii_patterns=[],
+            tables_with_person_id={"condition_occurrence"},
+            column_types={("condition_occurrence", "condition_concept_name"): "text"},
+        )
+        self.assertEqual(rows[0].median_iqr, "")
+
+
+# --------------------------------------------------------------------- #
+# P2 - tables without person_id skip the patient-pct queries
+# --------------------------------------------------------------------- #
+
+
+class PatientPctSkipTests(unittest.TestCase):
+
+    def test_compute_patient_completeness_caller_skips_no_person_table(self):
+        # When the caller doesn't include the table in tables_with_person_id,
+        # the resolver must not run COUNT(DISTINCT person_id). The stub will
+        # raise AssertionError on any unexpected SQL.
+        pack = [{
+            "category": "Demographics", "variable": "Country",
+            "table": "location", "column": "country_concept_name",
+            "extraction_type": "Structured",
+        }]
+        # Note: no "COUNT(DISTINCT" entry — any such query fails the test.
+        conn = _Conn([
+            ("GROUP BY", [("United States", 100)]),
+            ("COUNT(*)", (100,)),
+        ])
+        rows = resolve_variables(
+            conn, "s", pack, total_patients=1000,
+            pii_pairs=set(), pii_patterns=[],
+            tables_with_person_id=set(),   # location is NOT in this set
+            column_types={},
+        )
+        self.assertIsNone(rows[0].patient_pct)
+        self.assertEqual(rows[0].implemented, "Yes")
+
+
+# --------------------------------------------------------------------- #
+# P2 - `expression` field — ZIP rollup to 3 digits
+# --------------------------------------------------------------------- #
+
+
+class ExpressionFieldTests(unittest.TestCase):
+
+    def test_expression_is_used_in_group_by_and_column_is_display_only(self):
+        pack = [{
+            "category": "Demographics",
+            "variable": "ZIP (3-digit)",
+            "table": "location",
+            "column": "zip",
+            "expression": "LEFT(\"zip\"::text, 3)",
+            "extraction_type": "Structured",
+        }]
+        captured: list[str] = []
+
+        class _CaptureCursor:
+            def execute(self, sql, *params):
+                captured.append(sql)
+                if "GROUP BY" in sql:
+                    self._next_result = [("902", 40), ("950", 30)]
+                else:
+                    self._next_result = (100,)
+            def fetchone(self):
+                return self._next_result
+            def fetchall(self):
+                return self._next_result
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+
+        class _CaptureConn:
+            def cursor(self):
+                return _CaptureCursor()
+            def rollback(self):
+                pass
+
+        rows = resolve_variables(
+            _CaptureConn(), "s", pack, total_patients=None,
+            pii_pairs=set(), pii_patterns=[],
+            tables_with_person_id=set(),
+            column_types={("location", "zip"): "text"},
+        )
+        v = rows[0]
+        # Display cell still names the raw column so users see what it's about.
+        self.assertEqual(v.column, "zip")
+        # The expression is what's GROUP BY'd and shown in top-N output.
+        group_by_sqls = [s for s in captured if "GROUP BY" in s]
+        self.assertEqual(len(group_by_sqls), 1)
+        self.assertIn("LEFT(\"zip\"::text, 3)", group_by_sqls[0])
+        # And the resulting values are 3-digit prefixes, not raw ZIPs.
+        self.assertIn("902", v.values)
+        self.assertIn("950", v.values)
+
+
+# --------------------------------------------------------------------- #
+# P2 - Infusion Dates split into Start + End
+# --------------------------------------------------------------------- #
+
+
+class InfusionPackShapeTests(unittest.TestCase):
+
+    def test_aat_pack_splits_infusion_dates(self):
+        import yaml as pyyaml
+        path = REPO_ROOT / "packs" / "variables" / "aat.yaml"
+        data = pyyaml.safe_load(path.read_text(encoding="utf-8"))
+        names = [v["variable"] for v in data.get("variables", [])]
+        # One combined label that overclaims is gone; two specific ones exist.
+        self.assertNotIn("Infusion Dates", names)
+        self.assertIn("Infusion Start Date", names)
+        self.assertIn("Infusion End Date", names)
+
+
+# --------------------------------------------------------------------- #
+# P1 - renderers expose Median (IQR) and Completeness columns
+# --------------------------------------------------------------------- #
+
+
+class VariablesHeadersTests(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_html_variables_header_has_median_iqr_and_completeness(self):
+        out = self.tmp_dir / "tech.html"
+        write_html(_make_full_model(), out, audience="technical")
+        page = out.read_text()
+        # Just below the Variables <h2>, we expect these two columns.
+        variables_section = page.split("<h2>Variables</h2>", 1)[1]
+        self.assertIn("<th>Median (IQR)</th>", variables_section)
+        self.assertIn("<th>Completeness</th>", variables_section)
+        self.assertIn("<th>Implemented</th>", variables_section)
+        self.assertIn("<th>% Patient</th>", variables_section)
+
+    def test_xlsx_variables_sheet_has_median_iqr_and_completeness(self):
+        try:
+            import openpyxl  # noqa: F401
+        except ImportError:
+            self.skipTest("openpyxl not installed")
+        import openpyxl as opx
+        out = self.tmp_dir / "tech.xlsx"
+        write_xlsx(_make_full_model(), out, audience="technical")
+        wb = opx.load_workbook(out)
+        ws = wb["Variables"]
+        headers = [c.value for c in ws[1]]
+        self.assertIn("Median (IQR)", headers)
+        self.assertIn("Completeness", headers)
+        self.assertIn("Implemented", headers)
+        self.assertIn("% Patient", headers)
 
 
 if __name__ == "__main__":

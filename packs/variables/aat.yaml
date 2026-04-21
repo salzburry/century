@@ -48,11 +48,21 @@ variables:
     notes: Dedicated infusion table parallel to drug_exposure.
 
   - category: Infusions
-    variable: Infusion Dates
-    description: Start and end dates of each infusion.
+    variable: Infusion Start Date
+    description: Start date of each infusion.
     table: infusion
     column: drug_exposure_start_date
     extraction_type: Structured
+
+  - category: Infusions
+    variable: Infusion End Date
+    description: End date of each infusion, when recorded.
+    table: infusion
+    column: drug_exposure_end_date
+    extraction_type: Structured
+    notes: >
+      Often null in current schemas; `Implemented: No` flag will
+      surface this gap until the end-date field is populated.
 
   # Promoted ARIA rows (AAT cohort cares about the break-down)
   - category: Observations

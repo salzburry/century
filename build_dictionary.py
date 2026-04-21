@@ -136,7 +136,18 @@ class ColumnRow:
 
 @dataclass
 class VariableRow:
-    """One row on Page 4 (Variables). Driven by packs/variables/<disease>.yaml."""
+    """One row on Page 4 (Variables). Driven by packs/variables/<disease>.yaml.
+
+    Column order matches the earlier Century workbook:
+
+        Category | Variable | Description | Table | Column(s) | Criteria |
+        Values | Distribution | Median (IQR) | Completeness |
+        Implemented | % Patient | Extraction Type | Notes
+
+    Median (IQR) and Completeness are populated for numeric columns
+    within the criteria-filtered subset; Implemented / % Patient remain
+    the page's coverage metrics.
+    """
     category: str
     variable: str
     description: str
@@ -145,6 +156,8 @@ class VariableRow:
     criteria: str
     values: str
     distribution: str
+    median_iqr: str
+    completeness_pct: float | None
     implemented: str        # "Yes" / "No"
     patient_pct: float | None
     extraction_type: str
@@ -310,19 +323,23 @@ def introspect_cohort(
     schema: str,
     sample_values_default: int = 5,
     sample_values_concept: int = 20,
-) -> tuple[list[ColumnInfo], list[TableInfo], dict[str, int | None]]:
+) -> tuple[list[ColumnInfo], list[TableInfo], dict[str, int | None], set[str]]:
     """Walk the cohort schema with PR-1 / PR-3 rules baked in.
 
     PR 1: skip surrogate keys from continuous summary, bump sample depth
           for *_concept_name columns, collapse empty tables.
     PR 3: patient-level completeness for tables with person_id.
 
-    Returns (columns, tables, patient_count_per_table).
+    Returns (columns, tables, patient_count_per_table, tables_with_person_id).
+    The last set is a separate signal from the patient_count dict because
+    "no person_id column" and "query failed" would otherwise both show up
+    as None.
     """
     psycopg = _require_psycopg()  # noqa: F841 — import-time validation only
     columns_out: list[ColumnInfo] = []
     tables_out: list[TableInfo] = []
     patients_per_table: dict[str, int | None] = {}
+    tables_with_person_id: set[str] = set()
 
     with conn.cursor() as cur:
         cur.execute(LIST_TABLES_SQL, (schema,))
@@ -342,7 +359,10 @@ def introspect_cohort(
 
         # patient count in this table (if person_id present)
         col_names = {c[0] for c in raw_columns}
-        if "person_id" in col_names and row_count > 0:
+        has_person_id = "person_id" in col_names
+        if has_person_id:
+            tables_with_person_id.add(table)
+        if has_person_id and row_count > 0:
             try:
                 with conn.cursor() as cur:
                     cur.execute(_distinct_patients_in_table_sql(schema, table))
@@ -406,7 +426,7 @@ def introspect_cohort(
                 top_values=top_values,
             ))
 
-    return columns_out, tables_out, patients_per_table
+    return columns_out, tables_out, patients_per_table, tables_with_person_id
 
 
 def compute_patient_completeness(
@@ -510,20 +530,43 @@ def resolve_variables(
     total_patients: int | None,
     pii_pairs: set[tuple[str, str]] | None = None,
     pii_patterns: list[re.Pattern[str]] | None = None,
+    tables_with_person_id: set[str] | None = None,
+    column_types: dict[tuple[str, str], str] | None = None,
 ) -> list[VariableRow]:
     """For each entry in the disease pack, query the cohort and populate
-    Values / Distribution / Implemented / % Patient.
+    Values / Distribution / Median (IQR) / Completeness / Implemented /
+    % Patient.
 
-    Skips the GROUP BY for `extraction_type: Unstructured` rows (free-text
-    columns like note.note_text) — the resulting "top values" would be
-    unique per row and the GROUP BY is expensive on large note tables."""
+    Pack fields consumed:
+        table           (required)
+        column          (required — drives the "Column(s)" display cell)
+        expression      (optional — SQL expression used in place of
+                         a bare `"<column>"` reference; lets the pack
+                         say `LEFT("zip", 3)` without losing the `zip`
+                         label for display)
+        criteria        (optional — SQL WHERE fragment)
+        extraction_type (Structured / Abstracted / Unstructured)
+        category / variable / description / notes
+
+    Skips:
+      - GROUP BY "{column}" for `extraction_type: Unstructured` rows or
+        column names matching `*_text` / `*_note` — unique-per-row
+        values + expensive query on note tables.
+      - COUNT(DISTINCT person_id) for tables not in
+        `tables_with_person_id` (location and other dimension tables
+        don't carry a patient FK, so the query would fail + roll back
+        every column).
+    """
     pii_pairs = pii_pairs or set()
     pii_patterns = pii_patterns or []
+    tables_with_person_id = tables_with_person_id or set()
+    column_types = column_types or {}
 
     out: list[VariableRow] = []
     for v in variables_pack:
         table = v.get("table") or ""
         column = v.get("column") or ""
+        expression = (v.get("expression") or "").strip() or f'"{column}"'
         criteria = (v.get("criteria") or "").strip()
         category = v.get("category") or ""
         variable_name = v.get("variable") or column
@@ -533,67 +576,109 @@ def resolve_variables(
 
         values_cell = ""
         distribution_cell = ""
+        median_iqr_cell = ""
+        completeness_pct: float | None = None
         implemented = "No"
         patient_pct: float | None = None
 
-        # Build filtered SQL
-        where_clauses = [f'"{column}" IS NOT NULL']
+        # Two WHERE forms:
+        #   `where_criteria` scopes to rows matching the variable's
+        #                    criteria (null or not) — Completeness
+        #                    denominator.
+        #   `where_nonnull`  adds the is-not-null guard — the rows
+        #                    that actually contribute data.
+        where_criteria = f"({criteria})" if criteria else "TRUE"
+        where_nonnull = f"{expression} IS NOT NULL"
         if criteria:
-            where_clauses.append(f"({criteria})")
-        where = " AND ".join(where_clauses)
+            where_nonnull += f" AND ({criteria})"
 
-        count_sql = f'SELECT COUNT(*) FROM "{schema}"."{table}" WHERE {where};'
-        patient_sql = (
-            f'SELECT COUNT(DISTINCT "person_id") FROM "{schema}"."{table}" '
-            f'WHERE {where};'
-        )
-        top_sql = (
-            f'SELECT "{column}"::text AS v, COUNT(*) AS n '
-            f'FROM "{schema}"."{table}" WHERE {where} '
-            f'GROUP BY "{column}" ORDER BY n DESC LIMIT 10;'
-        )
-
-        total_rows = 0
+        total_with_criteria = 0
         try:
             with conn.cursor() as cur:
-                cur.execute(count_sql)
-                total_rows = int(cur.fetchone()[0])
+                cur.execute(
+                    f'SELECT COUNT(*) FROM "{schema}"."{table}" '
+                    f'WHERE {where_criteria};'
+                )
+                total_with_criteria = int(cur.fetchone()[0])
         except Exception as exc:
             sys.stderr.write(
-                f"[warn] {category}/{variable_name}: filter query failed "
+                f"[warn] {category}/{variable_name}: criteria count failed "
                 f"({table}.{column}): {exc}\n"
             )
             conn.rollback()
-            total_rows = 0
+
+        total_nonnull = 0
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f'SELECT COUNT(*) FROM "{schema}"."{table}" '
+                    f'WHERE {where_nonnull};'
+                )
+                total_nonnull = int(cur.fetchone()[0])
+        except Exception as exc:
+            sys.stderr.write(
+                f"[warn] {category}/{variable_name}: nonnull count failed "
+                f"({table}.{column}): {exc}\n"
+            )
+            conn.rollback()
+
+        if total_with_criteria > 0:
+            completeness_pct = 100.0 * total_nonnull / total_with_criteria
 
         skip_top_values = (
             extraction.lower() == "unstructured" or _is_freetext_column(column)
         )
 
-        if total_rows > 0:
+        if total_nonnull > 0:
             implemented = "Yes"
 
             if skip_top_values:
-                # Free-text / unstructured: row count is the only useful signal.
-                distribution_cell = f"{total_rows:,} rows; values not aggregated (free text)"
+                distribution_cell = (
+                    f"{total_nonnull:,} rows; values not aggregated (free text)"
+                )
             else:
                 try:
                     with conn.cursor() as cur:
-                        cur.execute(top_sql)
+                        cur.execute(
+                            f'SELECT {expression}::text AS v, COUNT(*) AS n '
+                            f'FROM "{schema}"."{table}" WHERE {where_nonnull} '
+                            f'GROUP BY {expression} ORDER BY n DESC LIMIT 10;'
+                        )
                         rows = [(str(r[0]), int(r[1])) for r in cur.fetchall()]
                     values_cell, distribution_cell = _format_top_values_from_rows(
-                        rows, total_rows
+                        rows, total_nonnull
                     )
                 except Exception as exc:
                     sys.stderr.write(
-                        f"[warn] {category}/{variable_name}: top-values query failed: {exc}\n"
+                        f"[warn] {category}/{variable_name}: top-values query "
+                        f"failed: {exc}\n"
                     )
                     conn.rollback()
 
-            if total_patients and total_patients > 0:
+            # Median (IQR) for numeric-typed underlying columns. Skip when
+            # an expression is used, since the raw column's data type may
+            # not match the expression's output type (e.g. LEFT(zip,3) is
+            # text even though zip is numeric).
+            raw_type = column_types.get((table, column), "")
+            if (
+                v.get("expression") is None
+                and _classify_metric_kind(raw_type) == "continuous"
+            ):
+                median_iqr_cell = _compile_continuous_filtered(
+                    conn, schema, table, column, where_nonnull
+                )
+
+            # % Patient — only if the table actually has person_id.
+            if (
+                table in tables_with_person_id
+                and total_patients and total_patients > 0
+            ):
                 try:
                     with conn.cursor() as cur:
-                        cur.execute(patient_sql)
+                        cur.execute(
+                            f'SELECT COUNT(DISTINCT "person_id") '
+                            f'FROM "{schema}"."{table}" WHERE {where_nonnull};'
+                        )
                         n = int(cur.fetchone()[0])
                     patient_pct = 100.0 * n / total_patients
                 except Exception:
@@ -608,6 +693,8 @@ def resolve_variables(
             criteria=criteria,
             values=values_cell,
             distribution=distribution_cell,
+            median_iqr=median_iqr_cell,
+            completeness_pct=completeness_pct,
             implemented=implemented,
             patient_pct=patient_pct,
             extraction_type=extraction,
@@ -615,6 +702,33 @@ def resolve_variables(
             pii=is_pii(table, column, pii_pairs, pii_patterns),
         ))
     return out
+
+
+def _compile_continuous_filtered(
+    conn, schema: str, table: str, column: str, where: str
+) -> str:
+    """`Median (IQR)` cell for a numeric column, scoped to rows matching
+    the variable's `where` clause. Returns empty string on failure or
+    when the subset has no rows."""
+    sql = f"""
+    SELECT
+      PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY "{column}")::text,
+      PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY "{column}")::text,
+      PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY "{column}")::text
+    FROM "{schema}"."{table}"
+    WHERE {where};
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+    except Exception:
+        conn.rollback()
+        return ""
+    if not row or row[1] is None:
+        return ""
+    q1, median, q3 = row
+    return f"Median: {median} (IQR: {q1}-{q3})"
 
 
 # --------------------------------------------------------------------------- #
@@ -660,6 +774,7 @@ def build_model(
         columns_raw: list[ColumnInfo] = []
         tables_raw: list[TableInfo] = []
         patients_per_table: dict[str, int | None] = {}
+        tables_with_person_id: set[str] = set()
         total_patients: int | None = None
         variables_rows: list[VariableRow] = [
             VariableRow(
@@ -670,6 +785,8 @@ def build_model(
                 column=v.get("column", ""),
                 criteria=(v.get("criteria") or "").strip(),
                 values="", distribution="",
+                median_iqr="",
+                completeness_pct=None,
                 implemented="No",
                 patient_pct=None,
                 extraction_type=v.get("extraction_type", "Structured"),
@@ -682,10 +799,14 @@ def build_model(
         ]
     else:
         total_patients = fetch_person_count(conn, schema)
-        columns_raw, tables_raw, patients_per_table = introspect_cohort(conn, schema)
+        columns_raw, tables_raw, patients_per_table, tables_with_person_id = \
+            introspect_cohort(conn, schema)
+        column_types = {(c.table, c.column): c.data_type for c in columns_raw}
         variables_rows = resolve_variables(
             conn, schema, variables_pack, total_patients,
             pii_pairs=pii_pairs, pii_patterns=pii_patterns,
+            tables_with_person_id=tables_with_person_id,
+            column_types=column_types,
         )
 
     # Page 2 — Tables
@@ -722,10 +843,12 @@ def build_model(
         if pii:
             extraction = "PII"
         patient_pct: float | None = None
-        if not dry_run:
+        if not dry_run and ci.table in tables_with_person_id:
             # Denominator is the cohort's total patient count, NOT the
             # per-table distinct-patient count — otherwise sparse tables
             # always show ~100% and the column hides real cohort coverage.
+            # Tables without a person_id column (e.g. location) stay None
+            # — running the query there would just fail + roll back.
             patient_pct = compute_patient_completeness(
                 conn, schema, ci, total_patients
             )
@@ -894,6 +1017,8 @@ def write_xlsx(model: CohortModel, out_path: Path,
             "Criteria":        v.criteria,
             "Values":          v.values,
             "Distribution":    v.distribution,
+            "Median (IQR)":    v.median_iqr,
+            "Completeness":    _fmt_pct(v.completeness_pct),
             "Implemented":     v.implemented,
             "% Patient":       _fmt_pct(v.patient_pct),
             "Extraction Type": v.extraction_type,
@@ -901,8 +1026,8 @@ def write_xlsx(model: CohortModel, out_path: Path,
         } for v in model.variables],
         columns=[
             "Category", "Variable", "Description", "Table", "Column(s)", "Criteria",
-            "Values", "Distribution", "Implemented", "% Patient",
-            "Extraction Type", "Notes",
+            "Values", "Distribution", "Median (IQR)", "Completeness",
+            "Implemented", "% Patient", "Extraction Type", "Notes",
         ],
     )
 
@@ -983,8 +1108,8 @@ def write_html(model: CohortModel, out_path: Path,
 
     variables_rows = [[
         v.category, v.variable, v.description, v.table, v.column, v.criteria,
-        v.values, v.distribution, v.implemented, _fmt_pct(v.patient_pct),
-        v.extraction_type, v.notes,
+        v.values, v.distribution, v.median_iqr, _fmt_pct(v.completeness_pct),
+        v.implemented, _fmt_pct(v.patient_pct), v.extraction_type, v.notes,
     ] for v in model.variables]
 
     sections: list[str] = [
@@ -1010,8 +1135,9 @@ def write_html(model: CohortModel, out_path: Path,
             "<h2>Variables</h2>"
             + _table(variables_rows, [
                 "Category", "Variable", "Description", "Table", "Column(s)",
-                "Criteria", "Values", "Distribution", "Implemented",
-                "% Patient", "Extraction Type", "Notes",
+                "Criteria", "Values", "Distribution", "Median (IQR)",
+                "Completeness", "Implemented", "% Patient",
+                "Extraction Type", "Notes",
             ])
         )
 
