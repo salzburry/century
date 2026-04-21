@@ -1,241 +1,206 @@
-# Century data dictionaries — plan
+# Century data dictionaries — canonical plan
 
-Single source of truth for answering `century/ask.pdf` ("Clinical
-Registries to Schemas") and for the engineering work that turns
-`introspect_cohort.py` into a reusable cohort-dictionary pipeline.
+Single source of truth for:
+
+- answering `century/ask.pdf` ("Clinical Registries to Schemas")
+- prioritising which registries to deliver
+- guiding the engineering work that turns `introspect_cohort.py` into
+  a reusable cohort-dictionary pipeline
 
 ---
 
-## 1. The ask (from `century/ask.pdf`)
+## 0. Working definitions
 
-Four open questions and one concrete deliverable list:
+These terms need to stay precise because the ask mixes them.
 
-1. **Do we build a data dictionary per provider and per disease?**
-   Direction: **one dictionary per (provider, disease) pair**. Start there.
-2. **How do we handle multi-site providers with different schemas
-   (Nimbus vs Nimbus AZ)?**
-   Direction: separately for now; revisit consolidation later.
-3. **How do we build DD's for sales, data scientists, pharma customers
-   separately?**
-   Direction: one four-page format shared across audiences, with
-   audience-specific visibility rules at render time:
-   - Page 1 → Summary (patients, years of data, tables, columns)
-   - Page 2 → Tables
-   - Page 3 → Columns and descriptions
-   - Page 4 → Variables (config-driven, clinical concepts)
-4. **How can we automate the whole process?**
-   Direction: Onkar to develop. Backbone exists in
-   `introspect_cohort.py`; this plan tracks the gaps.
+- **Column**: one physical schema column, e.g.
+  `condition_occurrence.condition_concept_name`.
+- **Variable**: one semantic, disease-facing concept on Page 4 — config-
+  driven, potentially mapped to one or more columns plus a criteria filter.
+- **Cohort dictionary**: one deliverable for one (provider, disease) pair.
+- **Canonical model**: the single structured object every renderer consumes.
+- **Audience filter**: a render-time rule that hides or shows parts of the
+  canonical model for `technical`, `sales`, or `pharma`.
+
+Important: Page 3 is about columns. Page 4 is about variables. They are
+not the same output.
+
+## 1. The ask (`century/ask.pdf`)
+
+Four decisions + one deliverable shape.
+
+### 1.1 Decision log
+
+1. **One dictionary per (provider, disease) pair.** Start there.
+2. **Multi-site providers (Nimbus vs Nimbus AZ): keep separate for now.**
+   Revisit consolidation later as an explicit follow-up.
+3. **Sales / data science / pharma share one four-page structure** and
+   differ only by audience-specific visibility rules at render time.
+4. **Automate by extending `introspect_cohort.py`**, not greenfield.
+
+### 1.2 Four-page deliverable
+
+- Page 1 — Summary: provider, disease, cohort/schema, patient count,
+  years of data, table count, column count, variant, site notes.
+- Page 2 — Tables: one row per source table.
+- Page 3 — Columns and descriptions: one row per physical column.
+- Page 4 — Variables: one row per semantic disease-level variable,
+  config-driven.
 
 ## 2. Registries to deliver
 
-Source: `century/ask.pdf` + schema list from
-`century/Adobe Scan 19 Apr 2026.pdf`.
+Source: `century/ask.pdf` + `century/Adobe Scan 19 Apr 2026.pdf`.
 
-| # | Provider | Disease | Schema | Priority | Raw dump in `Output/` | Notes |
-|---|---|---|---|---|---|---|
-| 1 | Nira | MS (1 site) | `ms_leaf_nira_registry` | Medium | — | First site we started with |
-| 2 | Nira | MS (all sites) | `nira_ms_cohort` | Medium | — | |
-| 3 | Nira | MG (all sites) | `nira_ms_cohort` | Low | — | Same schema as MS |
-| 4 | Nimbus | COPD | `nimbus_copd_curated` | High | `minbuscopdcurated.pdf` | Consolidate with Nimbus AZ? |
-| 5 | Nimbus | Asthma | `nimbus_asthma_curated` | High | `nimbusasthmacurated.pdf` | |
-| 6 | Nimbus AZ | COPD | `nimbus_az_copd_cohort` | High | `nimbusazcopd.pdf` | Abstracted vars (FEV1 etc.) in progress |
-| 7 | Nimbus AZ | Asthma | `nimbus_az_asthma_cohort` | High | `nimbusazasthma.pdf` | |
-| 8 | Balboa | Renal | `balboa_ckd_cohort` | High | `balboackd.pdf` | |
-| 9 | MTC | Alzheimers | `mtc_alzheimers_cohort` | High | `mtcalzhiemer.pdf` | |
-| 10 | MTC | AAT | `mtc_aat_cohort` | High | `mtcaat.pdf` | Anti-amyloid therapies |
-| 11 | Newtown | MASH | `newtown_mash_cohort` | High | — | |
-| 12 | Newtown | IBD | `newtown_ibd_cohort` | Low | — | |
-| 13 | DRG | Renal | `drg_ckd_cohort` | High | `drgckd.pdf` | |
-| 14 | PRINE | Renal | TBD | — | — | Schema not yet provisioned |
-| 15 | Rocky Mountain Neurology | Alzheimers | `rmn_alzheimers_cohort` | — | — | |
-| 16 | Southland Neurologic Institute | TBD | TBD | — | — | |
-| 17 | Eye Health America (EHA) | TBD | TBD | High | — | |
-| 18 | RVC | DR | `rvc_dr_curated` | — | — | |
+### 2.1 Registry backlog
 
-8 of 18 have a raw introspect dump. 10 still to run (3 blocked on
-schema provisioning).
+| # | Provider | Disease | Schema | Priority | Raw dump | Status | Notes |
+|---|---|---|---|---|---|---|---|
+| 1 | Nira | MS (1 site) | `ms_leaf_nira_registry` | Medium | — | Missing dump | First site we started with |
+| 2 | Nira | MS (all sites) | `nira_ms_cohort` | Medium | — | Missing dump | |
+| 3 | Nira | MG (all sites) | `nira_ms_cohort` | Low | — | Missing dump | Draft ask maps this to the MS schema; confirm before implementation |
+| 4 | Nimbus | COPD | `nimbus_copd_curated` | High | `minbuscopdcurated.pdf` | Dump available | Filename typo (`minbus`); consolidation with Nimbus AZ open |
+| 5 | Nimbus | Asthma | `nimbus_asthma_curated` | High | `nimbusasthmacurated.pdf` | Dump available | |
+| 6 | Nimbus AZ | COPD | `nimbus_az_copd_cohort` | High | `nimbusazcopd.pdf` | Dump available | Abstracted variables (FEV1 etc.) in progress |
+| 7 | Nimbus AZ | Asthma | `nimbus_az_asthma_cohort` | High | `nimbusazasthma.pdf` | Dump available | |
+| 8 | Balboa | Renal | `balboa_ckd_cohort` | High | `balboackd.pdf` | Dump available | |
+| 9 | MTC | Alzheimer's | `mtc_alzheimers_cohort` | High | `mtcalzhiemer.pdf` | Dump available | Filename typo (`alzhiemer`) |
+| 10 | MTC | AAT | `mtc_aat_cohort` | High | `mtcaat.pdf` | Dump available | Anti-amyloid therapies |
+| 11 | Newtown | MASH | `newtown_mash_cohort` | High | — | Missing dump | |
+| 12 | Newtown | IBD | `newtown_ibd_cohort` | Low | — | Missing dump | |
+| 13 | DRG | Renal | `drg_ckd_cohort` | High | `drgckd.pdf` | Dump available | |
+| 14 | PRINE | Renal | TBD | — | — | Blocked | Schema not yet provisioned |
+| 15 | Rocky Mountain Neurology | Alzheimer's | `rmn_alzheimers_cohort` | — | — | Missing dump | |
+| 16 | Southland Neurologic Institute | TBD | TBD | — | — | Blocked | Disease and schema unconfirmed |
+| 17 | Eye Health America (EHA) | TBD | TBD | High | — | Blocked | Disease and schema unconfirmed |
+| 18 | RVC | DR | `rvc_dr_curated` | — | — | Missing dump | |
 
-## 3. What the existing `Output/*.pdf` tell us
+### 2.2 Backlog summary
 
-Every file is an iPhone Adobe Scan of the HTML that
-`introspect_cohort.py` already emits. The dumps share the same two-sheet
-shape (Summary + Variables).
+- 8 of 18 have a raw introspection dump in `Output/`.
+- 7 more are runnable once the cohort dump is generated.
+- 3 are blocked on upstream schema provisioning or unresolved metadata.
+
+## 3. Verified baseline from `Output/*.pdf`
+
+Counts verified against the Summary pages of the current raw dumps.
 
 | File | Cohort | Patients | Tables | Columns |
 |---|---|---:|---:|---:|
 | `mtcaat.pdf` | `mtc_aat_cohort` | 1,067 | 15 | 307 |
-| `mtcalzhiemer.pdf` | `mtc_alzheimers_cohort` | 3,753 | 14 | 256 |
-| `balboackd.pdf` | `balboa_ckd_cohort` | 81,183 | 11 | 255 |
-| `drgckd.pdf` | `drg_ckd_cohort` | 53,213 | 9 | 226 |
+| `mtcalzhiemer.pdf` | `mtc_alzheimers_cohort` | 3,755 | 14 | 284 |
+| `balboackd.pdf` | `balboa_ckd_cohort` | 81,183 | 11 | 256 |
+| `drgckd.pdf` | `drg_ckd_cohort` | 53,213 | 9 | 200 |
 | `nimbusazcopd.pdf` | `nimbus_az_copd_cohort` | 6,710 | 14 | 300 |
-| `nimbusazasthma.pdf` | `nimbus_az_asthma_cohort` | ~6,700 | ~14 | ~300 |
+| `nimbusazasthma.pdf` | `nimbus_az_asthma_cohort` | 4,334 | 14 | 300 |
 | `minbuscopdcurated.pdf` | `nimbus_copd_curated` | 7,233 | 12 | 253 |
-| `nimbusasthmacurated.pdf` | `nimbus_asthma_curated` | ~260 | ~10 | ~243 |
+| `nimbusasthmacurated.pdf` | `nimbus_asthma_curated` | 3,654 | 11 | 242 |
 
-### Gaps catalogued from the PDFs
+## 4. What the existing outputs prove
 
-**Export path**
-- The PDFs contain browser chrome, URL-bar text, and OCR-like
-  corruption. Root cause: iPhone scan-to-PDF loop, not a clean
-  render. This is the biggest quality problem. One-step HTML →
-  direct PDF render fixes it.
+Every file in `Output/` is an Adobe Scan / photo-style PDF of the HTML
+emitted by the current generator. Shared shape: Summary + Variables.
+Enough to show the technical inventory works; the gaps are:
 
-**Content**
-- `Category`, `Description`, `Criteria`, `Notes` are blank everywhere.
-  `introspect_cohort.py` hardcodes `""` for these at
-  `introspect_cohort.py:736` (XLSX) and `:819` (HTML).
-- `Implemented` and `% Patient` columns don't exist. Script emits
-  row-level `Completeness` instead. Reference reports
-  patient-level. Real semantic gap for drug_exposure / measurement
-  where one patient has many rows.
-- Summary lacks provider, disease, years of data, site notes, and
-  curated-vs-raw flag.
+### 4.1 Export-path problems
+- PDFs carry browser chrome, URL bar text, tab text, OCR-like corruption.
+- Root cause: iPhone scan-to-PDF loop, not clean render.
+- Direct HTML → PDF render replaces the scan loop entirely.
 
-**Representation**
-- Every physical column is its own row (255–307 rows per cohort).
-  That's Page 3 of the ask. Page 4 (clinical-concept rows) is
-  missing entirely.
-- No Tables sheet. `TableInfo` is collected at
-  `introspect_cohort.py:266` but never written.
-- No years-of-data rollup. `_compile_date_range` at
-  `introspect_cohort.py:505` runs per-column but isn't aggregated.
+### 4.2 Content-model problems
+- `Category`, `Description`, `Criteria`, `Notes` blank everywhere
+  (hardcoded `""` in `introspect_cohort.py` around lines 736 and 819).
+- `% Patient` doesn't exist — only row-level `Completeness` today.
+- Summary lacks provider, disease, years of data, variant, site/schema notes.
 
-**Data quality on the page**
-- Surrogate-key columns (`person_id`, `*_occurrence_id`,
-  `*_concept_id`) get Min/Max/Mean/Median in scientific notation
-  (`9.22e+18`, `IQR: 2.31e+18–6.9e+18`). They're IDs, not measurements.
-- `Values` truncates at 60 chars mid-sentence — fine for HTML,
-  needlessly lossy for XLSX.
-- Top-5 categorical depth is too shallow for
-  `*_concept_name` columns; the long tail of clinical concepts matters.
-- Empty tables still emit 20+ rows with blank summaries.
-- `dv_tokenized_profile_data` contributes 111 `token_*` columns
-  to `mtc_aat` that pollute the inventory.
-- `standard_profile_data_model` exposes `first_name`, `last_name`,
-  `email`, `cellphone`, `date_of_birth`, `address1` without a PII
-  flag. Blocking for sales / pharma outputs.
+### 4.3 Representation problems
+- The current `Variables` sheet is really Page 3 (columns), not Page 4.
+- Page 4 semantic variables don't exist yet.
+- `TableInfo` is collected (`introspect_cohort.py:266`) but never rendered.
+- `_compile_date_range` (`introspect_cohort.py:505`) runs per column but
+  isn't rolled up into `years_of_data`.
 
-**Presentation**
-- File naming is inconsistent (`minbuscopdcurated.pdf` for Nimbus,
-  `mtcalzhiemer.pdf` typo). Automation can't rely on it.
-- XLSX column widths aren't auto-sized; distribution cells wrap
-  awkwardly.
-- `Extraction Type` is two-way (Structured / Unstructured). Reference
-  uses three (Structured / Abstracted / Unstructured).
+### 4.4 Data-quality problems on the page
+- Surrogate keys (`person_id`, `*_occurrence_id`, `*_concept_id`) are
+  summarised like measurements → useless scientific-notation medians
+  (`9.22e+18`, `IQR: 2.31e+18–6.9e+18`).
+- `Values` truncates at 60 chars mid-string; fine for HTML, lossy in XLSX.
+- Top-N depth (5) is too shallow for `*_concept_name` columns.
+- Empty tables still emit a row per column.
+- `dv_tokenized_profile_data` contributes many low-signal `token_*`
+  fields (111 in `mtc_aat`).
+- `standard_profile_data_model` exposes PII (`first_name`, `last_name`,
+  `email`, `cellphone`, `date_of_birth`, `address1`) without flags —
+  blocks clean sales/pharma outputs.
 
-## 4. Target architecture
+### 4.5 Presentation problems
+- File naming inconsistent (`minbuscopdcurated`, `mtcalzhiemer`).
+- Long-cell layout not tuned for print.
+- `Extraction Type` is binary today; reference uses three-way
+  (Structured / Abstracted / Unstructured).
 
-Turn the generator into a **single-source-of-truth pipeline**:
+## 5. Current repo reality
+
+Explicit so the plan matches the codebase we have.
+
+### 5.1 What already exists
+- `introspect_cohort.py` does schema introspection.
+- Per-table row / column counts, row-level completeness, top values,
+  numeric summaries, per-column date ranges — all already computed.
+- `Pack` dataclass and `load_pack()` entry point are in place.
+
+### 5.2 What does not currently exist
+- `packs/` directory is not in the workspace (confirmed — `ls packs/`
+  returns no-such-directory).
+- `tests/test_introspect_cohort.py` references `packs/cohorts/*.yaml`
+  but the files aren't committed.
+
+Implication: the pack system is a wired-in extension point. Creating
+and populating the YAML pack files is real deliverable work, not an
+already-completed prerequisite.
+
+## 6. Guiding principles
+
+1. One dictionary per (provider, disease) pair.
+2. One canonical model for all outputs.
+3. Config first, heuristics second, empty only if both fail.
+4. Audience filtering at render time, not extraction time.
+5. Deterministic outputs so reruns are stable.
+6. No manual editing of generated dictionary files.
+
+## 7. Target architecture
 
 ```
 pack YAML + schema introspection
         ↓
-CohortModel (canonical dataclass / JSON)
+   CohortModel
         ↓
-       ┌──────── audience filter ─────────┐
-       ↓                                  ↓
-   HTML render                     XLSX / JSON export
-       ↓
-  WeasyPrint → PDF
+ audience filter
+        ↓
+   HTML render
+     │  │  │
+     │  │  └─► XLSX export
+     │  └────► JSON export
+     └───────► PDF render (WeasyPrint → fallback Chromium)
 ```
 
-Key design calls:
+### 7.1 Core design calls
+- Extend the existing `Pack` and `load_pack()` in `introspect_cohort.py`.
+- One canonical `CohortModel`; every renderer reads from it.
+- Audience filters at render time, not by branching extraction.
+- Config-driven enrichment first; heuristics only as logged last-resort.
+- Outputs deterministic; reruns on unchanged inputs produce identical files.
 
-- **Extend the existing `Pack` dataclass in `introspect_cohort.py`**
-  (`load_pack`, `packs/cohorts/*.yaml`). Don't greenfield a new config
-  layer — the loader exists; add fields (`provider`, `disease`,
-  `display_name`, `description`, `variant`, `site_group`,
-  `notes`, `category_rules`).
-- **One canonical `CohortModel`**, reused by every renderer. HTML,
-  PDF, XLSX, JSON all emit from the same object. No parallel
-  formatting codepaths.
-- **Audience filters apply at render time**, not by branching the
-  pipeline. `--audience {technical|sales|pharma}` hides rows /
-  sheets from the canonical model.
-- **WeasyPrint, not Chromium.** The dictionary is static HTML + CSS;
-  WeasyPrint is pure Python, deterministic, no sandbox config, no
-  300 MB Chromium download. Keep `--renderer=chromium` as a fallback
-  for pages with JS charts (none today).
-- **Config-driven first; heuristics last.** Column-name heuristics
-  will misclassify (`observation_type_concept_name` matches both
-  "observation" and "type"). Ship categories/descriptions as static
-  YAML first; heuristics only as last-resort fallback, and log every
-  heuristic hit so the pack can absorb them.
+### 7.2 Renderer choice
+- Preferred default: **WeasyPrint** — pure Python, deterministic, no
+  Chromium/sandbox overhead. Use if it installs cleanly in the target
+  environment.
+- Fallback: headless Chromium for pages that need JS (none today).
+- Do not lock in a renderer before environment validation.
 
-## 5. Shipping order
+## 8. Canonical model
 
-Nine PRs, each standalone and reviewable in isolation:
+Build one canonical object before any renderer runs.
 
-### PR 1 — tighten current output (no new deps, no new config)
-- Exclude surrogate-key columns (`*_id`, `*_concept_id`) from
-  `_compile_continuous`. Still listed in inventory; Distribution /
-  Median left blank.
-- Collapse empty tables (`row_count == 0`) to one summary row each.
-- Integer-cast numeric summaries; avoid scientific notation for
-  magnitudes < 1e9.
-- Raise `--sample-values` default to 20 for columns whose name
-  matches `*_concept_name`; keep 5 elsewhere.
-- Add `Extraction Type = Abstracted` support (reads from optional
-  `packs/abstracted/<cohort>.yaml`).
-- Rename the existing `Variables` sheet to `Columns` to match the
-  ask wording.
-- Auto-size XLSX columns and enable word-wrap on long cells.
-- Standardise output filenames: `Output/<schema>_dictionary.xlsx`.
-
-### PR 2 — populate the currently-blank columns
-- Ship `packs/categories.yaml` mapping table → Category:
-  ```
-  person, location, payer_plan_period:  Demographics
-  condition_occurrence:                 Diagnosis
-  drug_exposure, infusion:              Medications
-  measurement:                          Labs / Biomarkers
-  observation:                          Observations
-  procedure_occurrence:                 Procedures
-  visit_occurrence:                     Visits
-  note, document:                       Reports
-  standard_profile_data_model:          Profile (PII)
-  dv_tokenized_profile_data:            Tokenized (derived)
-  cohort_patients:                      Cohort
-  ```
-- Ship `packs/column_descriptions.yaml` with OMOP-standard
-  descriptions for common columns. Fall back to empty for unknowns.
-- Flag PII rows. Tag any column in `standard_profile_data_model`
-  (or a PII allowlist) with `pii: true` in the canonical model so
-  the audience filter can drop them cleanly.
-
-### PR 3 — patient-level completeness
-- Add `_compile_patient_completeness`: for each table with
-  `person_id`, compute
-  `COUNT(DISTINCT person_id WHERE col IS NOT NULL) / total_patients`.
-- Emit new `% Patient` column alongside `Completeness`.
-- Tables without `person_id` fall back to row-level `Completeness`
-  and mark `% Patient` as `—`.
-
-### PR 4 — four-page Summary + Tables
-- Summary adds `years_of_data` (max-min across
-  `visit_start_date`, `condition_start_date`,
-  `drug_exposure_start_date`, `measurement_date` — whichever exist),
-  `provider`, `disease`, `variant`, `display_name` from the pack.
-- New `Tables` sheet: one row per table with
-  `table_name, row_count, column_count, patient_count, purpose,
-  extraction_hint`. Purpose from
-  `packs/table_descriptions.yaml`; fallback to table-name heuristic
-  with a stderr warning.
-
-### PR 5 — PII redaction + audience presets (together)
-- `--audience technical` (default): no redaction, all sheets.
-- `--audience sales`: drop `pii: true` rows; strip `Columns` sheet;
-  keep Summary + Tables + Variables.
-- `--audience pharma`: drop `pii: true` rows; keep Summary + Variables
-  only. Never ship audiences without PII redaction in the same PR.
-
-### PR 6 — canonical `CohortModel` refactor
-Consolidate the dataclasses that evolved through PR 1–5 into one
-shape. Adds reproducibility stamp: `generated_at`, `git_sha`,
-`introspect_version`, `schema_snapshot_digest`.
-
-Shape:
 ```jsonc
 {
   "cohort": "mtc_aat_cohort",
@@ -263,97 +228,212 @@ Shape:
       ]
     }
   },
-  "tables": [...],
-  "columns": [...],
+  "tables":    [...],
+  "columns":   [...],
   "variables": [...]
 }
 ```
 
-### PR 7 — WeasyPrint PDF renderer + print CSS
-- `pip install weasyprint` as an optional dep.
-- New `--out-pdf` CLI flag. Uses the existing HTML output as input.
-- Print CSS: section breaks between sheets, repeated table headers,
-  page numbers, title block with provider / disease / years of data.
-- Removes the iPhone-scan step from the loop entirely.
+HTML, PDF, XLSX, and JSON all render from this one object.
+Reproducibility stamp (`generated_at`, `git_sha`, `introspect_version`,
+`schema_snapshot_digest`) is mandatory for auditability.
 
-### PR 8 — validation + schema-drift + WIP waivers
-- Validator runs before export. Hard-fail rules:
-  `patient_count > 0`, `tables` non-empty, `columns` non-empty,
-  `provider` and `disease` populated **unless** pack declares
-  `status: wip`.
-- Schema-drift check: if a prior XLSX exists for the same cohort,
-  diff the `Columns` sheet and warn on added / removed /
-  type-changed columns. Non-zero exit on drift if
-  `--strict-drift` is set.
-- Validator writes a machine-readable JSON report alongside the
-  XLSX so the batch runner can aggregate failures.
+## 9. Config strategy
+
+### 9.1 Cohort packs
+`packs/cohorts/<cohort>.yaml` extends the existing `Pack` shape:
+
+```yaml
+provider: MTC
+disease: AAT
+display_name: MTC AAT
+description: >
+  Patients in the MTC AAT cohort with alpha-1 antitrypsin deficiency-
+  related clinical activity.
+variant: raw
+site_group: MTC
+status: active        # or: wip (skip strict validator gates)
+notes:
+  - Technical dictionary generated from schema introspection.
+category_rules:
+  demographics: { tables: [person, cohort_patients] }
+  diagnosis:    { tables: [condition_occurrence] }
+  medications:  { tables: [drug_exposure, infusion] }
+```
+
+### 9.2 Shared config files
+- `packs/categories.yaml` — table → Category map.
+- `packs/column_descriptions.yaml` — OMOP column semantics.
+- `packs/table_descriptions.yaml` — table → purpose.
+- `packs/abstracted/<cohort>.yaml` — columns marked `Abstracted`.
+- `packs/variables/<disease>.yaml` — Page 4 clinical concepts.
+
+### 9.3 Fill order
+1. Explicit cohort or disease config.
+2. Shared table/column config.
+3. Last-resort heuristic.
+4. Empty field only if everything above fails.
+
+Every heuristic fill is logged so the config can absorb it later.
+
+## 10. Audience model
+
+### 10.1 Presets
+- **technical** — Summary + Tables + Columns + Variables. No redaction.
+- **sales** — Summary + Tables + Variables. PII dropped.
+- **pharma** — Summary + Variables. PII dropped; no raw column inventory.
+
+### 10.2 PII requirement
+PII redaction is **not optional** for sales / pharma outputs. Any column
+with `pii: true` in the canonical model is suppressed before render.
+The audience presets and the PII tagging ship in the same PR.
+
+## 11. Output contract
+
+Every run can produce all four formats from the same model:
+
+- `Output/<schema>_dictionary.html`
+- `Output/<schema>_dictionary.pdf`
+- `Output/<schema>_dictionary.xlsx`
+- `Output/<schema>_dictionary.json`
+
+Minimum sections by audience:
+
+| Audience | Summary | Tables | Columns | Variables |
+|---|---|---|---|---|
+| technical | ✓ | ✓ | ✓ | ✓ |
+| sales | ✓ | ✓ | — | ✓ |
+| pharma | ✓ | — | — | ✓ |
+
+## 12. Shipping order
+
+Small, reviewable PRs that build on each other.
+
+### PR 1 — tighten the current output
+No new config. Changes:
+- Exclude surrogate-key columns (`*_id`, `*_concept_id`) from
+  `_compile_continuous`. Still listed in inventory; Distribution and
+  Median left blank.
+- Collapse empty tables (`row_count == 0`) to one summary row.
+- Integer-cast numeric summaries; avoid scientific notation for
+  magnitudes < 1e9.
+- Raise `--sample-values` default to 20 for columns whose name matches
+  `*_concept_name`; keep 5 elsewhere.
+- Rename the existing `Variables` sheet to `Columns`.
+- Add `Extraction Type = Abstracted` support (read from optional
+  `packs/abstracted/<cohort>.yaml`).
+- Auto-size XLSX columns and enable word wrap.
+- Standardise output filenames: `Output/<schema>_dictionary.{xlsx,html}`.
+
+### PR 2 — populate the blank fields
+- Ship `packs/categories.yaml` (table → Category).
+- Ship `packs/column_descriptions.yaml` (OMOP column semantics).
+- Tag PII columns via `packs/pii.yaml` (or inline on `categories.yaml`).
+- Populate `Category`, `Description`, `Criteria`, `Notes` where config exists.
+
+### PR 3 — patient-level `% Patient`
+- Add `_compile_patient_completeness` — for tables with `person_id`,
+  `COUNT(DISTINCT person_id WHERE col IS NOT NULL) / total_patients`.
+- Keep row-level `Completeness` alongside.
+- Mark `% Patient` as `—` for tables without `person_id`.
+
+### PR 4 — Summary + Tables sheet
+- Summary adds `provider`, `disease`, `variant`, `display_name`,
+  `years_of_data`, contributing-columns list.
+- New `Tables` sheet: one row per table with `table_name, row_count,
+  column_count, patient_count, purpose`.
+- `purpose` from `packs/table_descriptions.yaml`; heuristic fallback logged.
+
+### PR 5 — audience presets + PII redaction
+- `--audience {technical,sales,pharma}` flag.
+- PII redaction enforced for sales and pharma; never ship audiences
+  without redaction in the same PR.
+
+### PR 6 — canonical `CohortModel` refactor
+- Consolidate dataclasses evolved through PR 1–5 into one shape.
+- Emit `generated_at`, `git_sha`, `introspect_version`,
+  `schema_snapshot_digest`.
+- Add JSON export path.
+
+### PR 7 — direct HTML → PDF
+- `pip install weasyprint` optional dep.
+- `--out-pdf` flag. Print CSS: page breaks between sheets, repeated
+  table headers, page numbers, title block with provider/disease/years.
+- Retire the Adobe Scan loop.
+
+### PR 8 — validation + drift detection
+- Per-cohort validation report (JSON).
+- Hard-fail rules: `patient_count > 0`, tables / columns non-empty,
+  `provider` and `disease` populated unless pack declares `status: wip`.
+- Schema drift diff vs prior XLSX; non-zero exit on `--strict-drift`.
 
 ### PR 9 — batch runner + combined views
-- `introspect_cohort.py --all` iterates over `packs/cohorts/*.yaml`,
-  writes one workbook per cohort. Per-cohort errors don't kill the
-  batch; they land in the validation report.
-- Opt-in `--combine nimbus+nimbus_az` unions the two schemas into
-  one dictionary, flagging each row with source schema.
+- `introspect_cohort.py --all` iterates `packs/cohorts/*.yaml`; per-
+  cohort errors land in the validation report without killing the batch.
+- Opt-in `--combine nimbus+nimbus_az` unions two schemas with source
+  flag per row.
 
-## 6. What won't fit in the script
+## 13. Not forced into the script yet
 
-- Writing `packs/variables/<disease>.yaml` for each disease is
-  clinical-curation work (alzheimers, aat, copd, asthma, ckd first).
-  Variable packs declare the Page-4 clinical concepts and their
-  `{table, column, criteria}` filters. Reused across providers with
-  the same disease.
-- Populating the TBD schemas (PRINE, Southland, EHA). Blocked on
-  upstream provisioning.
-- Replacing the Adobe Scan PDFs in `Output/` with the direct-render
-  PDFs once PR 7 ships.
+Real work items that shouldn't block the core pipeline from being correct:
 
-## 7. Open questions for the next Sanjay sync
+- Clinical curation of `packs/variables/<disease>.yaml` per disease
+  (alzheimers, aat, copd, asthma, ckd first).
+- Resolving blocked schemas (PRINE, Southland, EHA).
+- Replacing historical Adobe Scan PDFs in `Output/` until direct-render
+  PDF export exists (PR 7).
 
-1. Are Page-4 variable lists disease-driven (same `alzheimers.yaml`
-   shared by MTC Alzheimers and RMN Alzheimers) or provider-specific?
-2. For multi-disease providers (MTC Alzheimers + AAT, Nimbus COPD +
-   Asthma), one workbook each or a combined one?
-3. Does "years of data" take the min/max across all clinical dates,
-   or only from a designated table (e.g. `visit_occurrence`)?
-4. Abstracted variables with 0% completeness today — show as
-   placeholder rows with `Implemented: No`, or hide until populated?
-5. For WIP cohorts (PRINE, Southland, EHA) — do we ship partial
-   dictionaries with `status: wip`, or wait for the schema?
-6. Will Nimbus + Nimbus AZ eventually be merged into one dictionary?
+## 14. Open questions for the next Sanjay sync
 
-## 8. Acceptance criteria
+1. Are Page-4 variable lists disease-driven and reusable across providers
+   (one `alzheimers.yaml` for MTC + RMN), or provider-specific?
+2. For multi-disease providers (MTC, Nimbus, Nimbus AZ), one workbook
+   per disease or any combined provider workbook?
+3. Does `years_of_data` use all relevant clinical dates, or only an
+   approved subset (e.g. `visit_start_date` only)?
+4. For abstracted variables with no data yet, show placeholder rows with
+   `Implemented: No`, or hide until populated?
+5. For WIP/blocked cohorts, ship partial dictionaries with
+   `status: wip` or wait for the schema?
+6. Will Nimbus and Nimbus AZ eventually merge, or stay permanently separate?
+7. Does Nira MG truly reuse `nira_ms_cohort`, or is that a draft
+   placeholder mapping that needs correcting?
 
-The improved program is good enough when:
+## 15. Acceptance criteria
 
-- PDFs are rendered directly from HTML with no browser chrome or OCR
+The program is good enough when:
+
+- PDFs are rendered directly from HTML — no browser chrome, no OCR
   corruption.
-- Every cohort output has Summary + Tables + Columns + Variables
-  sections.
-- `years_of_data`, `provider`, `disease`, `% Patient` are populated
-  automatically.
+- Every cohort output has Summary, Tables, Columns, Variables.
+- `provider`, `disease`, `years_of_data`, `% Patient` populate automatically.
 - `Category` and `Description` come from config, not manual fill-in.
 - Filenames follow `Output/<schema>_dictionary.{xlsx,html,pdf,json}`.
-- The same CLI invocation runs on any cohort; differences live in
+- One CLI path runs any cohort; per-cohort differences live in
   `packs/cohorts/<name>.yaml` + `packs/variables/<disease>.yaml`.
-- HTML, PDF, XLSX, and JSON render from one `CohortModel` — no
-  parallel format codepaths.
-- PII columns are redacted in sales / pharma audience outputs.
-- Running the generator twice on unchanged data produces identical
-  outputs (deterministic), and drift detection flags any schema
-  changes since the last run.
-- Test suite covers the canonical model, the pack loader,
-  PII redaction, and audience filtering.
+- HTML, PDF, XLSX, JSON all render from one `CohortModel`.
+- PII is redacted in sales and pharma outputs.
+- Reruns on unchanged inputs are byte-identical (deterministic).
+- Drift detection flags schema changes since the last run.
+- Tests cover canonical model, pack loading, audience filters, PII redaction.
 
-## 9. Source files referenced
+## 16. Source files referenced
 
 - `century/Data dictionary.pdf` — reference layout (MTC Alzheimers).
-  Target look for Page 3 + Page 4.
-- `century/ask.pdf` — the ask. (Duplicate: `century/century health
-  ask.pdf`.)
-- `century/Adobe Scan 19 Apr 2026.pdf` — `clinical` database schema list.
-- `Output/*.pdf` — OCR'd scans of the HTML outputs
-  `introspect_cohort.py` has already produced (8 of 18 cohorts).
-- `introspect_cohort.py` — the generator being extended.
-- `packs/cohorts/*.yaml` — existing cohort configs; extend in PR 1.
-- `tests/test_introspect_cohort.py` — existing test suite; extend per
-  PR.
+- `century/ask.pdf` — primary ask. (Duplicate: `century health ask.pdf`.)
+- `century/Adobe Scan 19 Apr 2026.pdf` — `clinical` schema list.
+- `Output/*.pdf` — current raw cohort dumps (OCR'd scans).
+- `introspect_cohort.py` — generator being extended.
+- `tests/test_introspect_cohort.py` — test suite to extend.
+
+## 17. Final planning note
+
+The main technical gap is no longer schema introspection — that already
+works. The main gap is the transition from raw inventory to:
+
+- a canonical model
+- config-driven enrichment
+- audience-aware rendering
+- direct, validated document export
+
+That is the work this plan sequences.
