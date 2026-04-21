@@ -1,29 +1,28 @@
 """Tests for build_dictionary.py.
 
-Focused on the four regressions called out in the latest review:
-  P1 - % Patient denominator must be the cohort total, not the per-table
-       distinct-patient count.
-  P1 - Variable rows must be PII-tagged and dropped by sales/pharma audience.
-  P2 - Renderers must actually omit hidden sections (not just empty them).
-  P2 - resolve_variables must skip the GROUP BY for free-text /
-       Unstructured columns.
+Covers the cumulative regressions called out in review:
+  - % Patient denominator is the cohort total.
+  - Variable rows are PII-tagged and dropped by sales / pharma.
+  - Renderers actually omit hidden sections.
+  - resolve_variables skips GROUP BY for Unstructured / free-text columns.
+  - Resolver adds Median (IQR) + Completeness for numeric columns and
+    Min / Max for date columns.
+  - `expression` field lets variables run a SQL rollup (e.g. LEFT(zip, 3)).
+  - Columns / Variables sheets use the reference label `Table(s)`.
 
 Tests stub the psycopg connection so no warehouse is required.
 """
 from __future__ import annotations
 
-import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
-import sys
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import build_dictionary as bd  # noqa: E402
 from build_dictionary import (  # noqa: E402
     AUDIENCE_VISIBILITY,
     ColumnInfo,
