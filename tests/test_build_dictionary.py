@@ -13,6 +13,7 @@ Tests stub the psycopg connection so no warehouse is required.
 from __future__ import annotations
 
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -248,6 +249,16 @@ def _make_full_model() -> CohortModel:
 
 class RendererOmissionTests(unittest.TestCase):
 
+    def setUp(self):
+        # Portable scratch dir — cleaned up automatically on tearDown.
+        # Use tempfile.TemporaryDirectory() so the suite runs on Windows
+        # (where /tmp does not exist) as well as macOS / Linux.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
     def test_visibility_table_matches_readme(self):
         self.assertEqual(AUDIENCE_VISIBILITY["technical"],
                          {"summary": True, "tables": True, "columns": True, "variables": True})
@@ -262,7 +273,7 @@ class RendererOmissionTests(unittest.TestCase):
         self.assertFalse(section_visible("pharma", "tables"))
 
     def test_html_omits_columns_for_sales(self):
-        out = Path("/tmp/test_dd_sales.html")
+        out = self.tmp_dir / "sales.html"
         write_html(_make_full_model(), out, audience="sales")
         page = out.read_text()
         self.assertIn("<h2>Tables</h2>", page)
@@ -270,7 +281,7 @@ class RendererOmissionTests(unittest.TestCase):
         self.assertIn("<h2>Variables</h2>", page)
 
     def test_html_omits_tables_and_columns_for_pharma(self):
-        out = Path("/tmp/test_dd_pharma.html")
+        out = self.tmp_dir / "pharma.html"
         write_html(_make_full_model(), out, audience="pharma")
         page = out.read_text()
         self.assertNotIn("<h2>Tables</h2>", page)
@@ -283,13 +294,13 @@ class RendererOmissionTests(unittest.TestCase):
         except ImportError:
             self.skipTest("openpyxl not installed")
         import openpyxl as opx
-        out = Path("/tmp/test_dd_sales.xlsx")
+        out = self.tmp_dir / "sales.xlsx"
         write_xlsx(_make_full_model(), out, audience="sales")
         wb = opx.load_workbook(out)
         self.assertEqual(set(wb.sheetnames),
                          {"Summary", "Tables", "Variables"})
 
-        out2 = Path("/tmp/test_dd_pharma.xlsx")
+        out2 = self.tmp_dir / "pharma.xlsx"
         write_xlsx(_make_full_model(), out2, audience="pharma")
         wb2 = opx.load_workbook(out2)
         self.assertEqual(set(wb2.sheetnames), {"Summary", "Variables"})
