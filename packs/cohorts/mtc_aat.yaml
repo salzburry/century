@@ -1,0 +1,32 @@
+# Cohort pack: MTC AAT
+#
+# MTC patients on anti-amyloid therapies (Leqembi / Kisunla / Aduhelm).
+# The "AAT" slug maps to the on-warehouse schema mtc__aat_cohort.
+
+provider: MTC
+disease: AAT
+display_name: MTC AAT
+cohort_name: mtc_aat_cohort
+schema_name: mtc__aat_cohort
+variant: raw
+site_group: MTC
+status: active
+
+description: >
+  Patients in the MTC cohort receiving anti-amyloid monoclonal antibody
+  therapy (lecanemab, donanemab, aducanumab) with paired safety
+  (ARIA-H / ARIA-E) and cognitive outcome tracking.
+
+notes:
+  - Technical dictionary generated from schema introspection.
+  - Infusion records are split across drug_exposure and a dedicated
+    infusion table; both feed the Medications variables on Page 4.
+  - Abstracted variables (MoCA, MMSE, FAQ, CDR, ADAS-Cog, DSRS) flagged
+    as in-progress until March 2026 completion.
+
+# Optional table -> Category override. Empty -> use packs/categories.yaml.
+category_rules: {}
+
+# Variables pack (Page 4). Points at the shared disease pack so the same
+# clinical variable list is reused across all MTC AAT-type cohorts.
+variables_pack: aat

@@ -1,0 +1,47 @@
+# Table -> Category mapping for Page 3 (Columns) and the Tables sheet.
+#
+# Used when a cohort pack doesn't override via `category_rules`. Unknown
+# tables fall back to "Other" and are logged so they can be promoted
+# into this file.
+
+categories:
+  Cohort:
+    tables: [cohort_patients]
+
+  Demographics:
+    tables: [person, location, payer_plan_period]
+
+  Diagnosis:
+    tables: [condition_occurrence]
+
+  Medications:
+    tables: [drug_exposure, infusion]
+
+  Procedures:
+    tables: [procedure_occurrence]
+
+  Labs / Biomarkers:
+    tables: [measurement]
+
+  Observations:
+    tables: [observation]
+
+  Visits:
+    tables: [visit_occurrence, visit_detail]
+
+  Reports:
+    tables: [note, note_nlp, document]
+
+  Profile (PII):
+    tables: [standard_profile_data_model]
+
+  Tokenized (derived):
+    tables: [dv_tokenized_profile_data]
+
+  Death:
+    tables: [death]
+
+  Provider:
+    tables: [provider, care_site]
+
+  Other: {}    # catch-all, populated at runtime

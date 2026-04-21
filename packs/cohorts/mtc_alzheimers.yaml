@@ -1,0 +1,28 @@
+# Cohort pack: MTC Alzheimer's
+#
+# MTC patients with Alzheimer's disease / dementia diagnoses. This is
+# the "reference" dataset behind century/Data dictionary.pdf.
+
+provider: MTC
+disease: Alzheimer's
+display_name: MTC Alzheimer's
+cohort_name: mtc_alzheimers_cohort
+schema_name: mtc__alzheimers_cohort
+variant: raw
+site_group: MTC
+status: active
+
+description: >
+  Patients in the MTC cohort with an Alzheimer's disease or related
+  dementia diagnosis. Broader superset of MTC AAT — includes patients
+  not on anti-amyloid therapy.
+
+notes:
+  - Dictionary layout matches the reference century/Data dictionary.pdf.
+  - Shares the clinical variable list with Rocky Mountain Neurology
+    Alzheimer's (rmn_alzheimers_cohort) once that cohort is onboarded.
+
+category_rules: {}
+
+# Variables pack (Page 4) — same disease template as RMN Alzheimer's.
+variables_pack: alzheimers
