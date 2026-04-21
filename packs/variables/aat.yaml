@@ -1,0 +1,86 @@
+# Page 4 — Variables for MTC AAT cohort.
+#
+# Inherits the Alzheimer's-style clinical template but adds the
+# anti-amyloid-therapy-specific Medications + Infusions + ARIA rows
+# that define this cohort.
+
+# ----- Include shared Alzheimer's variables (load order below) ------
+include:
+  - alzheimers
+
+# ----- AAT-specific overrides / additions --------------------------
+variables:
+  # Reinforced Medications rows — anti-amyloid therapy specifically
+  - category: Medications
+    variable: Anti-amyloid Therapy (Prescription)
+    description: Anti-amyloid monoclonal antibody prescriptions (Leqembi / Kisunla / Aduhelm).
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      (drug_type_concept_name ILIKE '%prescription%') AND
+      (drug_concept_name ILIKE '%lecanemab%' OR
+       drug_concept_name ILIKE '%Leqembi%' OR
+       drug_concept_name ILIKE '%donanemab%' OR
+       drug_concept_name ILIKE '%Kisunla%' OR
+       drug_concept_name ILIKE '%aducanumab%' OR
+       drug_concept_name ILIKE '%Aduhelm%')
+    extraction_type: Structured
+    notes: Cohort-defining therapies for MTC AAT.
+
+  - category: Medications
+    variable: Anti-amyloid Therapy (Administration)
+    description: Anti-amyloid monoclonal antibody administration records.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      (drug_type_concept_name ILIKE '%administration%') AND
+      (drug_concept_name ILIKE '%lecanemab%' OR
+       drug_concept_name ILIKE '%donanemab%' OR
+       drug_concept_name ILIKE '%aducanumab%')
+    extraction_type: Structured
+
+  - category: Infusions
+    variable: Infusion Drug
+    description: Drug administered by infusion (anti-amyloid monoclonal antibodies).
+    table: infusion
+    column: drug_concept_name
+    extraction_type: Structured
+    notes: Dedicated infusion table parallel to drug_exposure.
+
+  - category: Infusions
+    variable: Infusion Dates
+    description: Start and end dates of each infusion.
+    table: infusion
+    column: drug_exposure_start_date
+    extraction_type: Structured
+
+  # Promoted ARIA rows (AAT cohort cares about the break-down)
+  - category: Observations
+    variable: ARIA-H (microhemorrhage)
+    description: Amyloid-related imaging abnormality — microhemorrhage or hemosiderosis.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE 'ARIA-H%'
+    extraction_type: Structured
+    notes: Safety surveillance for anti-amyloid therapy.
+
+  - category: Observations
+    variable: ARIA-E (edema)
+    description: Amyloid-related imaging abnormality — edema or effusion.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE 'ARIA-E%'
+    extraction_type: Structured
+    notes: Safety surveillance for anti-amyloid therapy.
+
+  - category: Procedures
+    variable: Anti-amyloid Infusion Procedure
+    description: Procedure codes for anti-amyloid infusions (injection / IV chemotherapy administration).
+    table: procedure_occurrence
+    column: procedure_concept_name
+    criteria: >
+      procedure_concept_name ILIKE '%lecanemab%' OR
+      procedure_concept_name ILIKE '%donanemab%' OR
+      procedure_concept_name ILIKE '%aducanumab%' OR
+      procedure_concept_name ILIKE '%Chemotherapy administration%'
+    extraction_type: Structured

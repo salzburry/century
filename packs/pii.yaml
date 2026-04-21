@@ -1,0 +1,43 @@
+# PII column allowlist. Any (table, column) pair in here is tagged
+# `pii: true` in the canonical model. Sales / pharma audience outputs
+# drop all `pii: true` rows before render.
+
+pii_columns:
+  standard_profile_data_model:
+    - first_name
+    - middle_name
+    - last_name
+    - date_of_birth
+    - email
+    - cellphone
+    - address1
+    - address2
+    - city
+    - state
+    - zip
+    - prescribing_npi
+    - pharmacy_npi
+    - billing_physician_npi
+
+  person:
+    - birth_datetime      # full DOB is PII even though year_of_birth alone isn't
+
+  location:
+    - address_1
+    - address_2
+    - city
+    - zip
+
+# Pattern-based fallback. Applied to any column whose name matches one
+# of these regexes, across any table. Logged when matched so the static
+# list above can absorb it.
+pii_name_patterns:
+  - '^first_name$'
+  - '^last_name$'
+  - '^middle_name$'
+  - '^full_name$'
+  - '^email$'
+  - '^phone$'
+  - '^cellphone$'
+  - '^ssn$'
+  - '^npi$'

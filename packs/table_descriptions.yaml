@@ -1,0 +1,81 @@
+# Table -> purpose descriptions for Page 2 (Tables sheet).
+# OMOP Common Data Model v5.4 terminology; cohort-specific tables
+# (cohort_patients, infusion, standard_profile_data_model,
+# dv_tokenized_profile_data) described locally.
+
+tables:
+  cohort_patients: >
+    Roster of person_ids that qualify for the cohort. Single source
+    of truth for cohort membership; every other table is effectively
+    joined through this set.
+
+  person: >
+    One row per unique patient. Demographics: birth year, sex, race,
+    ethnicity, location. OMOP PERSON table.
+
+  location: >
+    Patient address / ZIP / region lookup referenced from person.
+    OMOP LOCATION table.
+
+  payer_plan_period: >
+    Insurance coverage windows per patient. OMOP
+    PAYER_PLAN_PERIOD table.
+
+  condition_occurrence: >
+    Medical diagnoses recorded for the patient (ICD / SNOMED mapped
+    to OMOP concepts). OMOP CONDITION_OCCURRENCE table.
+
+  drug_exposure: >
+    Medications prescribed or administered. OMOP DRUG_EXPOSURE table.
+
+  infusion: >
+    Cohort-local table for infusion episodes. Parallel to
+    drug_exposure; isolates anti-amyloid / infusion-therapy events.
+
+  procedure_occurrence: >
+    Clinical procedures performed. OMOP PROCEDURE_OCCURRENCE table.
+
+  measurement: >
+    Quantitative and categorical lab results and vitals. OMOP
+    MEASUREMENT table.
+
+  observation: >
+    Structured observations that don't fit the measurement model —
+    assessments, findings, patient-reported items. OMOP
+    OBSERVATION table.
+
+  visit_occurrence: >
+    Healthcare encounters (office visits, telehealth, infusion
+    appointments, diagnostic visits). OMOP VISIT_OCCURRENCE table.
+
+  visit_detail: >
+    Finer-grained visit components (ICU stays, ED visits within an
+    admission, etc.). OMOP VISIT_DETAIL table.
+
+  note: >
+    Clinical notes associated with encounters. OMOP NOTE table.
+
+  note_nlp: >
+    NLP-extracted concepts from free-text notes. OMOP NOTE_NLP table.
+
+  document: >
+    Scanned reports and attached documents (MRI, PET, EEG,
+    clinical summaries).
+
+  death: >
+    Mortality records for cohort patients. OMOP DEATH table.
+
+  provider: >
+    Clinician / provider directory. OMOP PROVIDER table.
+
+  care_site: >
+    Care-site (clinic / hospital) directory. OMOP CARE_SITE table.
+
+  standard_profile_data_model: >
+    Flat per-patient profile export — name, DOB, address, NPIs,
+    fact-of-death, result codes. Carries PII; redacted in sales /
+    pharma audiences.
+
+  dv_tokenized_profile_data: >
+    Tokenised / vectorised patient profile records used as features
+    for downstream models. Derived data, not source clinical truth.
