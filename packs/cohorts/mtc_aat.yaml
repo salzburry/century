@@ -1,7 +1,0 @@
-# Century cohort pack — mtc_aat_cohort.
-#
-# Declares the cohort's display name and the actual Postgres schema the
-# introspector walks. That's all the generator needs.
-
-cohort_name: mtc_aat_cohort
-schema_name: mtc__aat_cohort
