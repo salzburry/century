@@ -420,7 +420,7 @@ The program is good enough when:
 ## 16. Source files referenced
 
 - `century/Data dictionary.pdf` — reference layout (MTC Alzheimers).
-- `century/ask.pdf` — primary ask. (Duplicate: `century health ask.pdf`.)
+- `century/ask.pdf` — primary ask.
 - `century/Adobe Scan 19 Apr 2026.pdf` — `clinical` schema list.
 - `Output/*.pdf` — current raw cohort dumps (OCR'd scans).
 - `introspect_cohort.py` — generator being extended.
