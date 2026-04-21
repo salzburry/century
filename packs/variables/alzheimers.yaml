@@ -44,11 +44,21 @@ variables:
     extraction_type: Structured
 
   - category: Demographics
-    variable: ZIP code
-    description: First three digits of the patient ZIP code.
+    variable: ZIP code (3-digit prefix)
+    description: >
+      First three digits of the patient ZIP code — HIPAA Safe Harbor
+      "large geographic area" generalisation.
     table: location
     column: zip
+    # `expression` is used in the SQL so the output is actually the
+    # 3-digit rollup, not the full ZIP. The raw column still appears
+    # in the Column(s) display cell. `location.zip` is PII-tagged in
+    # packs/pii.yaml, so this row is dropped from sales / pharma.
+    expression: LEFT("zip"::text, 3)
     extraction_type: Structured
+    notes: >
+      Emitted only in the technical audience; redacted by the PII
+      filter for sales and pharma.
 
   - category: Demographics
     variable: Payer Type
