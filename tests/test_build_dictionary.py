@@ -457,6 +457,62 @@ class MedianIQRAndCompletenessTests(unittest.TestCase):
         self.assertEqual(v.implemented, "Yes")
         self.assertEqual(v.patient_pct, 40.0)        # 400 / 1000
 
+    def test_date_variable_uses_min_max_not_group_by(self):
+        # Date-typed columns like condition_start_date should render a
+        # Min/Max range in Distribution, not the ten most common exact
+        # dates. The stub has no GROUP BY entry — if the resolver runs
+        # one, _Cursor raises AssertionError and the test fails.
+        pack = [{
+            "category": "Diagnosis",
+            "variable": "Diagnosis Start Date",
+            "table": "condition_occurrence",
+            "column": "condition_start_date",
+            "extraction_type": "Structured",
+        }]
+        conn = _Conn([
+            ("MIN", ("2022-01-15", "2026-03-22")),
+            ("COUNT(DISTINCT", (500,)),
+            ("COUNT(*)", (1000,)),
+        ])
+        rows = resolve_variables(
+            conn, "s", pack, total_patients=1000,
+            pii_pairs=set(), pii_patterns=[],
+            tables_with_person_id={"condition_occurrence"},
+            column_types={
+                ("condition_occurrence", "condition_start_date"): "date",
+            },
+        )
+        v = rows[0]
+        self.assertIn("Min: 2022-01-15", v.distribution)
+        self.assertIn("Max: 2026-03-22", v.distribution)
+        self.assertEqual(v.values, "")
+        self.assertEqual(v.median_iqr, "")
+        self.assertEqual(v.implemented, "Yes")
+        self.assertEqual(v.patient_pct, 50.0)   # 500 / 1000
+
+    def test_timestamp_variable_also_uses_min_max(self):
+        pack = [{
+            "category": "Visits",
+            "variable": "Visit Date",
+            "table": "visit_occurrence",
+            "column": "visit_start_date",
+        }]
+        conn = _Conn([
+            ("MIN", ("2021-10-01", "2026-02-27")),
+            ("COUNT(DISTINCT", (800,)),
+            ("COUNT(*)", (5000,)),
+        ])
+        rows = resolve_variables(
+            conn, "s", pack, total_patients=1000,
+            tables_with_person_id={"visit_occurrence"},
+            column_types={
+                ("visit_occurrence", "visit_start_date"):
+                    "timestamp without time zone",
+            },
+        )
+        self.assertIn("Min: 2021-10-01", rows[0].distribution)
+        self.assertIn("Max: 2026-02-27", rows[0].distribution)
+
     def test_categorical_column_has_no_median_iqr(self):
         pack = [{
             "category": "Diagnosis", "variable": "Dx",
@@ -603,12 +659,24 @@ class VariablesHeadersTests(unittest.TestCase):
         out = self.tmp_dir / "tech.html"
         write_html(_make_full_model(), out, audience="technical")
         page = out.read_text()
-        # Just below the Variables <h2>, we expect these two columns.
+        # Just below the Variables <h2>, we expect these columns.
         variables_section = page.split("<h2>Variables</h2>", 1)[1]
         self.assertIn("<th>Median (IQR)</th>", variables_section)
         self.assertIn("<th>Completeness</th>", variables_section)
         self.assertIn("<th>Implemented</th>", variables_section)
         self.assertIn("<th>% Patient</th>", variables_section)
+        # P3: matches Century reference label.
+        self.assertIn("<th>Table(s)</th>", variables_section)
+
+    def test_html_columns_header_uses_table_s(self):
+        out = self.tmp_dir / "tech.html"
+        write_html(_make_full_model(), out, audience="technical")
+        page = out.read_text()
+        columns_section = page.split("<h2>Columns</h2>", 1)[1]
+        # Columns section ends at the next <h2>, so only look at this block.
+        columns_section = columns_section.split("<h2>", 1)[0]
+        self.assertIn("<th>Table(s)</th>", columns_section)
+        self.assertNotIn("<th>Table</th>", columns_section)
 
     def test_xlsx_variables_sheet_has_median_iqr_and_completeness(self):
         try:
@@ -625,6 +693,38 @@ class VariablesHeadersTests(unittest.TestCase):
         self.assertIn("Completeness", headers)
         self.assertIn("Implemented", headers)
         self.assertIn("% Patient", headers)
+        self.assertIn("Table(s)", headers)
+        self.assertNotIn("Table", headers)
+
+    def test_xlsx_columns_sheet_uses_table_s(self):
+        try:
+            import openpyxl  # noqa: F401
+        except ImportError:
+            self.skipTest("openpyxl not installed")
+        import openpyxl as opx
+        out = self.tmp_dir / "tech.xlsx"
+        write_xlsx(_make_full_model(), out, audience="technical")
+        wb = opx.load_workbook(out)
+        ws = wb["Columns"]
+        headers = [c.value for c in ws[1]]
+        self.assertIn("Table(s)", headers)
+        self.assertNotIn("Table", headers)
+
+    def test_xlsx_tables_sheet_still_uses_singular_table(self):
+        # The Tables sheet itself describes one row per table — the
+        # "Table" label is correct there; only the Columns and Variables
+        # pages gained the Century-style "Table(s)" header.
+        try:
+            import openpyxl  # noqa: F401
+        except ImportError:
+            self.skipTest("openpyxl not installed")
+        import openpyxl as opx
+        out = self.tmp_dir / "tech.xlsx"
+        write_xlsx(_make_full_model(), out, audience="technical")
+        wb = opx.load_workbook(out)
+        ws = wb["Tables"]
+        headers = [c.value for c in ws[1]]
+        self.assertIn("Table", headers)
 
 
 if __name__ == "__main__":

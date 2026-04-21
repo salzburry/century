@@ -629,12 +629,31 @@ def resolve_variables(
             extraction.lower() == "unstructured" or _is_freetext_column(column)
         )
 
+        # Type-classify so date columns get Min/Max instead of top-N of
+        # the most common exact dates, which the reviewer called out as
+        # unhelpful and inconsistent with the column-inventory page.
+        # Expression-backed rows stay categorical because the expression
+        # output type may not match the raw column's data_type.
+        raw_type = column_types.get((table, column), "")
+        raw_kind = _classify_metric_kind(raw_type) if raw_type else "categorical"
+        has_expression = v.get("expression") is not None
+        treat_as_date = raw_kind == "date" and not has_expression
+
         if total_nonnull > 0:
             implemented = "Yes"
 
             if skip_top_values:
                 distribution_cell = (
                     f"{total_nonnull:,} rows; values not aggregated (free text)"
+                )
+            elif treat_as_date:
+                # Date/timestamp columns: min/max range is what reviewers
+                # want; the column-inventory page uses the same format.
+                distribution_cell = (
+                    _compile_date_range_filtered(
+                        conn, schema, table, column, where_nonnull
+                    )
+                    or f"{total_nonnull:,} rows"
                 )
             else:
                 try:
@@ -659,11 +678,7 @@ def resolve_variables(
             # an expression is used, since the raw column's data type may
             # not match the expression's output type (e.g. LEFT(zip,3) is
             # text even though zip is numeric).
-            raw_type = column_types.get((table, column), "")
-            if (
-                v.get("expression") is None
-                and _classify_metric_kind(raw_type) == "continuous"
-            ):
+            if raw_kind == "continuous" and not has_expression:
                 median_iqr_cell = _compile_continuous_filtered(
                     conn, schema, table, column, where_nonnull
                 )
@@ -729,6 +744,29 @@ def _compile_continuous_filtered(
         return ""
     q1, median, q3 = row
     return f"Median: {median} (IQR: {q1}-{q3})"
+
+
+def _compile_date_range_filtered(
+    conn, schema: str, table: str, column: str, where: str
+) -> str:
+    """`Min: X, Max: Y` for a date/timestamp column, scoped to the
+    variable's `where` clause. Matches the format used by the column
+    inventory page so date variables read the same way on both sheets."""
+    sql = f'''
+    SELECT MIN("{column}")::text, MAX("{column}")::text
+    FROM "{schema}"."{table}"
+    WHERE {where};
+    '''
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+    except Exception:
+        conn.rollback()
+        return ""
+    if not row or row[0] is None:
+        return ""
+    return f"Min: {row[0]}, Max: {row[1]}"
 
 
 # --------------------------------------------------------------------------- #
@@ -987,7 +1025,7 @@ def write_xlsx(model: CohortModel, out_path: Path,
     columns_df = pd.DataFrame(
         [{
             "Category":        c.category,
-            "Table":           c.table,
+            "Table(s)":        c.table,
             "Column":          c.column,
             "Description":     c.description,
             "Data Type":       c.data_type,
@@ -1001,7 +1039,7 @@ def write_xlsx(model: CohortModel, out_path: Path,
             "Notes":           c.notes,
         } for c in model.columns],
         columns=[
-            "Category", "Table", "Column", "Description", "Data Type",
+            "Category", "Table(s)", "Column", "Description", "Data Type",
             "Values", "Distribution", "Median (IQR)",
             "Completeness", "% Patient", "Extraction Type", "PII", "Notes",
         ],
@@ -1012,7 +1050,7 @@ def write_xlsx(model: CohortModel, out_path: Path,
             "Category":        v.category,
             "Variable":        v.variable,
             "Description":     v.description,
-            "Table":           v.table,
+            "Table(s)":        v.table,
             "Column(s)":       v.column,
             "Criteria":        v.criteria,
             "Values":          v.values,
@@ -1025,7 +1063,7 @@ def write_xlsx(model: CohortModel, out_path: Path,
             "Notes":           v.notes,
         } for v in model.variables],
         columns=[
-            "Category", "Variable", "Description", "Table", "Column(s)", "Criteria",
+            "Category", "Variable", "Description", "Table(s)", "Column(s)", "Criteria",
             "Values", "Distribution", "Median (IQR)", "Completeness",
             "Implemented", "% Patient", "Extraction Type", "Notes",
         ],
@@ -1125,7 +1163,7 @@ def write_html(model: CohortModel, out_path: Path,
         sections.append(
             "<h2>Columns</h2>"
             + _table(columns_rows, [
-                "Category", "Table", "Column", "Description", "Data Type",
+                "Category", "Table(s)", "Column", "Description", "Data Type",
                 "Values", "Distribution", "Median (IQR)", "Completeness",
                 "% Patient", "Extraction Type", "PII", "Notes",
             ])
@@ -1134,7 +1172,7 @@ def write_html(model: CohortModel, out_path: Path,
         sections.append(
             "<h2>Variables</h2>"
             + _table(variables_rows, [
-                "Category", "Variable", "Description", "Table", "Column(s)",
+                "Category", "Variable", "Description", "Table(s)", "Column(s)",
                 "Criteria", "Values", "Distribution", "Median (IQR)",
                 "Completeness", "Implemented", "% Patient",
                 "Extraction Type", "Notes",
