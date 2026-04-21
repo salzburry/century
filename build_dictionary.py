@@ -149,6 +149,7 @@ class VariableRow:
     patient_pct: float | None
     extraction_type: str
     notes: str
+    pii: bool = False       # Audience filter drops these for sales/pharma.
 
 
 @dataclass
@@ -492,13 +493,33 @@ def _format_top_values_from_rows(rows: list[tuple[str, int]], total: int) -> tup
     return values, distribution
 
 
+_TEXT_COLUMN_PATTERNS = (
+    re.compile(r"_text$"),
+    re.compile(r"_note$"),
+    re.compile(r"^note_text$"),
+)
+
+
+def _is_freetext_column(column: str) -> bool:
+    return any(p.search(column) for p in _TEXT_COLUMN_PATTERNS)
+
+
 def resolve_variables(
     conn, schema: str,
     variables_pack: list[dict[str, Any]],
     total_patients: int | None,
+    pii_pairs: set[tuple[str, str]] | None = None,
+    pii_patterns: list[re.Pattern[str]] | None = None,
 ) -> list[VariableRow]:
     """For each entry in the disease pack, query the cohort and populate
-    Values / Distribution / Implemented / % Patient."""
+    Values / Distribution / Implemented / % Patient.
+
+    Skips the GROUP BY for `extraction_type: Unstructured` rows (free-text
+    columns like note.note_text) — the resulting "top values" would be
+    unique per row and the GROUP BY is expensive on large note tables."""
+    pii_pairs = pii_pairs or set()
+    pii_patterns = pii_patterns or []
+
     out: list[VariableRow] = []
     for v in variables_pack:
         table = v.get("table") or ""
@@ -545,20 +566,29 @@ def resolve_variables(
             conn.rollback()
             total_rows = 0
 
+        skip_top_values = (
+            extraction.lower() == "unstructured" or _is_freetext_column(column)
+        )
+
         if total_rows > 0:
             implemented = "Yes"
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(top_sql)
-                    rows = [(str(r[0]), int(r[1])) for r in cur.fetchall()]
-                values_cell, distribution_cell = _format_top_values_from_rows(
-                    rows, total_rows
-                )
-            except Exception as exc:
-                sys.stderr.write(
-                    f"[warn] {category}/{variable_name}: top-values query failed: {exc}\n"
-                )
-                conn.rollback()
+
+            if skip_top_values:
+                # Free-text / unstructured: row count is the only useful signal.
+                distribution_cell = f"{total_rows:,} rows; values not aggregated (free text)"
+            else:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(top_sql)
+                        rows = [(str(r[0]), int(r[1])) for r in cur.fetchall()]
+                    values_cell, distribution_cell = _format_top_values_from_rows(
+                        rows, total_rows
+                    )
+                except Exception as exc:
+                    sys.stderr.write(
+                        f"[warn] {category}/{variable_name}: top-values query failed: {exc}\n"
+                    )
+                    conn.rollback()
 
             if total_patients and total_patients > 0:
                 try:
@@ -582,6 +612,7 @@ def resolve_variables(
             patient_pct=patient_pct,
             extraction_type=extraction,
             notes=notes,
+            pii=is_pii(table, column, pii_pairs, pii_patterns),
         ))
     return out
 
@@ -643,12 +674,19 @@ def build_model(
                 patient_pct=None,
                 extraction_type=v.get("extraction_type", "Structured"),
                 notes=v.get("notes", ""),
+                pii=is_pii(
+                    v.get("table", ""), v.get("column", ""),
+                    pii_pairs, pii_patterns,
+                ),
             ) for v in variables_pack
         ]
     else:
         total_patients = fetch_person_count(conn, schema)
         columns_raw, tables_raw, patients_per_table = introspect_cohort(conn, schema)
-        variables_rows = resolve_variables(conn, schema, variables_pack, total_patients)
+        variables_rows = resolve_variables(
+            conn, schema, variables_pack, total_patients,
+            pii_pairs=pii_pairs, pii_patterns=pii_patterns,
+        )
 
     # Page 2 — Tables
     cohort_category_overrides = (pack.get("category_rules") or {})
@@ -685,8 +723,11 @@ def build_model(
             extraction = "PII"
         patient_pct: float | None = None
         if not dry_run:
+            # Denominator is the cohort's total patient count, NOT the
+            # per-table distinct-patient count — otherwise sparse tables
+            # always show ~100% and the column hides real cohort coverage.
             patient_pct = compute_patient_completeness(
-                conn, schema, ci, patients_per_table.get(ci.table)
+                conn, schema, ci, total_patients
             )
         column_rows.append(ColumnRow(
             category=_category_for(ci.table),
@@ -738,18 +779,33 @@ def build_model(
 # --------------------------------------------------------------------------- #
 
 
+# Audience -> {section: visible?}. Single source of truth driving both
+# the model filter and the renderer omits.
+AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
+    "technical": {"summary": True, "tables": True, "columns": True, "variables": True},
+    "sales":     {"summary": True, "tables": True, "columns": False, "variables": True},
+    "pharma":    {"summary": True, "tables": False, "columns": False, "variables": True},
+}
+
+
+def section_visible(audience: str, section: str) -> bool:
+    return AUDIENCE_VISIBILITY.get(audience, AUDIENCE_VISIBILITY["technical"])[section]
+
+
 def filter_for_audience(model: CohortModel, audience: str) -> CohortModel:
     if audience == "technical":
         return model
-    # Drop PII rows for sales + pharma
+    # Drop PII rows from BOTH columns and variables for sales + pharma.
+    # Variables resolver tags `pii: true` whenever (table, column) hits the
+    # PII pack, so the same predicate applies to both lists.
     filtered_columns = [c for c in model.columns if not c.pii]
-    # Sales / pharma don't get the raw column inventory
-    empty_columns: list[ColumnRow] = [] if audience in ("sales", "pharma") else filtered_columns
-    empty_tables = model.tables if audience != "pharma" else []
+    filtered_variables = [v for v in model.variables if not v.pii]
+    visibility = AUDIENCE_VISIBILITY[audience]
     return dataclasses.replace(
         model,
-        columns=empty_columns,
-        tables=empty_tables,
+        tables=model.tables if visibility["tables"] else [],
+        columns=filtered_columns if visibility["columns"] else [],
+        variables=filtered_variables,
     )
 
 
@@ -764,7 +820,8 @@ def _fmt_pct(value: float | None) -> str:
     return f"{value:.1f}%"
 
 
-def write_xlsx(model: CohortModel, out_path: Path) -> None:
+def write_xlsx(model: CohortModel, out_path: Path,
+               audience: str = "technical") -> None:
     try:
         import pandas as pd  # noqa: F401
     except ImportError as exc:
@@ -851,9 +908,12 @@ def write_xlsx(model: CohortModel, out_path: Path) -> None:
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         summary_df.to_excel(writer,   sheet_name="Summary",   index=False)
-        tables_df.to_excel(writer,    sheet_name="Tables",    index=False)
-        columns_df.to_excel(writer,   sheet_name="Columns",   index=False)
-        variables_df.to_excel(writer, sheet_name="Variables", index=False)
+        if section_visible(audience, "tables"):
+            tables_df.to_excel(writer, sheet_name="Tables", index=False)
+        if section_visible(audience, "columns"):
+            columns_df.to_excel(writer, sheet_name="Columns", index=False)
+        if section_visible(audience, "variables"):
+            variables_df.to_excel(writer, sheet_name="Variables", index=False)
         _autosize_and_wrap(writer)
     print(f"Wrote {out_path}", file=sys.stderr)
 
@@ -875,7 +935,8 @@ def _autosize_and_wrap(writer) -> None:
             ws.column_dimensions[letter].width = min(max(12, max_len + 2), 60)
 
 
-def write_html(model: CohortModel, out_path: Path) -> None:
+def write_html(model: CohortModel, out_path: Path,
+               audience: str = "technical") -> None:
     esc = lambda s: (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def _table(rows: list[list[str]], headers: list[str]) -> str:
@@ -926,6 +987,35 @@ def write_html(model: CohortModel, out_path: Path) -> None:
         v.extraction_type, v.notes,
     ] for v in model.variables]
 
+    sections: list[str] = [
+        f'<h2>Summary</h2><dl class="summary">{summary_html}</dl>',
+    ]
+    if section_visible(audience, "tables"):
+        sections.append(
+            "<h2>Tables</h2>"
+            + _table(tables_rows, ["Table", "Category", "Rows", "Columns",
+                                   "Patients", "Purpose"])
+        )
+    if section_visible(audience, "columns"):
+        sections.append(
+            "<h2>Columns</h2>"
+            + _table(columns_rows, [
+                "Category", "Table", "Column", "Description", "Data Type",
+                "Values", "Distribution", "Median (IQR)", "Completeness",
+                "% Patient", "Extraction Type", "PII", "Notes",
+            ])
+        )
+    if section_visible(audience, "variables"):
+        sections.append(
+            "<h2>Variables</h2>"
+            + _table(variables_rows, [
+                "Category", "Variable", "Description", "Table", "Column(s)",
+                "Criteria", "Values", "Distribution", "Implemented",
+                "% Patient", "Extraction Type", "Notes",
+            ])
+        )
+
+    body = "\n".join(sections)
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>Data Dictionary — {esc(model.display_name)}</title>
@@ -952,23 +1042,7 @@ def write_html(model: CohortModel, out_path: Path) -> None:
 <h1>Data Dictionary — {esc(model.display_name)}</h1>
 <div style="color:#666">{esc(model.description)}</div>
 
-<h2>Summary</h2>
-<dl class="summary">{summary_html}</dl>
-
-<h2>Tables</h2>
-{_table(tables_rows, ["Table", "Category", "Rows", "Columns", "Patients", "Purpose"])}
-
-<h2>Columns</h2>
-{_table(columns_rows, [
-  "Category","Table","Column","Description","Data Type","Values","Distribution",
-  "Median (IQR)","Completeness","% Patient","Extraction Type","PII","Notes"
-])}
-
-<h2>Variables</h2>
-{_table(variables_rows, [
-  "Category","Variable","Description","Table","Column(s)","Criteria","Values",
-  "Distribution","Implemented","% Patient","Extraction Type","Notes"
-])}
+{body}
 
 </body></html>
 """
@@ -1030,9 +1104,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.audience != "technical":
         stem += f"_{args.audience}"
     if "xlsx" in args.formats:
-        write_xlsx(model, out_dir / f"{stem}.xlsx")
+        write_xlsx(model, out_dir / f"{stem}.xlsx", audience=args.audience)
     if "html" in args.formats:
-        write_html(model, out_dir / f"{stem}.html")
+        write_html(model, out_dir / f"{stem}.html", audience=args.audience)
     if "json" in args.formats:
         write_json(model, out_dir / f"{stem}.json")
 
