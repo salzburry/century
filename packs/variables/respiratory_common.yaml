@@ -193,15 +193,15 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%smoking%' OR
       observation_concept_name ILIKE '%tobacco use%' OR
-      observation_concept_name ILIKE '%cigarette%' OR
-      observation_concept_name ILIKE '%pack year%' OR
-      observation_concept_name ILIKE '%pack-year%'
+      observation_concept_name ILIKE '%cigarette%'
     extraction_type: Structured
     notes: >
       TODO (clinical review): some warehouses map smoking status onto
       condition_occurrence (e.g. "Tobacco use disorder") instead of
       observation. If Implemented=No for a site, confirm whether to add
-      a condition-side mirror of this row.
+      a condition-side mirror of this row. Pack-year burden is a
+      separate abstracted variable; not included here until a live
+      cohort confirms a concept-name pattern worth matching.
 
   # ----- Diagnosis ----------------------------------------------------
   - category: Diagnosis
@@ -324,12 +324,14 @@ variables:
       document_type_concept_name ILIKE '%chest%' OR
       document_type_concept_name ILIKE '%pulmonary%' OR
       document_type_concept_name ILIKE '%spirometry%' OR
-      document_type_concept_name ILIKE '%PFT%' OR
-      document_type_concept_name ILIKE '%imaging%' OR
-      document_type_concept_name ILIKE '%radiology%'
+      document_type_concept_name ILIKE '%PFT%'
     extraction_type: Unstructured
     notes: >
-      Criteria is deliberately narrow to keep the variable name
-      honest; sites that file PFT reports under a generic "Summary"
-      or "Continuity of Care Document" type will show Implemented=No
-      until a more specific document-type label is available.
+      Criteria restricted to chest-/pulmonary-/spirometry-/PFT-named
+      document types. The broader %imaging% and %radiology% matches
+      from an earlier draft were dropped because they pull in every
+      non-respiratory imaging document (abdominal CT, mammography,
+      musculoskeletal MRI). Sites that file PFT reports under a
+      generic "Summary" or "Continuity of Care Document" type will
+      show Implemented=No until a more specific document-type label
+      is available.

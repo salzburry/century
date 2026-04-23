@@ -58,10 +58,10 @@ Source: `century/ask.pdf` + `century/Adobe Scan 19 Apr 2026.pdf`.
 | 1 | Nira | MS (1 site) | `ms_leaf_nira_registry` | Medium | — | Missing dump | First site we started with |
 | 2 | Nira | MS (all sites) | `nira_ms_cohort` | Medium | — | Missing dump | |
 | 3 | Nira | MG (all sites) | `nira_ms_cohort` | Low | — | Missing dump | Draft ask maps this to the MS schema; confirm before implementation |
-| 4 | Nimbus | COPD | `nimbus_copd_curated` | High | `minbuscopdcurated.pdf` | Dump available | Filename typo (`minbus`); consolidation with Nimbus AZ open |
-| 5 | Nimbus | Asthma | `nimbus_asthma_curated` | High | `nimbusasthmacurated.pdf` | Dump available | |
-| 6 | Nimbus AZ | COPD | `nimbus_az_copd_cohort` | High | `nimbusazcopd.pdf` | Dump available | Abstracted variables (FEV1 etc.) in progress |
-| 7 | Nimbus AZ | Asthma | `nimbus_az_asthma_cohort` | High | `nimbusazasthma.pdf` | Dump available | |
+| 4 | Nimbus | COPD | `nimbus_copd_curated` | High | `minbuscopdcurated.pdf` | Packs committed; awaiting live build | Filename typo (`minbus`); consolidation with Nimbus AZ open |
+| 5 | Nimbus | Asthma | `nimbus_asthma_curated` | High | `nimbusasthmacurated.pdf` | Packs committed; awaiting live build | |
+| 6 | Nimbus AZ | COPD | `nimbus_az_copd_cohort` | High | `nimbusazcopd.pdf` | Packs committed; awaiting live build | Abstracted variables (FEV1 etc.) in progress |
+| 7 | Nimbus AZ | Asthma | `nimbus_az_asthma_cohort` | High | `nimbusazasthma.pdf` | Packs committed; awaiting live build | |
 | 8 | Balboa | Renal | `balboa_ckd_cohort` | High | `balboackd.pdf` | Dump available | |
 | 9 | MTC | Alzheimer's | `mtc_alzheimers_cohort` | High | `mtcalzhiemer.pdf` | Dump available | Filename typo (`alzhiemer`) |
 | 10 | MTC | AAT | `mtc_aat_cohort` | High | `mtcaat.pdf` | Dump available | Anti-amyloid therapies |
@@ -77,6 +77,10 @@ Source: `century/ask.pdf` + `century/Adobe Scan 19 Apr 2026.pdf`.
 ### 2.2 Backlog summary
 
 - 8 of 18 have a raw introspection dump in `Output/`.
+- 6 of those 8 also have committed `packs/cohorts/*.yaml` + variable
+  packs (MTC AAT, MTC Alzheimer's, Nimbus COPD, Nimbus Asthma,
+  Nimbus AZ COPD, Nimbus AZ Asthma). The four Nimbus cohorts are
+  awaiting their first live build + clinical Variables-sheet review.
 - 7 more are runnable once the cohort dump is generated.
 - 3 are blocked on upstream schema provisioning or unresolved metadata.
 
@@ -151,8 +155,14 @@ Explicit so the plan matches the codebase we have.
   HTML / XLSX / JSON renderers.
 - `packs/` directory is committed. Today it carries:
   - `packs/cohorts/mtc_aat.yaml`, `packs/cohorts/mtc_alzheimers.yaml`
+  - `packs/cohorts/nimbus_copd.yaml`,
+    `packs/cohorts/nimbus_asthma.yaml`,
+    `packs/cohorts/nimbus_az_copd.yaml`,
+    `packs/cohorts/nimbus_az_asthma.yaml`
   - `packs/variables/adrd_common.yaml` (shared ADRD base),
     `packs/variables/alzheimers.yaml`, `packs/variables/aat.yaml`
+  - `packs/variables/respiratory_common.yaml` (shared respiratory
+    base), `packs/variables/copd.yaml`, `packs/variables/asthma.yaml`
   - `packs/categories.yaml`, `packs/pii.yaml`,
     `packs/table_descriptions.yaml`, `packs/column_descriptions.yaml`
 - `scripts/validate_packs.py` + `VALIDATION_REPORT.md` — static
@@ -180,9 +190,13 @@ reviewing the generated `Output/<schema>_dictionary.xlsx` per cohort
   clearly labeled as opaque identifiers, not a reviewer-friendly name.
 
 ### 5.3 Still to build
-- Per-disease variable packs beyond Alzheimer's / AAT (COPD, asthma,
-  CKD, MASH, IBD, DR) — clinical curation work per the registry backlog
-  in §2.1.
+- First live Variables-sheet review for the four Nimbus cohorts —
+  confirm exacerbation attribution, FEV1 / FVC / FEV1-FVC ratio
+  abstraction state, Smoking Status / BMI source tables, and the
+  ACT / CAT / mMRC / FeNO / Total IgE rows.
+- Per-disease variable packs beyond Alzheimer's / AAT / COPD /
+  Asthma (CKD, MASH, IBD, DR) — clinical curation work per the
+  registry backlog in §2.1.
 - WeasyPrint PDF renderer (PR 7 in the shipping plan).
 - Schema-drift detection (PR 8).
 - Batch `--all` runner + combined Nimbus / Nimbus AZ views (PR 9).
