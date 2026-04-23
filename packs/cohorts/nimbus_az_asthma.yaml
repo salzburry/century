@@ -1,0 +1,30 @@
+# Cohort pack: Nimbus AZ Asthma
+#
+# Nimbus Arizona-site asthma cohort. Schema name matches the raw dump
+# in Output/nimbusazasthma.pdf.
+
+provider: Nimbus AZ
+disease: Asthma
+display_name: Nimbus AZ Asthma
+cohort_name: nimbus_az_asthma_cohort
+schema_name: nimbus_az_asthma_cohort
+variant: raw
+site_group: Nimbus_AZ
+status: active
+
+description: >
+  Nimbus Arizona-site patients with an asthma diagnosis. Kept
+  provider-separate from the broader Nimbus Asthma cohort per the
+  §1.1 site-consolidation decision.
+
+notes:
+  - Technical dictionary generated from schema introspection.
+  - Variables pack is the shared asthma template, also used by
+    nimbus_asthma. FEV1 / FVC / FEV1-FVC ratio, ACT, and FeNO rows
+    are abstracted and may show Implemented=No until the per-site
+    abstraction pipeline lands.
+
+category_rules: {}
+
+# Variables pack (Page 4) — shared asthma template.
+variables_pack: asthma

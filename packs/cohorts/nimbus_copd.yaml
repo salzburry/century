@@ -1,0 +1,34 @@
+# Cohort pack: Nimbus COPD
+#
+# Nimbus curated COPD cohort (provider-level, excluding Nimbus AZ).
+# Schema name matches the raw dump in Output/minbuscopdcurated.pdf.
+
+provider: Nimbus
+disease: COPD
+display_name: Nimbus COPD
+cohort_name: nimbus_copd_curated
+schema_name: nimbus_copd_curated
+variant: raw
+site_group: Nimbus
+status: active
+
+description: >
+  Nimbus patients with a chronic obstructive pulmonary disease
+  diagnosis. Curated view layered over the Nimbus base warehouse;
+  parallel to nimbus_az_copd_cohort but kept provider-separate per the
+  §1.1 site-consolidation decision.
+
+notes:
+  - Technical dictionary generated from schema introspection.
+  - Variables pack is the shared COPD template, also used by
+    nimbus_az_copd. FEV1 / FVC / FEV1-FVC ratio, CAT, and mMRC rows
+    are abstracted and may show Implemented=No until the chart-review
+    pipeline lands.
+  - Exacerbation row is condition-side only; confirm cohort-specific
+    algorithmic definition before reporting rates.
+
+# Optional table -> Category override. Empty -> use packs/categories.yaml.
+category_rules: {}
+
+# Variables pack (Page 4) — shared COPD template.
+variables_pack: copd

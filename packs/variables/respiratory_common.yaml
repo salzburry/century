@@ -1,0 +1,335 @@
+# Shared respiratory (obstructive airway disease) variable base.
+#
+# Used by packs/variables/copd.yaml and packs/variables/asthma.yaml via
+# `include: [respiratory_common]`. Mirrors the role of adrd_common.yaml
+# for the ADRD packs — covers everything an obstructive-airway cohort
+# dictionary needs that is not disease-specific:
+#
+#   Demographics, Vitals, Observations, Diagnosis, Labs/Biomarkers,
+#   Visits, Reports.
+#
+# Disease-specific packs add rows on top (COPD exacerbations, asthma
+# biologics, disease-specific PFT thresholds). Keep this file narrow —
+# anything that isn't equally meaningful across COPD and asthma belongs
+# in the disease-level pack.
+#
+# Clinical provenance: rows here are drawn from the concept names
+# actually seen in the Nimbus and Nimbus AZ raw dumps (smoking status,
+# peripheral oxygen, spirometry procedure, eosinophils). Variables
+# expected but not yet confirmed in the dumps carry a TODO note so
+# reviewers can decide whether to drop the row or widen the criteria.
+
+variables:
+  # ----- Demographics -------------------------------------------------
+  - category: Demographics
+    variable: Ethnicity
+    description: The patient's self-identified ethnicity, distinguishing Hispanic or Latino origin.
+    table: person
+    column: ethnicity_concept_name
+    extraction_type: Structured
+    notes: Ethnicity is not reliably recorded at many sites.
+
+  - category: Demographics
+    variable: Race
+    description: The patient's self-identified racial category.
+    table: person
+    column: race_concept_name
+    extraction_type: Structured
+    notes: Race is not reliably recorded at many sites.
+
+  - category: Demographics
+    variable: Sex
+    description: The patient's biological sex at birth.
+    table: person
+    column: gender_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Birth Year
+    description: Year the patient was born. Used for age calculation.
+    table: person
+    column: year_of_birth
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: ZIP code (3-digit prefix)
+    description: >
+      First three digits of the patient ZIP code — HIPAA Safe Harbor
+      "large geographic area" generalisation.
+    table: location
+    column: zip
+    expression: LEFT("zip"::text, 3)
+    extraction_type: Structured
+    notes: >
+      Emitted only in the technical audience; redacted by the PII
+      filter for sales and pharma.
+
+  - category: Demographics
+    variable: Payer Type
+    description: Insurance or payer responsible for coverage.
+    table: payer_plan_period
+    column: payer_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Language
+    description: Primary language of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%language%'
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Marital Status
+    description: Marital status of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%marital status%'
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Sexual Orientation
+    description: Sexual orientation of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%sexual orientation%'
+    extraction_type: Structured
+
+  # ----- Vitals -------------------------------------------------------
+  - category: Vitals
+    variable: Blood Pressure
+    description: Sitting blood pressure values taken at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%blood pressure%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Temperature
+    description: Patient temperature taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%temperature%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Heart Rate
+    description: Patient heart rate taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%heart rate%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Oxygen Saturation (SpO2)
+    description: >
+      Peripheral oxygen saturation percentage — key surveillance vital
+      for obstructive airway disease (resting SpO2 guides oxygen-therapy
+      eligibility).
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%O2 saturation%' OR
+      observation_concept_name ILIKE '%oxygen saturation%' OR
+      observation_concept_name ILIKE '%peripheral oxygen%' OR
+      observation_concept_name ILIKE '%SpO2%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Body Weight
+    description: Patient weight taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Patient Height
+    description: Patient height recorded at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%height%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Respiratory Rate
+    description: Patient respiratory rate taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%respiratory rate%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: BMI (Body Mass Index)
+    description: Body mass index — needed for inhaled-corticosteroid risk stratification and biologic eligibility screens.
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%body mass index%' OR
+      observation_concept_name ILIKE '%BMI%'
+    extraction_type: Structured
+    notes: >
+      TODO (clinical review): some sites record BMI in the measurement
+      table instead of observation. If Implemented=No, promote an
+      alternate row on measurement.measurement_concept_name.
+
+  # ----- Observations -------------------------------------------------
+  - category: Observations
+    variable: Allergies
+    description: Observation of patient allergies — relevant to respiratory medication side-effect screens.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%allerg%'
+    extraction_type: Structured
+
+  - category: Observations
+    variable: Smoking Status
+    description: >
+      Current / former / never smoker status. Cohort-defining for COPD
+      and a key asthma control modifier; captured as an observation
+      concept or tobacco-use flag.
+    table: observation
+    column: value_as_concept_name
+    criteria: >
+      observation_concept_name ILIKE '%smoking%' OR
+      observation_concept_name ILIKE '%tobacco use%' OR
+      observation_concept_name ILIKE '%cigarette%' OR
+      observation_concept_name ILIKE '%pack year%' OR
+      observation_concept_name ILIKE '%pack-year%'
+    extraction_type: Structured
+    notes: >
+      TODO (clinical review): some warehouses map smoking status onto
+      condition_occurrence (e.g. "Tobacco use disorder") instead of
+      observation. If Implemented=No for a site, confirm whether to add
+      a condition-side mirror of this row.
+
+  # ----- Diagnosis ----------------------------------------------------
+  - category: Diagnosis
+    variable: Diagnosis
+    description: Medical diagnoses and conditions recorded for the patient.
+    table: condition_occurrence
+    column: condition_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Type
+    description: Source from which the diagnosis was captured.
+    table: condition_occurrence
+    column: condition_type_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Start Date
+    description: Date the condition was first recorded.
+    table: condition_occurrence
+    column: condition_start_date
+    extraction_type: Structured
+
+  # ----- Labs / Biomarkers -------------------------------------------
+  # Eosinophils are shared between COPD (exacerbation/biologic
+  # stratification) and asthma (T2-high phenotype), so the row lives
+  # here rather than in either disease pack. IgE and FeNO stay in
+  # asthma.yaml because they don't play the same role in COPD.
+  - category: Labs / Biomarkers
+    variable: Blood Eosinophils
+    description: >
+      Absolute or percentage eosinophil count from peripheral blood —
+      type-2 inflammation marker used to triage biologic eligibility
+      and to predict ICS response in COPD.
+    table: measurement
+    column: value_as_number
+    criteria: >
+      measurement_concept_name ILIKE '%eosinophil%' AND
+      (measurement_concept_name ILIKE '%blood%' OR
+       measurement_concept_name ILIKE '%CBC%' OR
+       measurement_concept_name ILIKE '%differential%' OR
+       measurement_concept_name ILIKE '%absolute%' OR
+       measurement_concept_name ILIKE '%percent%' OR
+       measurement_concept_name ILIKE '%#%')
+    extraction_type: Structured
+    notes: >
+      Criteria requires both "eosinophil" and a blood/CBC/differential
+      qualifier to avoid matching sputum-eosinophil or tissue-biopsy
+      eosinophil concept names. Widen carefully if a site records
+      eosinophil counts without a qualifier column.
+
+  # ----- Visits -------------------------------------------------------
+  - category: Visits
+    variable: Visit Type
+    description: Type of healthcare visit or encounter.
+    table: visit_occurrence
+    column: visit_concept_name
+    extraction_type: Structured
+
+  - category: Visits
+    variable: Visit Date
+    description: Start date of each visit.
+    table: visit_occurrence
+    column: visit_start_date
+    extraction_type: Structured
+
+  # ----- Procedures --------------------------------------------------
+  # Spirometry / PFT is the shared procedural anchor for both COPD and
+  # asthma. FEV1 / FVC values themselves come through the measurement
+  # or observation tables and live in the disease-specific packs
+  # because the interpretation differs between COPD (ratio + severity
+  # staging) and asthma (reversibility + control).
+  - category: Procedures
+    variable: Spirometry / Pulmonary Function Test (Procedure)
+    description: >
+      CPT / HCPCS-mapped pulmonary function procedures — spirometry,
+      diffusing-capacity (DLCO), lung-volume studies. Anchors where a
+      PFT was performed; the FEV1 / FVC values are captured separately
+      in each disease pack.
+    table: procedure_occurrence
+    column: procedure_concept_name
+    criteria: >
+      procedure_concept_name ILIKE '%spirometry%' OR
+      procedure_concept_name ILIKE '%pulmonary function%' OR
+      procedure_concept_name ILIKE '%PFT%' OR
+      procedure_concept_name ILIKE '%diffusing capacity%' OR
+      procedure_concept_name ILIKE '%lung volume%' OR
+      procedure_concept_name ILIKE '%bronchodilator responsiveness%'
+    extraction_type: Structured
+
+  - category: Procedures
+    variable: Pulse Oximetry (Procedure)
+    description: Non-invasive peripheral oxygen saturation measurement, when billed as a distinct procedure.
+    table: procedure_occurrence
+    column: procedure_concept_name
+    criteria: >
+      procedure_concept_name ILIKE '%pulse oximetry%' OR
+      procedure_concept_name ILIKE '%oximetry%' OR
+      procedure_concept_name ILIKE '%blood oxygen level%'
+    extraction_type: Structured
+
+  # ----- Reports ------------------------------------------------------
+  - category: Reports
+    variable: Clinical Note
+    description: Free text of the office-visit clinical note.
+    table: note
+    column: note_text
+    extraction_type: Unstructured
+
+  - category: Reports
+    variable: Document (Chest imaging / PFT report)
+    description: >
+      Scanned or attached report documents — chest X-ray, chest CT, and
+      pulmonary-function-test reports. Restricted to respiratory-
+      relevant document types; note text is summarised separately under
+      Clinical Note.
+    table: document
+    column: document_type_concept_name
+    criteria: >
+      document_type_concept_name ILIKE '%chest%' OR
+      document_type_concept_name ILIKE '%pulmonary%' OR
+      document_type_concept_name ILIKE '%spirometry%' OR
+      document_type_concept_name ILIKE '%PFT%' OR
+      document_type_concept_name ILIKE '%imaging%' OR
+      document_type_concept_name ILIKE '%radiology%'
+    extraction_type: Unstructured
+    notes: >
+      Criteria is deliberately narrow to keep the variable name
+      honest; sites that file PFT reports under a generic "Summary"
+      or "Continuity of Care Document" type will show Implemented=No
+      until a more specific document-type label is available.
