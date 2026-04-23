@@ -1296,6 +1296,39 @@ class RespiratoryPackCurationTests(unittest.TestCase):
                     f"(peripheral oxygen is how Nimbus records it)",
                 )
 
+    # -- Nimbus COPD ships a cohort-specific `eosinophil_standardized`
+    # abstraction table. copd.yaml must expose the curated row alongside
+    # the shared measurement-table row so Nimbus COPD surfaces its
+    # abstracted data and sites that record eosinophils as ordinary lab
+    # measurements still hit the shared respiratory_common row.
+    def test_copd_ships_standardized_eosinophil_row_alongside_measurement_row(self):
+        labs = [v for v in _all_variables_for("copd")
+                if v.get("category") == "Labs / Biomarkers"]
+        names = [v.get("variable") for v in labs]
+        self.assertIn(
+            "Blood Eosinophils", names,
+            "measurement-table eosinophil row from respiratory_common "
+            "must remain so non-curated sites still surface a hit",
+        )
+        self.assertIn(
+            "Blood Eosinophils (Standardized, Nimbus curated)", names,
+            "copd.yaml must ship a second eosinophil row pointing at "
+            "the Nimbus-curated `eosinophil_standardized` abstraction table",
+        )
+        std = next(v for v in labs
+                   if v["variable"] == "Blood Eosinophils (Standardized, Nimbus curated)")
+        self.assertEqual(std.get("table"), "eosinophil_standardized")
+        self.assertEqual(std.get("column"), "value_as_number")
+        # Asthma pack must NOT get this row — the curated table only
+        # exists in the Nimbus COPD schema at the moment.
+        asthma_names = [v.get("variable") for v in _all_variables_for("asthma")]
+        self.assertNotIn(
+            "Blood Eosinophils (Standardized, Nimbus curated)", asthma_names,
+            "asthma.yaml must not inherit the Nimbus-COPD-curated "
+            "standardized eosinophil row (the table isn't present in "
+            "the asthma cohorts)",
+        )
+
     # -- FEV1 criteria is narrow enough not to match HFEV-like strings.
     # Regression guard: an earlier draft had `%FEV1%` only which is fine,
     # but the `forced expiratory volume%1%` clause must keep the anchor

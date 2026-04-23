@@ -198,6 +198,33 @@ variables:
   # is the measurement table). The README flags these as abstracted-
   # variables-in-progress for Nimbus AZ, so we ship them as Abstracted
   # and accept Implemented=No until the chart-review pipeline lands.
+  #
+  # Blood eosinophils come from the shared respiratory_common row
+  # (measurement table). The Nimbus COPD curated cohort also ships a
+  # dedicated `eosinophil_standardized` abstraction table, mirrored as
+  # a second row below so Nimbus COPD surfaces its curated data while
+  # sites that record eosinophils as lab measurements still hit the
+  # respiratory_common row.
+  - category: Labs / Biomarkers
+    variable: Blood Eosinophils (Standardized, Nimbus curated)
+    description: >
+      Absolute blood eosinophil count from the Nimbus curated
+      abstraction pipeline. Parallel to the shared "Blood Eosinophils"
+      row — this one points at the dedicated `eosinophil_standardized`
+      table that the Nimbus COPD curated cohort ships instead of raw
+      measurement rows.
+    table: eosinophil_standardized
+    column: value_as_number
+    extraction_type: Structured
+    notes: >
+      Table is Nimbus-COPD-curated-only (confirmed in
+      Output/minbuscopdcurated.pdf). Nimbus AZ COPD will show
+      Implemented=No because its schema does not ship this
+      abstracted table; that's the expected shape, not a bug. Kept
+      alongside the measurement-table row rather than replacing it
+      so sites recording eosinophils as ordinary lab measurements
+      still surface a hit.
+
   - category: Labs / Biomarkers
     variable: FEV1 (Forced Expiratory Volume in 1 second)
     description: >

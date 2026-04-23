@@ -71,6 +71,13 @@ tables:
   care_site: >
     Care-site (clinic / hospital) directory. OMOP CARE_SITE table.
 
+  eosinophil_standardized: >
+    Cohort-local abstraction table holding standardised absolute
+    blood eosinophil counts produced by the Nimbus curated pipeline.
+    Parallel to measurement rows; surfaced on Page 4 as "Blood
+    Eosinophils (Standardized, Nimbus curated)". Present only in
+    nimbus_copd_curated at time of writing.
+
   standard_profile_data_model: >
     Flat per-patient profile export — name, DOB, address, NPIs,
     fact-of-death, result codes. Carries PII; redacted in sales /
