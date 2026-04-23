@@ -1,0 +1,345 @@
+# Shared ADRD (Alzheimer's Disease and Related Dementias) variable base.
+#
+# Used by both packs/variables/alzheimers.yaml and packs/variables/aat.yaml
+# via `include: [adrd_common]`. Covers everything a neurodegenerative-
+# disease cohort dictionary needs that is not disease-specific:
+#
+#   Demographics, Vitals, Observations, Diagnosis, Biomarkers/Labs,
+#   Visits, Outcomes, Reports.
+#
+# Disease-specific packs add rows on top (Alzheimer's-era medications,
+# anti-amyloid therapy, ARIA-H/ARIA-E, etc.). Keep this file narrow —
+# anything that isn't equally meaningful across ADRD cohorts belongs
+# in the disease-level pack.
+
+variables:
+  # ----- Demographics -------------------------------------------------
+  - category: Demographics
+    variable: Ethnicity
+    description: The patient's self-identified ethnicity, distinguishing Hispanic or Latino origin.
+    table: person
+    column: ethnicity_concept_name
+    extraction_type: Structured
+    notes: Ethnicity is not reliably recorded at many sites; assessing ways to infer.
+
+  - category: Demographics
+    variable: Race
+    description: The patient's self-identified racial category.
+    table: person
+    column: race_concept_name
+    extraction_type: Structured
+    notes: Race is not reliably recorded at many sites.
+
+  - category: Demographics
+    variable: Sex
+    description: The patient's biological sex at birth.
+    table: person
+    column: gender_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Birth Year
+    description: Year the patient was born. Used for age calculation.
+    table: person
+    column: year_of_birth
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: ZIP code (3-digit prefix)
+    description: >
+      First three digits of the patient ZIP code — HIPAA Safe Harbor
+      "large geographic area" generalisation.
+    table: location
+    column: zip
+    expression: LEFT("zip"::text, 3)
+    extraction_type: Structured
+    notes: >
+      Emitted only in the technical audience; redacted by the PII
+      filter for sales and pharma.
+
+  - category: Demographics
+    variable: Payer Type
+    description: Insurance or payer responsible for coverage.
+    table: payer_plan_period
+    column: payer_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Language
+    description: Primary language of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%language%'
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Marital Status
+    description: Marital status of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%marital status%'
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Sexual Orientation
+    description: Sexual orientation of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%sexual orientation%'
+    extraction_type: Structured
+
+  # ----- Vitals -------------------------------------------------------
+  - category: Vitals
+    variable: Blood Pressure
+    description: Sitting blood pressure values taken at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%blood pressure%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Temperature
+    description: Patient temperature taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%temperature%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Heart Rate
+    description: Patient heart rate taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%heart rate%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Oxygen Saturation
+    description: Peripheral oxygen saturation percentage.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%O2 saturation%' OR observation_concept_name ILIKE '%oxygen saturation%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Body Weight
+    description: Patient weight taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Patient Height
+    description: Patient height recorded at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%height%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Respiratory Rate
+    description: Patient respiratory rate taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%respiratory rate%'
+    extraction_type: Structured
+
+  # ----- Observations -------------------------------------------------
+  - category: Observations
+    variable: Allergies
+    description: Observation of patient allergies.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%allerg%'
+    extraction_type: Structured
+
+  # ----- Diagnosis ----------------------------------------------------
+  - category: Diagnosis
+    variable: Diagnosis
+    description: Medical diagnoses and conditions recorded for the patient.
+    table: condition_occurrence
+    column: condition_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Type
+    description: Source from which the diagnosis was captured.
+    table: condition_occurrence
+    column: condition_type_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Start Date
+    description: Date the condition was first recorded.
+    table: condition_occurrence
+    column: condition_start_date
+    extraction_type: Structured
+
+  # ----- Labs / Biomarkers -------------------------------------------
+  # Category label matches packs/categories.yaml exactly ("Labs /
+  # Biomarkers"). Earlier packs used "Biomarkers / Labs" — pinned to
+  # the categories.yaml spelling so Columns and Variables pages line
+  # up in print.
+  - category: Labs / Biomarkers
+    variable: APOE Genotype
+    description: APOE allele status from genotyping.
+    table: measurement
+    column: value_as_concept_name
+    criteria: measurement_concept_name ILIKE '%APOE%' OR measurement_concept_name ILIKE '%apolipoprotein%'
+    extraction_type: Structured
+    notes: Key inclusion/exclusion variable for anti-amyloid therapy eligibility.
+
+  - category: Labs / Biomarkers
+    variable: Amyloid-beta 42 (A-beta 42)
+    description: Measures amyloid-beta 42 peptide in plasma or CSF.
+    table: measurement
+    column: value_as_number
+    criteria: measurement_concept_name ILIKE '%amyloid beta 42%' OR measurement_concept_name ILIKE '%Abeta 42%' OR measurement_concept_name ILIKE '%AB 42%' OR measurement_concept_name ILIKE '%A%42%'
+    extraction_type: Structured
+
+  - category: Labs / Biomarkers
+    variable: Amyloid-beta 40 (A-beta 40)
+    description: Measures amyloid-beta 40 peptide.
+    table: measurement
+    column: value_as_number
+    criteria: measurement_concept_name ILIKE '%amyloid beta 40%' OR measurement_concept_name ILIKE '%AB 40%' OR measurement_concept_name ILIKE '%A%40%'
+    extraction_type: Structured
+
+  - category: Labs / Biomarkers
+    variable: GFAP
+    description: Glial fibrillary acidic protein — astrocyte activation / neuroinflammation marker.
+    table: measurement
+    column: value_as_number
+    criteria: measurement_concept_name ILIKE '%GFAP%' OR measurement_concept_name ILIKE '%fibrillary acidic%' OR measurement_concept_name ILIKE '%glial fibrillary%'
+    extraction_type: Structured
+
+  - category: Labs / Biomarkers
+    variable: p-Tau-181
+    description: Phosphorylated tau at position 181 — Alzheimer's biomarker.
+    table: measurement
+    column: value_as_number
+    criteria: measurement_concept_name ILIKE '%pTau-181%' OR measurement_concept_name ILIKE '%p-Tau 181%' OR measurement_concept_name ILIKE '%phosphorylated tau%181%'
+    extraction_type: Structured
+
+  - category: Labs / Biomarkers
+    variable: p-Tau-217
+    description: Phosphorylated tau at position 217 — Alzheimer's biomarker.
+    table: measurement
+    column: value_as_number
+    criteria: measurement_concept_name ILIKE '%pTau-217%' OR measurement_concept_name ILIKE '%p-Tau 217%' OR measurement_concept_name ILIKE '%phosphorylated tau%217%'
+    extraction_type: Structured
+
+  - category: Labs / Biomarkers
+    variable: Neurofilament Light Chain (NfL)
+    description: NfL in blood — axonal injury / neurodegeneration marker.
+    table: measurement
+    column: value_as_number
+    criteria: measurement_concept_name ILIKE '%neurofilament%' OR measurement_concept_name ILIKE '%NfL%'
+    extraction_type: Structured
+
+  # ----- Visits -------------------------------------------------------
+  - category: Visits
+    variable: Visit Type
+    description: Type of healthcare visit or encounter.
+    table: visit_occurrence
+    column: visit_concept_name
+    extraction_type: Structured
+
+  - category: Visits
+    variable: Visit Date
+    description: Start date of each visit.
+    table: visit_occurrence
+    column: visit_start_date
+    extraction_type: Structured
+
+  # ----- Outcomes (cognitive assessments — abstracted) ---------------
+  - category: Outcomes
+    variable: MoCA
+    description: Montreal Cognitive Assessment — brief screening test for cognitive dysfunction.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%MoCA%' OR observation_concept_name ILIKE '%Montreal Cognitive%'
+    extraction_type: Abstracted
+    notes: Estimates based on NLP of clinical text with manual validation.
+
+  - category: Outcomes
+    variable: MMSE
+    description: Mini-Mental State Examination — short cognitive test.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%MMSE%' OR observation_concept_name ILIKE '%Mini-Mental%'
+    extraction_type: Abstracted
+
+  - category: Outcomes
+    variable: FAQ
+    description: Functional Activities Questionnaire — informant-based functional ability.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%FAQ%' OR observation_concept_name ILIKE '%Functional Activities%'
+    extraction_type: Abstracted
+
+  - category: Outcomes
+    variable: CDR
+    description: Clinical Dementia Rating — clinician-rated severity scale.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%CDR%' OR observation_concept_name ILIKE '%Clinical Dementia Rating%'
+    extraction_type: Abstracted
+
+  - category: Outcomes
+    variable: ADL
+    description: Activities of daily living — whether the patient can perform self-care tasks independently.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%ADL%' OR observation_concept_name ILIKE '%activities of daily living%'
+    extraction_type: Structured
+
+  - category: Outcomes
+    variable: Dementia Severity Rating Scale
+    description: 12-item informant-based questionnaire assessing dementia severity.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%Dementia Severity Rating%' OR observation_concept_name ILIKE '%DSRS%'
+    extraction_type: Abstracted
+
+  - category: Outcomes
+    variable: ADAS-Cog
+    description: Alzheimer's Disease Assessment Scale — Cognitive subscale.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%ADAS-Cog%' OR observation_concept_name ILIKE '%ADAS Cog%'
+    extraction_type: Abstracted
+
+  # ----- Reports ------------------------------------------------------
+  - category: Reports
+    variable: Clinical Note
+    description: Free text of the office-visit clinical note.
+    table: note
+    column: note_text
+    extraction_type: Unstructured
+
+  - category: Reports
+    variable: Document (MRI / PET / EEG)
+    description: Scanned or attached report documents — MRI, PET, EEG and related imaging reports.
+    table: document
+    column: document_type_concept_name
+    # Restrict to imaging / brain-report document types so the variable
+    # name stays honest. Without this criteria the row would summarise
+    # every document type including rooming charts and lab printouts.
+    criteria: >
+      document_type_concept_name ILIKE '%MRI%' OR
+      document_type_concept_name ILIKE '%PET%' OR
+      document_type_concept_name ILIKE '%EEG%' OR
+      document_type_concept_name ILIKE '%imaging%' OR
+      document_type_concept_name ILIKE '%CT%' OR
+      document_type_concept_name ILIKE '%neuroimaging%'
+    extraction_type: Unstructured
+
+  - category: Reports
+    variable: PET Scan Result
+    description: Indication of positive / negative PET scan result.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%PET%scan%result%' OR observation_concept_name ILIKE '%amyloid PET%'
+    extraction_type: Abstracted

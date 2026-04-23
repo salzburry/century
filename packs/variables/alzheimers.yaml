@@ -1,188 +1,25 @@
-# Page 4 — Variables for Alzheimer's cohorts.
+# Alzheimer's-specific variable pack.
 #
-# Shape: each entry is a Page-4 row. The script joins the `criteria`
-# against the cohort schema at runtime to populate Values, Distribution,
-# % Patient, and Extraction Type.
+# Inherits the shared ADRD common base and adds rows that are
+# meaningful for the general Alzheimer's / dementia cohort but not
+# for the anti-amyloid-therapy (AAT) subset:
 #
-# `criteria` is a SQL WHERE fragment applied to the named `table`;
-# ILIKE matching is used by default so the same pack works across
-# providers with slightly different concept name spellings.
+#   - generic symptomatic medications (donepezil, rivastigmine,
+#     memantine) and route
+#   - generic ARIA observation (no microhemorrhage / edema split —
+#     that level of detail lives in aat.yaml)
 #
-# Variables without a criteria match in the target cohort render with
-# Distribution empty and Implemented = No.
+# Anti-amyloid infusion therapy, ARIA-H, and ARIA-E rows live in
+# aat.yaml because they only apply to the on-therapy subset.
+
+include:
+  - adrd_common
 
 variables:
-  # ----- Demographics -------------------------------------------------
-  - category: Demographics
-    variable: Ethnicity
-    description: The patient's self-identified ethnicity, distinguishing Hispanic or Latino origin.
-    table: person
-    column: ethnicity_concept_name
-    extraction_type: Structured
-    notes: Ethnicity is not reliably recorded at many sites; assessing ways to infer.
-
-  - category: Demographics
-    variable: Race
-    description: The patient's self-identified racial category.
-    table: person
-    column: race_concept_name
-    extraction_type: Structured
-    notes: Race is not reliably recorded at many sites.
-
-  - category: Demographics
-    variable: Sex
-    description: The patient's biological sex at birth.
-    table: person
-    column: gender_concept_name
-    extraction_type: Structured
-
-  - category: Demographics
-    variable: Birth Year
-    description: Year the patient was born. Used for age calculation.
-    table: person
-    column: year_of_birth
-    extraction_type: Structured
-
-  - category: Demographics
-    variable: ZIP code (3-digit prefix)
-    description: >
-      First three digits of the patient ZIP code — HIPAA Safe Harbor
-      "large geographic area" generalisation.
-    table: location
-    column: zip
-    # `expression` is used in the SQL so the output is actually the
-    # 3-digit rollup, not the full ZIP. The raw column still appears
-    # in the Column(s) display cell. `location.zip` is PII-tagged in
-    # packs/pii.yaml, so this row is dropped from sales / pharma.
-    expression: LEFT("zip"::text, 3)
-    extraction_type: Structured
-    notes: >
-      Emitted only in the technical audience; redacted by the PII
-      filter for sales and pharma.
-
-  - category: Demographics
-    variable: Payer Type
-    description: Insurance or payer responsible for coverage.
-    table: payer_plan_period
-    column: payer_concept_name
-    extraction_type: Structured
-
-  - category: Demographics
-    variable: Language
-    description: Primary language of the patient.
-    table: observation
-    column: value_as_concept_name
-    criteria: observation_concept_name ILIKE '%language%'
-    extraction_type: Structured
-
-  - category: Demographics
-    variable: Marital Status
-    description: Marital status of the patient.
-    table: observation
-    column: value_as_concept_name
-    criteria: observation_concept_name ILIKE '%marital status%'
-    extraction_type: Structured
-
-  - category: Demographics
-    variable: Sexual Orientation
-    description: Sexual orientation of the patient.
-    table: observation
-    column: value_as_concept_name
-    criteria: observation_concept_name ILIKE '%sexual orientation%'
-    extraction_type: Structured
-
-  # ----- Vitals -------------------------------------------------------
-  - category: Vitals
-    variable: Blood Pressure
-    description: Sitting blood pressure values taken at the office visit.
-    table: observation
-    column: value_as_string
-    criteria: observation_concept_name ILIKE '%blood pressure%'
-    extraction_type: Structured
-
-  - category: Vitals
-    variable: Temperature
-    description: Patient temperature taken at the office visit.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%temperature%'
-    extraction_type: Structured
-
-  - category: Vitals
-    variable: Heart Rate
-    description: Patient heart rate taken at the office visit.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%heart rate%'
-    extraction_type: Structured
-
-  - category: Vitals
-    variable: Oxygen Saturation
-    description: Peripheral oxygen saturation percentage.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%O2 saturation%' OR observation_concept_name ILIKE '%oxygen saturation%'
-    extraction_type: Structured
-
-  - category: Vitals
-    variable: Body Weight
-    description: Patient weight taken at the office visit.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
-    extraction_type: Structured
-
-  - category: Vitals
-    variable: Patient Height
-    description: Patient height recorded at the office visit.
-    table: observation
-    column: value_as_string
-    criteria: observation_concept_name ILIKE '%height%'
-    extraction_type: Structured
-
-  - category: Vitals
-    variable: Respiratory Rate
-    description: Patient respiratory rate taken at the office visit.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%respiratory rate%'
-    extraction_type: Structured
-
-  # ----- Observations -------------------------------------------------
-  - category: Observations
-    variable: Allergies
-    description: Observation of patient allergies.
-    table: observation
-    column: value_as_concept_name
-    criteria: observation_concept_name ILIKE '%allerg%'
-    extraction_type: Structured
-
-  # ----- Diagnosis ----------------------------------------------------
-  - category: Diagnosis
-    variable: Diagnosis
-    description: Medical diagnoses and conditions recorded for the patient.
-    table: condition_occurrence
-    column: condition_concept_name
-    extraction_type: Structured
-
-  - category: Diagnosis
-    variable: Diagnosis Type
-    description: Source from which the diagnosis was captured.
-    table: condition_occurrence
-    column: condition_type_concept_name
-    extraction_type: Structured
-
-  - category: Diagnosis
-    variable: Diagnosis Start Date
-    description: Date the condition was first recorded.
-    table: condition_occurrence
-    column: condition_start_date
-    extraction_type: Structured
-
-  # ----- Medications --------------------------------------------------
+  # ----- Medications (symptomatic ADRD therapy) ----------------------
   - category: Medications
     variable: Medication (Prescription)
-    description: Medications prescribed to the patient.
+    description: Symptomatic medications prescribed to the patient (cholinesterase inhibitors, NMDA antagonists, common co-medications).
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_type_concept_name ILIKE '%prescription%'
@@ -190,7 +27,7 @@ variables:
 
   - category: Medications
     variable: Medication (Administration)
-    description: Medications administered (EHR administration record).
+    description: Medications administered to the patient (EHR administration record).
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_type_concept_name ILIKE '%administration%'
@@ -203,172 +40,17 @@ variables:
     column: route_concept_name
     extraction_type: Structured
 
-  # ----- Biomarkers / Labs -------------------------------------------
-  - category: Biomarkers / Labs
-    variable: APOE Genotype
-    description: APOE allele status from genotyping.
-    table: measurement
-    column: value_as_concept_name
-    criteria: measurement_concept_name ILIKE '%APOE%'
-    extraction_type: Structured
-    notes: Key inclusion/exclusion variable for anti-amyloid therapy eligibility.
-
-  - category: Biomarkers / Labs
-    variable: Amyloid-beta 42 (A-beta 42)
-    description: Measures amyloid-beta 42 peptide in plasma or CSF.
-    table: measurement
-    column: value_as_number
-    criteria: measurement_concept_name ILIKE '%amyloid beta 42%' OR measurement_concept_name ILIKE '%Abeta 42%' OR measurement_concept_name ILIKE '%AB 42%'
-    extraction_type: Structured
-
-  - category: Biomarkers / Labs
-    variable: Amyloid-beta 40 (A-beta 40)
-    description: Measures amyloid-beta 40 peptide.
-    table: measurement
-    column: value_as_number
-    criteria: measurement_concept_name ILIKE '%amyloid beta 40%' OR measurement_concept_name ILIKE '%AB 40%'
-    extraction_type: Structured
-
-  - category: Biomarkers / Labs
-    variable: GFAP
-    description: Glial fibrillary acidic protein — astrocyte activation / neuroinflammation marker.
-    table: measurement
-    column: value_as_number
-    criteria: measurement_concept_name ILIKE '%GFAP%'
-    extraction_type: Structured
-
-  - category: Biomarkers / Labs
-    variable: p-Tau-181
-    description: Phosphorylated tau at position 181 — Alzheimer's biomarker.
-    table: measurement
-    column: value_as_number
-    criteria: measurement_concept_name ILIKE '%pTau-181%' OR measurement_concept_name ILIKE '%p-Tau 181%' OR measurement_concept_name ILIKE '%phosphorylated tau%181%'
-    extraction_type: Structured
-
-  - category: Biomarkers / Labs
-    variable: p-Tau-217
-    description: Phosphorylated tau at position 217 — Alzheimer's biomarker.
-    table: measurement
-    column: value_as_number
-    criteria: measurement_concept_name ILIKE '%pTau-217%' OR measurement_concept_name ILIKE '%p-Tau 217%' OR measurement_concept_name ILIKE '%phosphorylated tau%217%'
-    extraction_type: Structured
-
-  - category: Biomarkers / Labs
-    variable: Neurofilament Light Chain (NfL)
-    description: NfL in blood — axonal injury / neurodegeneration marker.
-    table: measurement
-    column: value_as_number
-    criteria: measurement_concept_name ILIKE '%neurofilament%' OR measurement_concept_name ILIKE '%NfL%'
-    extraction_type: Structured
-
-  - category: Biomarkers / Labs
-    variable: Other Laboratory Measurements
-    description: Catch-all for other lab measurements.
-    table: measurement
-    column: value_as_number
-    extraction_type: Structured
-
-  # ----- Visits -------------------------------------------------------
-  - category: Visits
-    variable: Visit Type
-    description: Type of healthcare visit or encounter.
-    table: visit_occurrence
-    column: visit_concept_name
-    extraction_type: Structured
-
-  - category: Visits
-    variable: Visit Date
-    description: Start date of each visit.
-    table: visit_occurrence
-    column: visit_start_date
-    extraction_type: Structured
-
-  # ----- Outcomes (cognitive assessments — abstracted) ---------------
-  - category: Outcomes
-    variable: MoCA
-    description: Montreal Cognitive Assessment — brief screening test for cognitive dysfunction.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%MoCA%' OR observation_concept_name ILIKE '%Montreal Cognitive%'
-    extraction_type: Abstracted
-    notes: Estimates based on NLP of clinical text with manual validation.
-
-  - category: Outcomes
-    variable: MMSE
-    description: Mini-Mental State Examination — short cognitive test.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%MMSE%' OR observation_concept_name ILIKE '%Mini-Mental%'
-    extraction_type: Abstracted
-
-  - category: Outcomes
-    variable: FAQ
-    description: Functional Activities Questionnaire — informant-based functional ability.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%FAQ%' OR observation_concept_name ILIKE '%Functional Activities%'
-    extraction_type: Abstracted
-
-  - category: Outcomes
-    variable: CDR
-    description: Clinical Dementia Rating — clinician-rated severity scale.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%CDR%' OR observation_concept_name ILIKE '%Clinical Dementia Rating%'
-    extraction_type: Abstracted
-
-  - category: Outcomes
-    variable: ADL
-    description: Activities of daily living — whether the patient can perform self-care tasks independently.
-    table: observation
-    column: value_as_concept_name
-    criteria: observation_concept_name ILIKE '%ADL%' OR observation_concept_name ILIKE '%activities of daily living%'
-    extraction_type: Structured
-
-  - category: Outcomes
-    variable: Dementia Severity Rating Scale
-    description: 12-item informant-based questionnaire assessing dementia severity.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%Dementia Severity Rating%' OR observation_concept_name ILIKE '%DSRS%'
-    extraction_type: Abstracted
-
-  - category: Outcomes
-    variable: ADAS-Cog
-    description: Alzheimer's Disease Assessment Scale — Cognitive subscale.
-    table: observation
-    column: value_as_number
-    criteria: observation_concept_name ILIKE '%ADAS-Cog%' OR observation_concept_name ILIKE '%ADAS Cog%'
-    extraction_type: Abstracted
-
+  # ----- Outcomes ----------------------------------------------------
+  # Generic ARIA observation — AAT cohorts get a more specific split
+  # in aat.yaml (ARIA-H microhemorrhage / ARIA-E edema). Matches
+  # anywhere in the concept name (`%ARIA%`) so warehouses that store
+  # labels like "MRI finding - ARIA-H" or "Amyloid-related imaging
+  # abnormality ARIA-E" aren't missed.
   - category: Outcomes
     variable: ARIA
     description: Amyloid-related imaging abnormality — indicator of amyloid-therapy safety events.
     table: observation
     column: value_as_concept_name
-    criteria: observation_concept_name ILIKE 'ARIA%'
+    criteria: observation_concept_name ILIKE '%ARIA%'
     extraction_type: Structured
-    notes: ARIA-H (microhemorrhage) and ARIA-E (edema) tracked together.
-
-  # ----- Reports ------------------------------------------------------
-  - category: Reports
-    variable: Clinical Note
-    description: Free text of the office-visit clinical note.
-    table: note
-    column: note_text
-    extraction_type: Unstructured
-
-  - category: Reports
-    variable: Document (MRI / PET / EEG)
-    description: Scanned or attached report documents — MRI, PET, EEG, and related imaging reports.
-    table: document
-    column: document_type_concept_name
-    extraction_type: Unstructured
-
-  - category: Reports
-    variable: PET Scan Result
-    description: Indication of positive / negative PET scan result.
-    table: observation
-    column: value_as_concept_name
-    criteria: observation_concept_name ILIKE '%PET%scan%result%'
-    extraction_type: Abstracted
+    notes: ARIA-H (microhemorrhage) and ARIA-E (edema) split out in aat.yaml.

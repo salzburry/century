@@ -45,3 +45,19 @@ categories:
     tables: [provider, care_site]
 
   Other: {}    # catch-all, populated at runtime
+
+
+# Variables-page-only categories — clinical groupings that don't map
+# 1:1 to a warehouse table, so they don't belong in the table-keyed
+# map above. The validator allows any label appearing in either
+# `categories:` (table-mapped) or `variable_only_categories:` to be
+# used on a Page-4 variable row.
+#
+# Example: `Vitals` variables live in the `observation` table
+# (which on Page 3 shows Category = Observations) but on Page 4 they
+# roll up under the clinical concept "Vitals".
+variable_only_categories:
+  - Vitals
+  - Outcomes
+  - Infusions
+

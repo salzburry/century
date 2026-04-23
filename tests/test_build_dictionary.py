@@ -726,5 +726,215 @@ class VariablesHeadersTests(unittest.TestCase):
         self.assertIn("Table", headers)
 
 
+# --------------------------------------------------------------------- #
+# Pack curation — split into adrd_common + disease-specific, widened
+# ARIA match, tightened Document criteria, dropped catch-all lab row,
+# mirrored brand/generic matching on AAT administration, added
+# annotation on anti-amyloid procedure row.
+# --------------------------------------------------------------------- #
+
+
+def _load_yaml(relpath: str) -> dict:
+    import yaml
+    return yaml.safe_load((REPO_ROOT / relpath).read_text(encoding="utf-8"))
+
+
+def _all_variables_for(pack_slug: str) -> list[dict]:
+    """Resolve a variables pack's transitive include list."""
+    seen: set[str] = set()
+
+    def _resolve(slug: str) -> list[dict]:
+        if slug in seen:
+            return []
+        seen.add(slug)
+        data = _load_yaml(f"packs/variables/{slug}.yaml")
+        out: list[dict] = []
+        for inc in data.get("include") or []:
+            out.extend(_resolve(inc))
+        out.extend(data.get("variables") or [])
+        return out
+
+    return _resolve(pack_slug)
+
+
+class PackSplitTests(unittest.TestCase):
+
+    def test_adrd_common_exists_and_is_shared(self):
+        adrd = _load_yaml("packs/variables/adrd_common.yaml")
+        # adrd_common carries its own variables and does not include anything.
+        self.assertIn("variables", adrd)
+        self.assertFalse(adrd.get("include"))
+        self.assertGreater(len(adrd["variables"]), 30)
+
+    def test_alzheimers_includes_adrd_common(self):
+        alz = _load_yaml("packs/variables/alzheimers.yaml")
+        self.assertEqual(alz.get("include"), ["adrd_common"])
+
+    def test_aat_includes_adrd_common_not_alzheimers(self):
+        aat = _load_yaml("packs/variables/aat.yaml")
+        self.assertIn("adrd_common", aat.get("include", []))
+        self.assertNotIn("alzheimers", aat.get("include", []),
+                         "AAT must not transitively pull Alzheimer's-only "
+                         "rows (that's what caused the duplicate Medications")
+
+    def test_no_duplicate_variables_in_either_cohort(self):
+        for slug in ("alzheimers", "aat"):
+            all_vars = _all_variables_for(slug)
+            keys = [(v.get("category"), v.get("variable")) for v in all_vars]
+            dupes = [k for k in set(keys) if keys.count(k) > 1]
+            self.assertEqual(dupes, [],
+                             f"duplicate (category, variable) in {slug}: {dupes}")
+
+
+class PackCurationFixTests(unittest.TestCase):
+
+    def _find_variable(self, pack_slug: str, name: str) -> dict:
+        for v in _all_variables_for(pack_slug):
+            if v.get("variable") == name:
+                return v
+        self.fail(f"variable {name!r} not found in {pack_slug}")
+
+    # -- P2: ARIA criteria must use %ARIA% (not prefix-only ARIA%).
+    def test_aria_uses_fuzzy_match_not_prefix(self):
+        aria_aat_h = self._find_variable("aat", "ARIA-H (microhemorrhage)")
+        aria_aat_e = self._find_variable("aat", "ARIA-E (edema)")
+        aria_alz = self._find_variable("alzheimers", "ARIA")
+        for v in (aria_aat_h, aria_aat_e, aria_alz):
+            c = v["criteria"]
+            # Pattern must start with a %
+            self.assertIn("ILIKE '%ARIA", c,
+                          f"{v['variable']} criteria must use %ARIA prefix "
+                          f"match (got: {c!r})")
+
+    # -- P2: Catch-all "Other Laboratory Measurements" row is gone.
+    def test_no_other_laboratory_measurements_catch_all(self):
+        for slug in ("alzheimers", "aat"):
+            names = [v.get("variable") for v in _all_variables_for(slug)]
+            self.assertNotIn(
+                "Other Laboratory Measurements", names,
+                f"{slug} still ships the catch-all lab row that the "
+                f"reviewer flagged"
+            )
+
+    # -- P2: Document variable has MRI / PET / EEG criteria.
+    def test_document_variable_has_imaging_criteria(self):
+        doc = self._find_variable("alzheimers", "Document (MRI / PET / EEG)")
+        self.assertTrue(doc.get("criteria"),
+                        "Document variable must have a criteria filter")
+        c = doc["criteria"].upper()
+        for token in ("MRI", "PET", "EEG"):
+            self.assertIn(token, c,
+                          f"Document criteria must match {token} "
+                          f"(got: {doc['criteria']!r})")
+
+    # -- P2: AAT administration mirrors prescription brand+generic matching.
+    def test_aat_administration_matches_brands_and_generics(self):
+        admin = self._find_variable(
+            "aat", "Anti-amyloid Therapy (Administration)"
+        )
+        c = admin["criteria"].lower()
+        for token in ("lecanemab", "leqembi", "donanemab", "kisunla",
+                      "aducanumab", "aduhelm"):
+            self.assertIn(token, c,
+                          f"AAT administration criteria must match {token!r} "
+                          f"(got: {admin['criteria']!r})")
+
+    # -- P2: Anti-amyloid procedure row carries an explanation of the
+    # broad chemotherapy-administration match.
+    def test_anti_amyloid_procedure_has_disambiguation_note(self):
+        proc = self._find_variable(
+            "aat", "Anti-amyloid Infusion Procedure"
+        )
+        self.assertTrue(
+            proc.get("notes"),
+            "Anti-amyloid procedure row must carry a note explaining why "
+            "generic 'Chemotherapy administration' is included",
+        )
+        self.assertIn("HCPCS", proc["notes"])
+
+    # -- P3: Labs / Biomarkers spelling is consistent across packs.
+    def test_biomarkers_category_label_consistent(self):
+        for slug in ("alzheimers", "aat"):
+            cats = {v.get("category") for v in _all_variables_for(slug)}
+            self.assertIn(
+                "Labs / Biomarkers", cats,
+                f"{slug} must use 'Labs / Biomarkers' (matches categories.yaml)"
+            )
+            self.assertNotIn(
+                "Biomarkers / Labs", cats,
+                f"{slug} still uses the inverted 'Biomarkers / Labs' label"
+            )
+
+    # -- P3: lat/lon tagged as PII on the location table.
+    def test_location_latitude_longitude_are_pii(self):
+        pii = _load_yaml("packs/pii.yaml")
+        loc = set((pii.get("pii_columns") or {}).get("location") or [])
+        self.assertIn("latitude", loc)
+        self.assertIn("longitude", loc)
+
+
+# --------------------------------------------------------------------- #
+# Validator — runs scripts/validate_packs.py against the committed
+# packs and expects zero errors. Guards against future pack edits
+# regressing things like duplicate variables, missing criteria on
+# clinically-specific rows, or unsafe ILIKE patterns.
+# --------------------------------------------------------------------- #
+
+
+class ValidatorTests(unittest.TestCase):
+
+    def test_validator_on_committed_packs_is_clean(self):
+        # Import the validator as a module so we run its logic in-process.
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            import importlib
+            validate_packs = importlib.import_module("validate_packs")
+        finally:
+            sys.path.pop(0)
+
+        known = validate_packs._load_known_categories()
+        reports = [
+            validate_packs.validate_cohort(p.stem, known)
+            for p in sorted((REPO_ROOT / "packs" / "cohorts").glob("*.yaml"))
+        ]
+        all_findings = [f for r in reports for f in r.findings]
+        errors = [f for f in all_findings if f.severity == "error"]
+        warnings = [f for f in all_findings if f.severity == "warning"]
+
+        self.assertEqual(
+            errors, [],
+            f"validator errors on committed packs: "
+            f"{[f.message for f in errors]}"
+        )
+        self.assertEqual(
+            warnings, [],
+            f"validator warnings on committed packs: "
+            f"{[f.message for f in warnings]}"
+        )
+
+    def test_validator_flags_prefix_only_ilike(self):
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            import importlib
+            validate_packs = importlib.import_module("validate_packs")
+        finally:
+            sys.path.pop(0)
+
+        msgs = validate_packs._check_unsafe_ilike(
+            "observation_concept_name ILIKE 'ARIA%'"
+        )
+        self.assertTrue(any("prefix-only" in m for m in msgs))
+
+        msgs = validate_packs._check_unsafe_ilike(
+            "measurement_concept_name ILIKE 'APOE'"
+        )
+        self.assertTrue(any("exact-match" in m for m in msgs))
+
+        msgs = validate_packs._check_unsafe_ilike(
+            "observation_concept_name ILIKE '%ARIA-H%'"
+        )
+        self.assertEqual(msgs, [])
+
+
 if __name__ == "__main__":
     unittest.main()

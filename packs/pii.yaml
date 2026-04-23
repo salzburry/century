@@ -27,6 +27,8 @@ pii_columns:
     - address_2
     - city
     - zip
+    - latitude
+    - longitude
 
 # Pattern-based fallback. Applied to any column whose name matches one
 # of these regexes, across any table. Logged when matched so the static
