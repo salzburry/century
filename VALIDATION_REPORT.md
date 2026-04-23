@@ -77,12 +77,12 @@ _No findings — pack is clean._
 | Reports | PET Scan Result | observation | value_as_concept_name | Yes |
 | Medications | Anti-amyloid Therapy (Prescription) | drug_exposure | drug_concept_name | Yes |
 | Medications | Anti-amyloid Therapy (Administration) | drug_exposure | drug_concept_name | Yes |
-| Infusions | Infusion Drug | infusion | drug_concept_id | No |
+| Infusions | Infusion Drug (Concept ID) | infusion | drug_concept_id | No |
 | Infusions | Infusion Start Date | infusion | drug_exposure_start_date | No |
 | Infusions | Infusion End Date | infusion | drug_exposure_end_date | No |
 | Observations | ARIA-H (microhemorrhage) | observation | value_as_concept_name | Yes |
 | Observations | ARIA-E (edema) | observation | value_as_concept_name | Yes |
-| Procedures | Anti-amyloid Infusion Procedure | procedure_occurrence | procedure_concept_name | Yes |
+| Procedures | Infusion Procedure Codes (candidate AAT attribution) | procedure_occurrence | procedure_concept_name | Yes |
 
 </details>
 
@@ -148,9 +148,9 @@ _No findings — pack is clean._
 | Reports | Clinical Note | note | note_text | No |
 | Reports | Document (MRI / PET / EEG) | document | document_type_concept_name | Yes |
 | Reports | PET Scan Result | observation | value_as_concept_name | Yes |
-| Medications | Medication (Prescription) | drug_exposure | drug_concept_name | Yes |
-| Medications | Medication (Administration) | drug_exposure | drug_concept_name | Yes |
-| Medications | Route | drug_exposure | route_concept_name | No |
+| Medications | Symptomatic ADRD Therapy (Prescription) | drug_exposure | drug_concept_name | Yes |
+| Medications | Symptomatic ADRD Therapy (Administration) | drug_exposure | drug_concept_name | Yes |
+| Medications | Symptomatic ADRD Therapy (Route) | drug_exposure | route_concept_name | Yes |
 | Outcomes | ARIA | observation | value_as_concept_name | Yes |
 
 </details>

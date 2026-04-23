@@ -57,16 +57,22 @@ variables:
     extraction_type: Structured
 
   - category: Infusions
-    variable: Infusion Drug
-    description: Drug administered by infusion (anti-amyloid monoclonal antibodies).
+    variable: Infusion Drug (Concept ID)
+    description: >
+      OMOP concept id of the drug administered by infusion. Truth-in-
+      labeling: the infusion table in this warehouse carries only
+      `drug_concept_id`, not a drug_concept_name. Swap this row for
+      a concept_name-backed `expression:` lookup (e.g.,
+      `expression: (SELECT concept_name FROM public.concept WHERE
+      concept_id = infusion.drug_concept_id)`) once the vocabulary
+      join target is known.
     table: infusion
     column: drug_concept_id
     extraction_type: Structured
     notes: >
-      Points at drug_concept_id because the infusion table does not
-      carry a drug_concept_name column in some warehouses. When the
-      vocabulary join is available, swap this row for a
-      `concept_name`-based lookup.
+      Rendered as numeric concept ids, not drug names. Reviewers
+      should treat the Distribution cell as an inventory of concept
+      ids, not a clinically-labelled drug list.
 
   - category: Infusions
     variable: Infusion Start Date
@@ -108,17 +114,18 @@ variables:
 
   # ----- Procedures -------------------------------------------------
   - category: Procedures
-    variable: Anti-amyloid Infusion Procedure
-    description: Procedure codes for anti-amyloid infusions (injection / IV infusion administration).
+    variable: Infusion Procedure Codes (candidate AAT attribution)
+    description: >
+      Procedure codes that *may* represent an anti-amyloid infusion.
+      Includes explicit AAT drug-name matches (lecanemab / donanemab
+      / aducanumab) AND generic HCPCS administration codes
+      (Chemotherapy administration, intravenous infusion) because
+      many administration procedures don't carry the drug name in
+      procedure_concept_name. **Counts are candidates, not confirmed
+      anti-amyloid procedures** — confirm attribution by joining to
+      `Anti-amyloid Therapy (Administration)` on person + date.
     table: procedure_occurrence
     column: procedure_concept_name
-    # "Chemotherapy administration" is broad on purpose — many HCPCS
-    # infusion-administration codes (e.g., 96413) don't carry the
-    # drug name in procedure_concept_name, so they're filed under
-    # generic chemotherapy / infusion administration. Patient-level
-    # attribution to anti-amyloid therapy should be confirmed by
-    # joining to the `Anti-amyloid Therapy (Administration)` variable
-    # above.
     criteria: >
       procedure_concept_name ILIKE '%lecanemab%' OR
       procedure_concept_name ILIKE '%donanemab%' OR
@@ -127,7 +134,6 @@ variables:
       procedure_concept_name ILIKE '%intravenous infusion%'
     extraction_type: Structured
     notes: >
-      The Chemotherapy administration / IV infusion lines capture
-      HCPCS administration codes that don't carry the drug name.
-      Cross-reference against the Medications (Administration) row
-      to confirm AAT-specific attribution.
+      Row is deliberately broad — the HCPCS administration lines will
+      match non-AAT infusion activity too. Do not treat the count as
+      definitively anti-amyloid without the drug-linked cross-reference.

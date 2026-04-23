@@ -195,7 +195,23 @@ variables:
     description: Measures amyloid-beta 42 peptide in plasma or CSF.
     table: measurement
     column: value_as_number
-    criteria: measurement_concept_name ILIKE '%amyloid beta 42%' OR measurement_concept_name ILIKE '%Abeta 42%' OR measurement_concept_name ILIKE '%AB 42%' OR measurement_concept_name ILIKE '%A%42%'
+    # Explicit name variants only — no `%A%42%` style wildcards,
+    # which would match any measurement whose name happens to
+    # contain an A before 42 (e.g. "ALT pre-42", "HbA1c 42").
+    criteria: >
+      measurement_concept_name ILIKE '%amyloid beta 42%' OR
+      measurement_concept_name ILIKE '%amyloid-beta 42%' OR
+      measurement_concept_name ILIKE '%amyloid beta-42%' OR
+      measurement_concept_name ILIKE '%amyloid-beta-42%' OR
+      measurement_concept_name ILIKE '%Abeta42%' OR
+      measurement_concept_name ILIKE '%Abeta 42%' OR
+      measurement_concept_name ILIKE '%A-beta 42%' OR
+      measurement_concept_name ILIKE '%A beta 42%' OR
+      measurement_concept_name ILIKE '%AB 42%' OR
+      measurement_concept_name ILIKE '%AB42%' OR
+      measurement_concept_name ILIKE '%Aβ42%' OR
+      measurement_concept_name ILIKE '%Aβ 42%' OR
+      measurement_concept_name ILIKE '%β-amyloid 42%'
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -203,7 +219,20 @@ variables:
     description: Measures amyloid-beta 40 peptide.
     table: measurement
     column: value_as_number
-    criteria: measurement_concept_name ILIKE '%amyloid beta 40%' OR measurement_concept_name ILIKE '%AB 40%' OR measurement_concept_name ILIKE '%A%40%'
+    criteria: >
+      measurement_concept_name ILIKE '%amyloid beta 40%' OR
+      measurement_concept_name ILIKE '%amyloid-beta 40%' OR
+      measurement_concept_name ILIKE '%amyloid beta-40%' OR
+      measurement_concept_name ILIKE '%amyloid-beta-40%' OR
+      measurement_concept_name ILIKE '%Abeta40%' OR
+      measurement_concept_name ILIKE '%Abeta 40%' OR
+      measurement_concept_name ILIKE '%A-beta 40%' OR
+      measurement_concept_name ILIKE '%A beta 40%' OR
+      measurement_concept_name ILIKE '%AB 40%' OR
+      measurement_concept_name ILIKE '%AB40%' OR
+      measurement_concept_name ILIKE '%Aβ40%' OR
+      measurement_concept_name ILIKE '%Aβ 40%' OR
+      measurement_concept_name ILIKE '%β-amyloid 40%'
     extraction_type: Structured
 
   - category: Labs / Biomarkers

@@ -160,6 +160,38 @@ def _check_missing_criteria(v: dict[str, Any]) -> str | None:
     return None
 
 
+_ID_COLUMN_RE = re.compile(r"(?:^|_)(concept_id|id)$", re.IGNORECASE)
+_ID_NAME_RE = re.compile(r"\b(id|concept\s*id|identifier)\b", re.IGNORECASE)
+
+
+def _check_id_column_name_mismatch(v: dict[str, Any]) -> str | None:
+    """Catch the Infusion-Drug-style mistake — variable named as a
+    business-facing concept (`Drug`, `Diagnosis`) but the column is
+    an opaque ID (`drug_concept_id`, `condition_concept_id`).
+
+    Allows the pairing when the variable name itself contains "ID" /
+    "Concept ID" / "Identifier", signalling the author intends the
+    row to render opaque identifiers."""
+    column = (v.get("column") or "").strip()
+    expression = (v.get("expression") or "").strip()
+    if expression:
+        # Expression-backed rows are opting into whatever the SQL
+        # returns; we can't second-guess the type from here.
+        return None
+    if not column:
+        return None
+    if not _ID_COLUMN_RE.search(column):
+        return None
+    name = v.get("variable") or ""
+    if _ID_NAME_RE.search(name):
+        return None
+    return (
+        f"{name!r} points at ID column {column!r} but the variable "
+        f"name doesn't signal that. Rename to '{name} (Concept ID)' "
+        f"or resolve to a concept_name via `expression:`."
+    )
+
+
 def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
     cohort_path = PACKS_DIR / "cohorts" / f"{slug}.yaml"
     data = _yaml_load(cohort_path)
@@ -236,6 +268,13 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
         if catch_all:
             report.findings.append(Finding(
                 "warning", slug, f"{cat}/{var}: {catch_all}",
+            ))
+
+        # ID column rendered under a non-ID-named variable
+        id_mismatch = _check_id_column_name_mismatch(v)
+        if id_mismatch:
+            report.findings.append(Finding(
+                "warning", slug, f"{cat}/{var}: {id_mismatch}",
             ))
 
     return report
