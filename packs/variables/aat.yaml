@@ -1,16 +1,27 @@
-# Page 4 — Variables for MTC AAT cohort.
+# AAT (Anti-Amyloid Therapy) variable pack.
 #
-# Inherits the Alzheimer's-style clinical template but adds the
-# anti-amyloid-therapy-specific Medications + Infusions + ARIA rows
-# that define this cohort.
+# Inherits the ADRD common base (demographics, vitals, diagnosis,
+# biomarkers, visits, outcomes, reports) and adds the on-therapy
+# rows that distinguish an AAT cohort from a broader Alzheimer's
+# cohort:
+#
+#   - anti-amyloid prescription / administration (both brand and
+#     generic names)
+#   - infusion table (drug + start date + end date)
+#   - ARIA-H (microhemorrhage) and ARIA-E (edema) — split out from
+#     the generic ARIA row in the alzheimers pack
+#   - anti-amyloid infusion procedure codes
+#
+# Deliberately does NOT include the alzheimers pack. Earlier AAT
+# output inherited alzheimers' generic Medication (Prescription /
+# Administration / Route) rows which overlapped with the AAT-specific
+# ones below and produced a noisy Page 4.
 
-# ----- Include shared Alzheimer's variables (load order below) ------
 include:
-  - alzheimers
+  - adrd_common
 
-# ----- AAT-specific overrides / additions --------------------------
 variables:
-  # Reinforced Medications rows — anti-amyloid therapy specifically
+  # ----- Anti-amyloid therapy ---------------------------------------
   - category: Medications
     variable: Anti-amyloid Therapy (Prescription)
     description: Anti-amyloid monoclonal antibody prescriptions (Leqembi / Kisunla / Aduhelm).
@@ -32,20 +43,30 @@ variables:
     description: Anti-amyloid monoclonal antibody administration records.
     table: drug_exposure
     column: drug_concept_name
+    # Mirror the prescription row's brand + generic matching — some
+    # warehouses record administrations under brand names rather than
+    # generic ingredient names.
     criteria: >
       (drug_type_concept_name ILIKE '%administration%') AND
       (drug_concept_name ILIKE '%lecanemab%' OR
+       drug_concept_name ILIKE '%Leqembi%' OR
        drug_concept_name ILIKE '%donanemab%' OR
-       drug_concept_name ILIKE '%aducanumab%')
+       drug_concept_name ILIKE '%Kisunla%' OR
+       drug_concept_name ILIKE '%aducanumab%' OR
+       drug_concept_name ILIKE '%Aduhelm%')
     extraction_type: Structured
 
   - category: Infusions
     variable: Infusion Drug
     description: Drug administered by infusion (anti-amyloid monoclonal antibodies).
     table: infusion
-    column: drug_concept_name
+    column: drug_concept_id
     extraction_type: Structured
-    notes: Dedicated infusion table parallel to drug_exposure.
+    notes: >
+      Points at drug_concept_id because the infusion table does not
+      carry a drug_concept_name column in some warehouses. When the
+      vocabulary join is available, swap this row for a
+      `concept_name`-based lookup.
 
   - category: Infusions
     variable: Infusion Start Date
@@ -64,13 +85,15 @@ variables:
       Often null in current schemas; `Implemented: No` flag will
       surface this gap until the end-date field is populated.
 
-  # Promoted ARIA rows (AAT cohort cares about the break-down)
+  # ----- Observations (AAT-specific ARIA split) ---------------------
   - category: Observations
     variable: ARIA-H (microhemorrhage)
     description: Amyloid-related imaging abnormality — microhemorrhage or hemosiderosis.
     table: observation
     column: value_as_concept_name
-    criteria: observation_concept_name ILIKE 'ARIA-H%'
+    # `%ARIA-H%` (not `ARIA-H%`) so we match source labels like
+    # "MRI finding - ARIA-H" or "Amyloid-related imaging abnormality ARIA-H".
+    criteria: observation_concept_name ILIKE '%ARIA-H%'
     extraction_type: Structured
     notes: Safety surveillance for anti-amyloid therapy.
 
@@ -79,18 +102,32 @@ variables:
     description: Amyloid-related imaging abnormality — edema or effusion.
     table: observation
     column: value_as_concept_name
-    criteria: observation_concept_name ILIKE 'ARIA-E%'
+    criteria: observation_concept_name ILIKE '%ARIA-E%'
     extraction_type: Structured
     notes: Safety surveillance for anti-amyloid therapy.
 
+  # ----- Procedures -------------------------------------------------
   - category: Procedures
     variable: Anti-amyloid Infusion Procedure
-    description: Procedure codes for anti-amyloid infusions (injection / IV chemotherapy administration).
+    description: Procedure codes for anti-amyloid infusions (injection / IV infusion administration).
     table: procedure_occurrence
     column: procedure_concept_name
+    # "Chemotherapy administration" is broad on purpose — many HCPCS
+    # infusion-administration codes (e.g., 96413) don't carry the
+    # drug name in procedure_concept_name, so they're filed under
+    # generic chemotherapy / infusion administration. Patient-level
+    # attribution to anti-amyloid therapy should be confirmed by
+    # joining to the `Anti-amyloid Therapy (Administration)` variable
+    # above.
     criteria: >
       procedure_concept_name ILIKE '%lecanemab%' OR
       procedure_concept_name ILIKE '%donanemab%' OR
       procedure_concept_name ILIKE '%aducanumab%' OR
-      procedure_concept_name ILIKE '%Chemotherapy administration%'
+      procedure_concept_name ILIKE '%Chemotherapy administration%' OR
+      procedure_concept_name ILIKE '%intravenous infusion%'
     extraction_type: Structured
+    notes: >
+      The Chemotherapy administration / IV infusion lines capture
+      HCPCS administration codes that don't carry the drug name.
+      Cross-reference against the Medications (Administration) row
+      to confirm AAT-specific attribution.

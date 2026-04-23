@@ -20,9 +20,15 @@ description: >
 notes:
   - Technical dictionary generated from schema introspection.
   - Infusion records are split across drug_exposure and a dedicated
-    infusion table; both feed the Medications variables on Page 4.
-  - Abstracted variables (MoCA, MMSE, FAQ, CDR, ADAS-Cog, DSRS) flagged
-    as in-progress until March 2026 completion.
+    infusion table; both feed the Medications / Infusions variables on
+    Page 4. drug_concept_name is absent on infusion in some warehouses
+    — that row falls back to drug_concept_id.
+  - Abstracted cognitive variables (MoCA, MMSE, FAQ, CDR, ADAS-Cog,
+    DSRS) are populated for MTC AAT; coverage for the broader MTC
+    Alzheimer's cohort is still catching up.
+  - ARIA-H and ARIA-E are tracked as separate variables here (not
+    shared with the Alzheimer's pack) because only AAT patients are
+    exposed to the anti-amyloid safety risk.
 
 # Optional table -> Category override. Empty -> use packs/categories.yaml.
 category_rules: {}
