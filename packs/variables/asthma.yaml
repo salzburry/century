@@ -1,0 +1,302 @@
+# Asthma variable pack.
+#
+# Inherits the shared respiratory base (demographics, vitals, smoking
+# status, spirometry/PFT procedure, eosinophils, visits, reports) and
+# adds the asthma-specific rows:
+#
+#   - asthma diagnosis (severity / persistence variants)
+#   - exacerbation marker (abstracted — cohort definition varies)
+#   - reliever / controller medications: SABA, ICS, ICS-LABA, LTRA, LAMA
+#   - biologics (anti-IgE, anti-IL5, anti-IL4R, anti-TSLP)
+#   - systemic corticosteroids (exacerbation treatment)
+#   - FEV1 / FVC / FEV1-FVC ratio (abstracted — pending)
+#   - ACT score (abstracted patient-reported outcome)
+#   - total IgE, FeNO (type-2 inflammation markers)
+#
+# Deliberately does NOT include the COPD pack. COPD-specific
+# triple-therapy combos, roflumilast, and long-term supplemental
+# oxygen all live in copd.yaml because their indications differ in
+# asthma.
+
+include:
+  - respiratory_common
+
+variables:
+  # ----- Diagnosis — Asthma-specific --------------------------------
+  - category: Diagnosis
+    variable: Asthma Diagnosis
+    description: >
+      Asthma diagnosis — includes severity / persistence variants
+      (mild intermittent, mild/moderate/severe persistent), exercise-
+      induced, cough-variant, and status asthmaticus.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%asthma%' OR
+      condition_concept_name ILIKE '%reactive airway disease%' OR
+      condition_concept_name ILIKE '%status asthmaticus%'
+    extraction_type: Structured
+    notes: Cohort-defining diagnosis for Nimbus Asthma and Nimbus AZ Asthma.
+
+  # ----- Medications - reliever -------------------------------------
+  - category: Medications
+    variable: Short-acting Beta-agonist (SABA — Reliever)
+    description: >
+      Short-acting beta-agonists used as reliever / rescue therapy —
+      albuterol, levalbuterol, including branded inhalers and
+      nebuliser solutions.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%albuterol%' OR
+      drug_concept_name ILIKE '%salbutamol%' OR
+      drug_concept_name ILIKE '%levalbuterol%' OR
+      drug_concept_name ILIKE '%Xopenex%' OR
+      drug_concept_name ILIKE '%ProAir%' OR
+      drug_concept_name ILIKE '%Ventolin%' OR
+      drug_concept_name ILIKE '%Proventil%'
+    extraction_type: Structured
+
+  # ----- Medications — controller -----------------------------------
+  - category: Medications
+    variable: Inhaled Corticosteroid (ICS — Controller)
+    description: >
+      Inhaled corticosteroids used as single-ingredient controllers —
+      fluticasone, budesonide, beclomethasone, mometasone, ciclesonide.
+      ICS+LABA combinations are captured on the next row.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%fluticasone%' OR
+      drug_concept_name ILIKE '%budesonide%' OR
+      drug_concept_name ILIKE '%beclomethasone%' OR
+      drug_concept_name ILIKE '%mometasone%' OR
+      drug_concept_name ILIKE '%ciclesonide%'
+    extraction_type: Structured
+    notes: >
+      Includes mono-ICS and ICS appearing inside a combination
+      product; the ICS-LABA row below is the subset that also
+      contains a LABA ingredient.
+
+  - category: Medications
+    variable: ICS + LABA Combination
+    description: >
+      Single-inhaler combinations of an inhaled corticosteroid with
+      a long-acting beta-agonist — budesonide/formoterol (Symbicort),
+      fluticasone/salmeterol (Advair), fluticasone/vilanterol (Breo),
+      mometasone/formoterol (Dulera).
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%Symbicort%' OR
+      drug_concept_name ILIKE '%Advair%' OR
+      drug_concept_name ILIKE '%Breo%' OR
+      drug_concept_name ILIKE '%Dulera%' OR
+      drug_concept_name ILIKE '%Wixela%' OR
+      (drug_concept_name ILIKE '%budesonide%' AND
+       drug_concept_name ILIKE '%formoterol%') OR
+      (drug_concept_name ILIKE '%fluticasone%' AND
+       drug_concept_name ILIKE '%salmeterol%') OR
+      (drug_concept_name ILIKE '%fluticasone%' AND
+       drug_concept_name ILIKE '%vilanterol%') OR
+      (drug_concept_name ILIKE '%mometasone%' AND
+       drug_concept_name ILIKE '%formoterol%')
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Leukotriene Receptor Antagonist (LTRA)
+    description: >
+      Oral leukotriene receptor antagonists — montelukast (Singulair),
+      zafirlukast, and 5-lipoxygenase inhibitor zileuton.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%montelukast%' OR
+      drug_concept_name ILIKE '%zafirlukast%' OR
+      drug_concept_name ILIKE '%zileuton%' OR
+      drug_concept_name ILIKE '%Singulair%' OR
+      drug_concept_name ILIKE '%Accolate%' OR
+      drug_concept_name ILIKE '%Zyflo%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Long-acting Muscarinic Antagonist (LAMA — Add-on)
+    description: >
+      Tiotropium as an add-on controller for severe asthma uncontrolled
+      on ICS-LABA. Other LAMAs are not FDA-approved for asthma.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%tiotropium%' OR
+      drug_concept_name ILIKE '%Spiriva Respimat%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Asthma Biologic (Anti-IgE / Anti-IL5 / Anti-IL4R / Anti-TSLP)
+    description: >
+      Monoclonal-antibody biologics for severe eosinophilic or
+      allergic asthma — omalizumab (Xolair, anti-IgE),
+      mepolizumab (Nucala, anti-IL5), reslizumab (Cinqair, anti-IL5),
+      benralizumab (Fasenra, anti-IL5R), dupilumab (Dupixent,
+      anti-IL4R), tezepelumab (Tezspire, anti-TSLP).
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%omalizumab%' OR
+      drug_concept_name ILIKE '%mepolizumab%' OR
+      drug_concept_name ILIKE '%reslizumab%' OR
+      drug_concept_name ILIKE '%benralizumab%' OR
+      drug_concept_name ILIKE '%dupilumab%' OR
+      drug_concept_name ILIKE '%tezepelumab%' OR
+      drug_concept_name ILIKE '%Xolair%' OR
+      drug_concept_name ILIKE '%Nucala%' OR
+      drug_concept_name ILIKE '%Cinqair%' OR
+      drug_concept_name ILIKE '%Fasenra%' OR
+      drug_concept_name ILIKE '%Dupixent%' OR
+      drug_concept_name ILIKE '%Tezspire%'
+    extraction_type: Structured
+    notes: >
+      Each biologic has its own eligibility criteria (total IgE,
+      eosinophil count, age); row reports any-biologic exposure. Do
+      not use this row to attribute a specific biologic without
+      per-ingredient filtering.
+
+  - category: Medications
+    variable: Systemic Corticosteroid (Oral / IV)
+    description: >
+      Systemic corticosteroid courses — prednisone, prednisolone,
+      methylprednisolone, dexamethasone. Proxy for asthma-exacerbation
+      treatment when paired with an exacerbation diagnosis; chronic
+      oral-corticosteroid exposure is a severe-asthma marker.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%prednisone%' OR
+      drug_concept_name ILIKE '%prednisolone%' OR
+      drug_concept_name ILIKE '%methylprednisolone%' OR
+      drug_concept_name ILIKE '%dexamethasone%'
+    extraction_type: Structured
+    notes: >
+      Row captures all systemic steroid exposures; asthma-specific
+      exacerbation attribution requires a temporal join with the
+      Asthma Exacerbation diagnosis row.
+
+  # ----- Labs / Biomarkers — T2 inflammation + PFT ------------------
+  # Eosinophils live in respiratory_common. IgE and FeNO are asthma-
+  # specific (they're not used in COPD management) so they stay here.
+  - category: Labs / Biomarkers
+    variable: Total IgE (Immunoglobulin E)
+    description: >
+      Total serum IgE — required for omalizumab dosing and a key
+      allergic-asthma phenotype marker.
+    table: measurement
+    column: value_as_number
+    criteria: >
+      measurement_concept_name ILIKE '%IgE%' AND
+      (measurement_concept_name ILIKE '%total%' OR
+       measurement_concept_name ILIKE '%serum%' OR
+       measurement_concept_name ILIKE '%immunoglobulin E%')
+    extraction_type: Structured
+    notes: >
+      Criteria requires "IgE" plus a total/serum/immunoglobulin E
+      qualifier so allergen-specific IgE panels (which can be
+      hundreds of individual concepts) don't dominate this row.
+
+  - category: Labs / Biomarkers
+    variable: FeNO (Fractional Exhaled Nitric Oxide)
+    description: >
+      Fractional exhaled nitric oxide — airway eosinophilic
+      inflammation marker used to phenotype type-2-high asthma.
+    table: measurement
+    column: value_as_number
+    criteria: >
+      measurement_concept_name ILIKE '%exhaled nitric oxide%' OR
+      measurement_concept_name ILIKE '%FeNO%' OR
+      measurement_concept_name ILIKE '%fractional nitric oxide%'
+    extraction_type: Structured
+    notes: >
+      TODO (clinical review): FeNO is not universally billed as a
+      lab; some sites capture it as an observation. Expect
+      Implemented=No until site-specific mapping is confirmed.
+
+  - category: Labs / Biomarkers
+    variable: FEV1 (Forced Expiratory Volume in 1 second)
+    description: >
+      FEV1 — volume of air exhaled in the first second of a forced
+      exhalation. Primary asthma-control marker (reversibility +
+      zone thresholds).
+    table: measurement
+    column: value_as_number
+    criteria: >
+      measurement_concept_name ILIKE '%FEV1%' OR
+      measurement_concept_name ILIKE '%FEV 1%' OR
+      measurement_concept_name ILIKE '%forced expiratory volume%1%' OR
+      measurement_concept_name ILIKE '%forced expir%1 second%'
+    extraction_type: Abstracted
+    notes: >
+      Per README §2.1, abstraction is in progress for the Nimbus AZ
+      cohorts. Expect Implemented=No until the pipeline lands.
+
+  - category: Labs / Biomarkers
+    variable: FVC (Forced Vital Capacity)
+    description: Total volume of air exhaled during a forced vital capacity maneuver.
+    table: measurement
+    column: value_as_number
+    criteria: >
+      measurement_concept_name ILIKE '%FVC%' OR
+      measurement_concept_name ILIKE '%forced vital capacity%'
+    extraction_type: Abstracted
+
+  - category: Labs / Biomarkers
+    variable: FEV1 / FVC Ratio
+    description: >
+      FEV1/FVC ratio — airflow-obstruction confirmation; pre-/post-
+      bronchodilator change is the reversibility criterion for asthma.
+    table: measurement
+    column: value_as_number
+    criteria: >
+      measurement_concept_name ILIKE '%FEV1%FVC%' OR
+      measurement_concept_name ILIKE '%FEV1/FVC%' OR
+      measurement_concept_name ILIKE '%FEV 1%FVC%'
+    extraction_type: Abstracted
+
+  # ----- Outcomes - exacerbations and patient-reported outcomes -----
+  - category: Outcomes
+    variable: Asthma Exacerbation (Abstracted)
+    description: >
+      Acute asthma exacerbation event — typically captured by a visit
+      with an acute-asthma-exacerbation or status-asthmaticus diagnosis
+      plus systemic steroid course. Row here reports the condition-side
+      attribution; a full algorithmic definition is cohort-specific.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%status asthmaticus%' OR
+      (condition_concept_name ILIKE '%asthma%' AND
+       (condition_concept_name ILIKE '%acute exacerbation%' OR
+        condition_concept_name ILIKE '%with exacerbation%' OR
+        condition_concept_name ILIKE '%attack%'))
+    extraction_type: Abstracted
+    notes: >
+      TODO (clinical review): confirm the exacerbation definition
+      (condition-only vs visit-type + dx + steroid course). Current
+      criteria is narrow to avoid matching chronic or well-controlled
+      asthma.
+
+  - category: Outcomes
+    variable: ACT Score (Asthma Control Test)
+    description: >
+      5-item patient-reported outcome (5–25) quantifying asthma
+      control over the past 4 weeks. ACT < 20 indicates poorly
+      controlled asthma.
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%Asthma Control Test%' OR
+      observation_concept_name ILIKE '%ACT score%' OR
+      observation_concept_name ILIKE '%ACT total%'
+    extraction_type: Abstracted
+    notes: >
+      TODO (clinical review): ACT is often captured on paper or
+      within the clinical note; expect Implemented=No unless a
+      dedicated ACT abstraction exists.

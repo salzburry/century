@@ -1,0 +1,31 @@
+# Cohort pack: Nimbus AZ COPD
+#
+# Nimbus Arizona-site COPD cohort. Schema name matches the raw dump
+# in Output/nimbusazcopd.pdf.
+
+provider: Nimbus AZ
+disease: COPD
+display_name: Nimbus AZ COPD
+cohort_name: nimbus_az_copd_cohort
+schema_name: nimbus_az_copd_cohort
+variant: raw
+site_group: Nimbus_AZ
+status: active
+
+description: >
+  Nimbus Arizona-site patients with a chronic obstructive pulmonary
+  disease diagnosis. Kept provider-separate from the broader Nimbus
+  COPD cohort per the §1.1 site-consolidation decision.
+
+notes:
+  - Technical dictionary generated from schema introspection.
+  - Variables pack is the shared COPD template, also used by
+    nimbus_copd. Per README §2.1, FEV1 abstraction is in progress for
+    this site — the FEV1 / FVC / FEV1-FVC ratio rows are marked
+    Abstracted and will remain Implemented=No until that pipeline
+    ships.
+
+category_rules: {}
+
+# Variables pack (Page 4) — shared COPD template.
+variables_pack: copd

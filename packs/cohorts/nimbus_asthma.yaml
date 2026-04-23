@@ -1,0 +1,34 @@
+# Cohort pack: Nimbus Asthma
+#
+# Nimbus curated asthma cohort (provider-level, excluding Nimbus AZ).
+# Schema name matches the raw dump in Output/nimbusasthmacurated.pdf.
+
+provider: Nimbus
+disease: Asthma
+display_name: Nimbus Asthma
+cohort_name: nimbus_asthma_curated
+schema_name: nimbus_asthma_curated
+variant: raw
+site_group: Nimbus
+status: active
+
+description: >
+  Nimbus patients with an asthma diagnosis (intermittent through
+  severe persistent). Curated view layered over the Nimbus base
+  warehouse; parallel to nimbus_az_asthma_cohort but kept provider-
+  separate per the §1.1 site-consolidation decision.
+
+notes:
+  - Technical dictionary generated from schema introspection.
+  - Variables pack is the shared asthma template, also used by
+    nimbus_az_asthma. FEV1 / FVC / FEV1-FVC ratio, ACT, and FeNO rows
+    are abstracted; expect Implemented=No until site-specific
+    abstraction mappings are confirmed.
+  - Biologic row aggregates any-biologic exposure; per-ingredient
+    attribution requires tightening drug_concept_name on the specific
+    agent before reporting utilisation.
+
+category_rules: {}
+
+# Variables pack (Page 4) — shared asthma template.
+variables_pack: asthma
