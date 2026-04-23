@@ -674,11 +674,18 @@ def resolve_variables(
                     )
                     conn.rollback()
 
-            # Median (IQR) for numeric-typed underlying columns. Skip when
-            # an expression is used, since the raw column's data type may
-            # not match the expression's output type (e.g. LEFT(zip,3) is
-            # text even though zip is numeric).
-            if raw_kind == "continuous" and not has_expression:
+            # Median (IQR) for numeric-typed underlying columns. Skip when:
+            #   - an expression is used (expression's output type may
+            #     not match the raw column's data_type — e.g. LEFT(zip,3)
+            #     is text even though zip might be numeric), or
+            #   - the column is a surrogate key / concept id (numeric
+            #     by type but not a measurement — a median of
+            #     drug_concept_id values is meaningless).
+            if (
+                raw_kind == "continuous"
+                and not has_expression
+                and not is_surrogate_key(column)
+            ):
                 median_iqr_cell = _compile_continuous_filtered(
                     conn, schema, table, column, where_nonnull
                 )

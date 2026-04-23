@@ -4,15 +4,26 @@
 #
 #     pip install -r requirements.txt
 #
-# Rough split by use-case:
+# What each dep is for:
 #
-#   pandas, openpyxl            - validate_dictionary.py reads/writes xlsx
-#   pyyaml                      - introspect_cohort.py loads cohort packs
-#   psycopg[binary]             - introspect_cohort.py connects to Postgres
+#   pandas, openpyxl    build_dictionary.py writes Summary / Tables /
+#                       Columns / Variables to xlsx (and reads xlsx in
+#                       the renderer-omission tests).
+#   pyyaml              Both build_dictionary.py and
+#                       scripts/validate_packs.py parse
+#                       packs/**/*.yaml (cohort + variable + categories
+#                       + pii + descriptions).
+#   psycopg[binary]     build_dictionary.py opens the warehouse to
+#                       actually populate the four pages. Only needed
+#                       for live runs; `--dry-run` skips the DB
+#                       connection entirely.
 #
-# If you only want to validate an existing workbook, pandas + openpyxl +
-# pyyaml (for --cohort flag) are enough; psycopg is only needed to
-# generate a new workbook.
+# Minimum install for offline work
+# (pack editing + validator + --dry-run + unit tests):
+#
+#     pip install pandas openpyxl pyyaml
+#
+# Add `psycopg[binary]` on top when running against a real cohort.
 
 pandas>=2.0
 openpyxl>=3.1

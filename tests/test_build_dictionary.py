@@ -1055,6 +1055,86 @@ class PackTighteningTests(unittest.TestCase):
             aat_names,
         )
 
+    def test_concept_id_variable_skips_median_iqr(self):
+        """Concept-id / surrogate-key columns are numeric by type but
+        not measurements. Their Median (IQR) cell must stay empty."""
+        pack = [{
+            "category": "Infusions",
+            "variable": "Infusion Drug (Concept ID)",
+            "table": "infusion",
+            "column": "drug_concept_id",
+            "extraction_type": "Structured",
+        }]
+
+        # Script runs: count x 2, GROUP BY, COUNT(DISTINCT person_id).
+        # PERCENTILE_CONT must NOT be issued — if it were, the stub
+        # would fall through to the AssertionError branch and fail
+        # the test.
+        conn = _Conn([
+            ("GROUP BY", [("100001", 42), ("100002", 10)]),
+            ("COUNT(DISTINCT", (400,)),
+            ("COUNT(*)", (1000,)),
+        ])
+        rows = resolve_variables(
+            conn, "s", pack, total_patients=1000,
+            pii_pairs=set(), pii_patterns=[],
+            tables_with_person_id={"infusion"},
+            column_types={("infusion", "drug_concept_id"): "bigint"},
+        )
+        v = rows[0]
+        self.assertEqual(
+            v.median_iqr, "",
+            "drug_concept_id must not get a Median (IQR) — it's an ID, "
+            "not a measurement",
+        )
+        # Top values / GROUP BY still populate so the row isn't empty.
+        self.assertNotEqual(v.distribution, "")
+        self.assertEqual(v.implemented, "Yes")
+
+    def test_ordinary_numeric_measurement_still_gets_median_iqr(self):
+        """Regression guard: the skip above must only trigger for
+        surrogate-key column names, not every numeric column."""
+        pack = [{
+            "category": "Labs / Biomarkers",
+            "variable": "A-beta 42",
+            "table": "measurement",
+            "column": "value_as_number",
+            "extraction_type": "Structured",
+        }]
+
+        class _Conn2:
+            def __init__(self):
+                self._counts = [1000, 800]
+                self._i = 0
+            def cursor(self):
+                conn = self
+                class _Cur:
+                    def execute(self, sql, *p):
+                        if "PERCENTILE_CONT" in sql:
+                            self._next = ("10", "20", "30")
+                        elif "GROUP BY" in sql:
+                            self._next = [("20", 5)]
+                        elif "COUNT(DISTINCT" in sql:
+                            self._next = (400,)
+                        elif "COUNT(*)" in sql:
+                            self._next = (conn._counts[conn._i],)
+                            conn._i += 1
+                        else:
+                            raise AssertionError(f"unexpected SQL: {sql!r}")
+                    def fetchone(self): return self._next
+                    def fetchall(self): return self._next
+                    def __enter__(self): return self
+                    def __exit__(self, *e): return False
+                return _Cur()
+            def rollback(self): pass
+
+        rows = resolve_variables(
+            _Conn2(), "s", pack, total_patients=1000,
+            tables_with_person_id={"measurement"},
+            column_types={("measurement", "value_as_number"): "numeric"},
+        )
+        self.assertIn("Median: 20", rows[0].median_iqr)
+
 
 if __name__ == "__main__":
     unittest.main()
