@@ -839,18 +839,26 @@ class PackCurationFixTests(unittest.TestCase):
                           f"AAT administration criteria must match {token!r} "
                           f"(got: {admin['criteria']!r})")
 
-    # -- P2: Anti-amyloid procedure row carries an explanation of the
-    # broad chemotherapy-administration match.
+    # -- P2/P3: Anti-amyloid procedure row is labelled honestly AND
+    # carries an explanation of the broad chemotherapy-administration
+    # match. Row was renamed in the follow-up review:
+    #   Anti-amyloid Infusion Procedure  ->
+    #   Infusion Procedure Codes (candidate AAT attribution)
     def test_anti_amyloid_procedure_has_disambiguation_note(self):
         proc = self._find_variable(
-            "aat", "Anti-amyloid Infusion Procedure"
+            "aat", "Infusion Procedure Codes (candidate AAT attribution)"
         )
+        # The note explains why generic chemotherapy admin codes are kept.
         self.assertTrue(
             proc.get("notes"),
             "Anti-amyloid procedure row must carry a note explaining why "
             "generic 'Chemotherapy administration' is included",
         )
-        self.assertIn("HCPCS", proc["notes"])
+        # The description explicitly flags the ambiguity.
+        desc = (proc.get("description") or "").lower()
+        self.assertIn("candidate", desc,
+                      "description must signal the row is a candidate, "
+                      "not definitively anti-amyloid")
 
     # -- P3: Labs / Biomarkers spelling is consistent across packs.
     def test_biomarkers_category_label_consistent(self):
@@ -934,6 +942,118 @@ class ValidatorTests(unittest.TestCase):
             "observation_concept_name ILIKE '%ARIA-H%'"
         )
         self.assertEqual(msgs, [])
+
+    def test_validator_flags_id_column_on_non_id_variable(self):
+        """Catches the Infusion-Drug-style mistake: row named as a
+        business concept but pointing at `*_concept_id`."""
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            import importlib
+            validate_packs = importlib.import_module("validate_packs")
+        finally:
+            sys.path.pop(0)
+
+        # Bad: "Infusion Drug" with column drug_concept_id
+        bad = {"variable": "Infusion Drug",
+               "column": "drug_concept_id", "table": "infusion"}
+        msg = validate_packs._check_id_column_name_mismatch(bad)
+        self.assertIsNotNone(msg)
+        self.assertIn("drug_concept_id", msg)
+
+        # Good: name signals it's an ID
+        good = {"variable": "Infusion Drug (Concept ID)",
+                "column": "drug_concept_id", "table": "infusion"}
+        self.assertIsNone(
+            validate_packs._check_id_column_name_mismatch(good),
+            "row whose name mentions Concept ID should be accepted"
+        )
+
+        # Good: expression-backed — opting into a computed column type
+        with_expr = {"variable": "ZIP code (3-digit prefix)",
+                     "column": "zip",
+                     "expression": 'LEFT("zip"::text, 3)',
+                     "table": "location"}
+        self.assertIsNone(
+            validate_packs._check_id_column_name_mismatch(with_expr)
+        )
+
+        # Not an ID column -- fine
+        neutral = {"variable": "Diagnosis",
+                   "column": "condition_concept_name",
+                   "table": "condition_occurrence"}
+        self.assertIsNone(
+            validate_packs._check_id_column_name_mismatch(neutral)
+        )
+
+
+# --------------------------------------------------------------------- #
+# Follow-up pack tightening: A-beta variants, ADRD symptomatic
+# meds, Infusion Drug rename, anti-amyloid procedure rename.
+# --------------------------------------------------------------------- #
+
+
+class PackTighteningTests(unittest.TestCase):
+
+    def _find(self, pack: str, name: str) -> dict:
+        for v in _all_variables_for(pack):
+            if v.get("variable") == name:
+                return v
+        self.fail(f"{name!r} not found in {pack}")
+
+    def test_abeta_criteria_does_not_use_catch_wide_wildcards(self):
+        # `%A%42%` / `%A%40%` had matched anything with an 'A' before the
+        # number (HbA1c, ALT pre-42, etc.). Assert they're gone.
+        ab42 = self._find("alzheimers", "Amyloid-beta 42 (A-beta 42)")
+        ab40 = self._find("alzheimers", "Amyloid-beta 40 (A-beta 40)")
+        for v in (ab42, ab40):
+            c = v["criteria"]
+            self.assertNotIn(
+                "%A%42%", c, f"{v['variable']} still has catch-wide %A%42%"
+            )
+            self.assertNotIn(
+                "%A%40%", c, f"{v['variable']} still has catch-wide %A%40%"
+            )
+        # And at least one explicit amyloid-beta variant is present.
+        self.assertIn("amyloid beta 42", ab42["criteria"].lower())
+        self.assertIn("amyloid beta 40", ab40["criteria"].lower())
+
+    def test_symptomatic_adrd_therapy_rows_filter_to_chei_nmda(self):
+        # Old "Medication (Prescription)" row has been renamed and
+        # narrowed — the new row should filter by explicit ADRD drugs.
+        rx = self._find(
+            "alzheimers", "Symptomatic ADRD Therapy (Prescription)"
+        )
+        c = rx["criteria"].lower()
+        for drug in ("donepezil", "rivastigmine", "galantamine", "memantine"):
+            self.assertIn(
+                drug, c,
+                f"Symptomatic ADRD Therapy (Prescription) must filter "
+                f"by {drug!r} (got: {rx['criteria']!r})",
+            )
+        # Ensure the old over-broad label isn't still present.
+        names = [v.get("variable") for v in _all_variables_for("alzheimers")]
+        self.assertNotIn("Medication (Prescription)", names,
+                         "old broad Medication (Prescription) row still present")
+        self.assertNotIn("Medication (Administration)", names,
+                         "old broad Medication (Administration) row still present")
+
+    def test_infusion_drug_row_is_clearly_labeled_as_concept_id(self):
+        drug = self._find("aat", "Infusion Drug (Concept ID)")
+        self.assertEqual(drug["column"], "drug_concept_id")
+        # Old ambiguous name must not coexist with the new one.
+        aat_names = [v.get("variable") for v in _all_variables_for("aat")]
+        self.assertNotIn("Infusion Drug", aat_names,
+                         "old ambiguous 'Infusion Drug' label still present")
+
+    def test_anti_amyloid_procedure_row_signals_broad_match(self):
+        # Old: "Anti-amyloid Infusion Procedure" (implied certainty).
+        # New: "Infusion Procedure Codes (candidate AAT attribution)".
+        aat_names = [v.get("variable") for v in _all_variables_for("aat")]
+        self.assertNotIn("Anti-amyloid Infusion Procedure", aat_names)
+        self.assertIn(
+            "Infusion Procedure Codes (candidate AAT attribution)",
+            aat_names,
+        )
 
 
 if __name__ == "__main__":

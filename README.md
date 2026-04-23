@@ -143,20 +143,49 @@ Enough to show the technical inventory works; the gaps are:
 Explicit so the plan matches the codebase we have.
 
 ### 5.1 What already exists
-- `introspect_cohort.py` does schema introspection.
-- Per-table row / column counts, row-level completeness, top values,
-  numeric summaries, per-column date ranges — all already computed.
-- `Pack` dataclass and `load_pack()` entry point are in place.
+- `introspect_cohort.py` does schema introspection. Per-table row /
+  column counts, row-level completeness, top values, numeric
+  summaries, per-column date ranges — all already computed.
+- `build_dictionary.py` — the four-page generator. Wraps
+  `introspect_cohort.py` with cohort packs, audience filters, and
+  HTML / XLSX / JSON renderers.
+- `packs/` directory is committed. Today it carries:
+  - `packs/cohorts/mtc_aat.yaml`, `packs/cohorts/mtc_alzheimers.yaml`
+  - `packs/variables/adrd_common.yaml` (shared ADRD base),
+    `packs/variables/alzheimers.yaml`, `packs/variables/aat.yaml`
+  - `packs/categories.yaml`, `packs/pii.yaml`,
+    `packs/table_descriptions.yaml`, `packs/column_descriptions.yaml`
+- `scripts/validate_packs.py` + `VALIDATION_REPORT.md` — static
+  pack-lint covering duplicate variables, unknown categories, unsafe
+  ILIKE, missing criteria on clinically-specific rows, and column
+  vs variable-name mismatches (e.g. `_concept_id` column under a row
+  whose name doesn't mention "ID").
 
-### 5.2 What does not currently exist
-- `packs/` directory is not in the workspace (confirmed — `ls packs/`
-  returns no-such-directory).
-- `tests/test_introspect_cohort.py` references `packs/cohorts/*.yaml`
-  but the files aren't committed.
+### 5.2 What is NOT a clinical validation
+`VALIDATION_REPORT.md` is a structural lint, not a clinical
+validation. It proves the packs are internally consistent. It does
+**not** prove each variable's criteria actually matches the intended
+concepts in a live warehouse, nor that the returned distributions
+are clinically sensible. Clinical validation still requires
+reviewing the generated `Output/<schema>_dictionary.xlsx` per cohort
+— look at the Variables sheet and confirm that:
 
-Implication: the pack system is a wired-in extension point. Creating
-and populating the YAML pack files is real deliverable work, not an
-already-completed prerequisite.
+- Rows marked `Implemented: Yes` actually contain the concepts
+  the variable name promises (e.g. `Amyloid-beta 42` → the
+  Distribution column shows A-beta 42 concept names, not unrelated
+  measurement labels).
+- `Implemented: No` rows reflect a real cohort gap, not an ILIKE
+  that's too narrow.
+- ID-backed rows (anything with `Concept ID` in the name) are
+  clearly labeled as opaque identifiers, not a reviewer-friendly name.
+
+### 5.3 Still to build
+- Per-disease variable packs beyond Alzheimer's / AAT (COPD, asthma,
+  CKD, MASH, IBD, DR) — clinical curation work per the registry backlog
+  in §2.1.
+- WeasyPrint PDF renderer (PR 7 in the shipping plan).
+- Schema-drift detection (PR 8).
+- Batch `--all` runner + combined Nimbus / Nimbus AZ views (PR 9).
 
 ## 6. Guiding principles
 

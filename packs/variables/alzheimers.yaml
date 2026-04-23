@@ -17,27 +17,72 @@ include:
 
 variables:
   # ----- Medications (symptomatic ADRD therapy) ----------------------
+  # Rows are scoped to the approved Alzheimer's symptomatic
+  # pharmacopoeia — cholinesterase inhibitors (donepezil / rivastigmine
+  # / galantamine), NMDA antagonist (memantine) and combos (e.g. the
+  # Namzaric donepezil+memantine combo). This keeps the Description
+  # honest — without these filters the rows summarised every single
+  # medication in drug_exposure (statins, aspirin, PPIs, etc.), which
+  # isn't what a "Symptomatic ADRD Therapy" row should report.
   - category: Medications
-    variable: Medication (Prescription)
-    description: Symptomatic medications prescribed to the patient (cholinesterase inhibitors, NMDA antagonists, common co-medications).
+    variable: Symptomatic ADRD Therapy (Prescription)
+    description: >
+      Prescribed symptomatic Alzheimer's therapies — cholinesterase
+      inhibitors (donepezil, rivastigmine, galantamine), NMDA antagonist
+      (memantine), and ChEI+memantine combinations.
     table: drug_exposure
     column: drug_concept_name
-    criteria: drug_type_concept_name ILIKE '%prescription%'
+    criteria: >
+      (drug_type_concept_name ILIKE '%prescription%') AND
+      (drug_concept_name ILIKE '%donepezil%' OR
+       drug_concept_name ILIKE '%Aricept%' OR
+       drug_concept_name ILIKE '%rivastigmine%' OR
+       drug_concept_name ILIKE '%Exelon%' OR
+       drug_concept_name ILIKE '%galantamine%' OR
+       drug_concept_name ILIKE '%Razadyne%' OR
+       drug_concept_name ILIKE '%memantine%' OR
+       drug_concept_name ILIKE '%Namenda%' OR
+       drug_concept_name ILIKE '%Namzaric%')
     extraction_type: Structured
 
   - category: Medications
-    variable: Medication (Administration)
-    description: Medications administered to the patient (EHR administration record).
+    variable: Symptomatic ADRD Therapy (Administration)
+    description: >
+      Administered symptomatic Alzheimer's therapies — cholinesterase
+      inhibitors, NMDA antagonist, and combinations.
     table: drug_exposure
     column: drug_concept_name
-    criteria: drug_type_concept_name ILIKE '%administration%'
+    criteria: >
+      (drug_type_concept_name ILIKE '%administration%') AND
+      (drug_concept_name ILIKE '%donepezil%' OR
+       drug_concept_name ILIKE '%Aricept%' OR
+       drug_concept_name ILIKE '%rivastigmine%' OR
+       drug_concept_name ILIKE '%Exelon%' OR
+       drug_concept_name ILIKE '%galantamine%' OR
+       drug_concept_name ILIKE '%Razadyne%' OR
+       drug_concept_name ILIKE '%memantine%' OR
+       drug_concept_name ILIKE '%Namenda%' OR
+       drug_concept_name ILIKE '%Namzaric%')
     extraction_type: Structured
 
   - category: Medications
-    variable: Route
-    description: Route of administration.
+    variable: Symptomatic ADRD Therapy (Route)
+    description: >
+      Route of administration for symptomatic Alzheimer's therapies
+      (transdermal rivastigmine vs oral ChEI / NMDA).
     table: drug_exposure
     column: route_concept_name
+    # Scope to the ADRD drug set rather than every drug_exposure row.
+    criteria: >
+      drug_concept_name ILIKE '%donepezil%' OR
+      drug_concept_name ILIKE '%rivastigmine%' OR
+      drug_concept_name ILIKE '%galantamine%' OR
+      drug_concept_name ILIKE '%memantine%' OR
+      drug_concept_name ILIKE '%Aricept%' OR
+      drug_concept_name ILIKE '%Exelon%' OR
+      drug_concept_name ILIKE '%Razadyne%' OR
+      drug_concept_name ILIKE '%Namenda%' OR
+      drug_concept_name ILIKE '%Namzaric%'
     extraction_type: Structured
 
   # ----- Outcomes ----------------------------------------------------
