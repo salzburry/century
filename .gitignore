@@ -6,3 +6,10 @@ __pycache__/
 
 # Local credentials — keep .env out of git. .env.example is the committed template.
 .env
+
+# Generated dictionary artifacts. Only the reference PDFs under Output/
+# are committed; xlsx / html / json outputs are rebuilt on each run of
+# build_dictionary.py and should not be version-controlled.
+Output/**/*.xlsx
+Output/**/*.html
+Output/**/*.json
