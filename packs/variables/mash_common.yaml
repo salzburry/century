@@ -1,0 +1,302 @@
+# MASH (Metabolic dysfunction-Associated Steatohepatitis) — shared
+# variable base.
+#
+# Intermediate layer. Currently one MASH cohort: Newtown MASH
+# (packs/variables/newtown_mash.yaml). Self-contained disease-common
+# pack (no parent include) — there's no "hepatology_common" because
+# MASH is the only hepatology cohort in scope today.
+#
+# Row provenance from Output/newtown mash.pdf. Top condition concepts:
+#   - Fatty (change of) liver, not elsewhere classified  15.1%
+#   - Epigastric pain                                    12.7%
+#   - Acute gastritis without bleeding                   4.6%
+#   - Helicobacter pylori as the cause of diseases       4.1%
+#   - Abdominal distension (gaseous)                     3.5%
+# Top drug concepts:
+#   - pantoprazole 40 MG                                 14.0%  (PPI)
+#   - sucralfate 1000 MG [Carafate]                      3.6%
+#   - hydrocortisone 25 MG/ML topical cream [Anusol HC]  3.3%
+#   - omeprazole 40 MG                                   3.2%   (PPI)
+#   - polyethylene glycol 3350 [GoLytely]                2.6%   (bowel prep)
+#
+# The cohort is hepatology-centric but clinically touches the full GI
+# axis — this pack includes the MASH-defining diagnosis row plus the
+# GI comorbidities that dominate utilisation. Deliberately does NOT
+# include speculative MASH-specific therapy rows (resmetirom
+# [Rezdiffra], GLP-1 agonists, vitamin E, pioglitazone) because the
+# raw dump shows none of those in top concepts at the Newtown site.
+
+variables:
+  # ----- Demographics -------------------------------------------------
+  - category: Demographics
+    variable: Ethnicity
+    description: The patient's self-identified ethnicity, distinguishing Hispanic or Latino origin.
+    table: person
+    column: ethnicity_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Race
+    description: The patient's self-identified racial category.
+    table: person
+    column: race_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Sex
+    description: The patient's biological sex at birth.
+    table: person
+    column: gender_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Birth Year
+    description: Year the patient was born. Used for age calculation.
+    table: person
+    column: year_of_birth
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: ZIP code (3-digit prefix)
+    description: First three digits of the patient ZIP code — HIPAA Safe Harbor "large geographic area" generalisation.
+    table: location
+    column: zip
+    expression: LEFT("zip"::text, 3)
+    extraction_type: Structured
+    notes: Emitted only for the technical audience; redacted for sales and pharma.
+
+  - category: Demographics
+    variable: Language
+    description: Primary language of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%language%'
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Marital Status
+    description: Marital status of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%marital status%'
+    extraction_type: Structured
+
+  # ----- Vitals -------------------------------------------------------
+  - category: Vitals
+    variable: Blood Pressure
+    description: Sitting blood pressure values taken at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%blood pressure%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Heart Rate
+    description: Patient heart rate / pulse taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%heart rate%' OR observation_concept_name ILIKE '%pulse%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Body Weight
+    description: Patient weight taken at the office visit. Central to MASH — obesity is the dominant driver and weight loss is first-line therapy.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Patient Height
+    description: Patient height recorded at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%height%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: BMI (Body Mass Index)
+    description: >
+      Body mass index — key MASH staging input. AASLD guidance
+      recommends noninvasive fibrosis assessment at BMI >= 25 with
+      diabetes or cardiometabolic risk factors.
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%body mass index%' OR
+      observation_concept_name ILIKE '%BMI%'
+    extraction_type: Structured
+
+  # ----- Observations -------------------------------------------------
+  - category: Observations
+    variable: Allergies
+    description: Observation of patient allergies.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%allerg%'
+    extraction_type: Structured
+
+  - category: Observations
+    variable: Smoking Status
+    description: Current / former / never smoker status.
+    table: observation
+    column: value_as_concept_name
+    criteria: >
+      observation_concept_name ILIKE '%smoking%' OR
+      observation_concept_name ILIKE '%tobacco%' OR
+      observation_concept_name ILIKE '%cigarette%'
+    extraction_type: Structured
+
+  # ----- Diagnosis ----------------------------------------------------
+  - category: Diagnosis
+    variable: Diagnosis
+    description: Medical diagnoses and conditions recorded for the patient.
+    table: condition_occurrence
+    column: condition_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Type
+    description: Source from which the diagnosis was captured.
+    table: condition_occurrence
+    column: condition_type_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Start Date
+    description: Date the condition was first recorded.
+    table: condition_occurrence
+    column: condition_start_date
+    extraction_type: Structured
+
+  # ----- Diagnosis — MASH-specific + comorbidities -----------------
+  - category: Diagnosis
+    variable: MASH / NAFLD / Fatty Liver
+    description: >
+      Metabolic dysfunction-associated steatohepatitis (MASH,
+      formerly NASH) and the broader NAFLD / MASLD family. Also
+      catches the "Fatty (change of) liver" concept which is the
+      #1 condition in the Newtown MASH dump (15.1 % of all
+      conditions).
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%steatohepatitis%' OR
+      condition_concept_name ILIKE '%fatty%liver%' OR
+      condition_concept_name ILIKE '%non-alcoholic fatty liver%' OR
+      condition_concept_name ILIKE '%nonalcoholic fatty liver%' OR
+      condition_concept_name ILIKE '%NAFLD%' OR
+      condition_concept_name ILIKE '%NASH%' OR
+      condition_concept_name ILIKE '%MASH%' OR
+      condition_concept_name ILIKE '%MASLD%' OR
+      condition_concept_name ILIKE '%metabolic%steatotic liver%'
+    extraction_type: Structured
+    notes: Cohort-defining diagnosis.
+
+  - category: Diagnosis
+    variable: Cirrhosis / Advanced Liver Fibrosis
+    description: >
+      Cirrhosis and advanced fibrosis — the MASH progression
+      endpoint. Distinct from the primary MASH row because many
+      cohort patients are pre-cirrhotic.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%cirrhosis%' OR
+      condition_concept_name ILIKE '%hepatic fibrosis%' OR
+      condition_concept_name ILIKE '%liver fibrosis%'
+    extraction_type: Structured
+    notes: TODO (clinical review) — confirm whether Newtown stratifies by fibrosis stage (F0-F4) on live build.
+
+  - category: Diagnosis
+    variable: Upper GI Comorbidities (Gastritis / Epigastric pain / H. pylori)
+    description: >
+      GI comorbidities that dominate Newtown MASH cohort utilisation
+      alongside the primary MASH diagnosis — the raw dump shows
+      epigastric pain (12.7 %), acute gastritis (4.6 %), and
+      H. pylori (4.1 %) as top-5 conditions. Useful to surface
+      because the high PPI utilisation (see Medications) makes
+      sense only when reviewers see the matching GI disease burden.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%epigastric pain%' OR
+      condition_concept_name ILIKE '%gastritis%' OR
+      condition_concept_name ILIKE '%helicobacter pylori%' OR
+      condition_concept_name ILIKE '%H. pylori%' OR
+      condition_concept_name ILIKE '%gastroesophageal reflux%' OR
+      condition_concept_name ILIKE '%GERD%'
+    extraction_type: Structured
+
+  # ----- Medications ------------------------------------------------
+  # Captures the drug utilisation actually seen in the Newtown MASH
+  # raw dump. No speculative MASH-specific therapy rows — resmetirom
+  # (Rezdiffra), GLP-1 RAs, pioglitazone, vitamin E are standards of
+  # care for MASH but none were in top concepts at this site.
+  - category: Medications
+    variable: Proton Pump Inhibitor (PPI)
+    description: >
+      PPIs — pantoprazole, omeprazole, esomeprazole, lansoprazole,
+      rabeprazole, dexlansoprazole. Top drug in the Newtown dump
+      (pantoprazole 40 MG 14.0 % of all drug rows) plus omeprazole
+      (3.2 %).
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%pantoprazole%' OR
+      drug_concept_name ILIKE '%omeprazole%' OR
+      drug_concept_name ILIKE '%esomeprazole%' OR
+      drug_concept_name ILIKE '%lansoprazole%' OR
+      drug_concept_name ILIKE '%rabeprazole%' OR
+      drug_concept_name ILIKE '%dexlansoprazole%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Mucosal Protectant (Sucralfate)
+    description: >
+      Sucralfate — mucosal protectant used for peptic-ulcer
+      disease, seen in the Newtown dump as "sucralfate 1000 MG
+      Oral Tablet [Carafate]" (3.6 %).
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%sucralfate%' OR
+      drug_concept_name ILIKE '%Carafate%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Bowel Preparation (Polyethylene Glycol)
+    description: >
+      Polyethylene-glycol-based bowel prep — used before colonoscopy.
+      Common in this cohort because MASH patients frequently
+      undergo GI workup.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%polyethylene glycol%' OR
+      drug_concept_name ILIKE '%Golytely%' OR
+      drug_concept_name ILIKE '%Miralax%'
+    extraction_type: Structured
+
+  # ----- Visits -------------------------------------------------------
+  - category: Visits
+    variable: Visit Type
+    description: Type of healthcare visit or encounter.
+    table: visit_occurrence
+    column: visit_concept_name
+    extraction_type: Structured
+
+  - category: Visits
+    variable: Visit Date
+    description: Start date of each visit.
+    table: visit_occurrence
+    column: visit_start_date
+    extraction_type: Structured
+
+  # ----- Reports ------------------------------------------------------
+  - category: Reports
+    variable: Clinical Note
+    description: Free text of the office-visit clinical note.
+    table: note
+    column: note_text
+    extraction_type: Unstructured

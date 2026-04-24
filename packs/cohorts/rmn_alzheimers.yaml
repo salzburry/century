@@ -1,0 +1,34 @@
+# Cohort pack: Rocky Mountain Neurology Alzheimer's
+#
+# RMN patients with Alzheimer's disease / dementia diagnoses. Second
+# Alzheimer's cohort alongside MTC — the per-cohort variables_pack
+# model means adding RMN doesn't reshape alzheimers_common.yaml or
+# leak MTC-only rows into this cohort's workbook.
+
+provider: Rocky Mountain Neurology
+disease: Alzheimer's
+display_name: RMN Alzheimer's
+cohort_name: rmn_alzheimers_cohort
+schema_name: rmn_alzheimers_cohort
+variant: raw
+site_group: RMN
+status: active
+
+description: >
+  Rocky Mountain Neurology patients with an Alzheimer's disease or
+  related dementia diagnosis. Clinical variable list matches MTC
+  Alzheimer's (shared alzheimers_common / adrd_common chain); RMN-
+  specific divergences (if any surface in a live build) land in
+  the per-cohort variables pack, not in the shared base.
+
+notes:
+  - Raw dump available at Output/rmn alzheimers.pdf; top conditions
+    (Alzheimer's unspecified, MCI, amnesia, memory impairment) and
+    top drugs (donepezil, memantine) match MTC Alzheimer's cleanly.
+  - Variables pack is `rmn_alzheimers` (per-cohort). Currently a
+    structural placeholder; populate when a divergence from
+    alzheimers_common surfaces in a live build.
+
+category_rules: {}
+
+variables_pack: rmn_alzheimers

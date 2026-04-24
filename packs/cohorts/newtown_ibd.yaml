@@ -1,0 +1,33 @@
+# Cohort pack: Newtown IBD
+#
+# Newtown patients with inflammatory bowel disease — ulcerative
+# colitis dominates the raw dump (12.9 % of all conditions). Raw
+# dump at Output/newton ibd.pdf (filename uses "newton" typo;
+# warehouse schema is `newtown_ibd_cohort`).
+
+provider: Newtown
+disease: IBD
+display_name: Newtown IBD
+cohort_name: newtown_ibd_cohort
+schema_name: newtown_ibd_cohort
+variant: raw
+site_group: Newtown
+status: active
+
+description: >
+  Newtown patients with inflammatory bowel disease — ulcerative
+  colitis and Crohn's disease. 5-ASA (mesalamine) is the top drug
+  at 9.0 % + 4.8 % across two formulations; topical hydrocortisone
+  and PPIs dominate the rest of the drug utilisation.
+
+notes:
+  - Variables pack is `newtown_ibd` (per-cohort). Inherits the
+    shared `ibd_common` base; adds no cohort-specific overrides.
+  - Biologic / immunomodulator row in ibd_common is Abstracted —
+    not directly confirmed in Newtown top drug concepts. May show
+    Implemented=No at this site if biologic utilisation is
+    low / concentrated in a tertiary-referral subset.
+
+category_rules: {}
+
+variables_pack: newtown_ibd

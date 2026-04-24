@@ -1,0 +1,16 @@
+# Newtown IBD — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/newtown_ibd.yaml.
+# Inherits every row from ibd_common. No cohort-specific overrides
+# yet — all top concepts in the Newtown IBD raw dump
+# (Output/newton ibd.pdf) are already covered by ibd_common.
+#
+# Populate this file if Newtown starts shipping a cohort-specific
+# abstraction (fecal calprotectin, CRP trend, endoscopy / histology
+# staging, Mayo or Harvey-Bradshaw activity scores), or if the
+# biologic utilisation pattern diverges from the ibd_common defaults.
+
+include:
+  - ibd_common
+
+variables: []

@@ -1,0 +1,17 @@
+# RVC AMD — final variables pack.
+#
+# Cohort-specific source of truth for
+# packs/cohorts/rvc_amd_curated.yaml. Inherits every row from
+# amd_common (which in turn includes retinal_common). No cohort-
+# specific overrides yet — all top concepts in the RVC AMD raw dump
+# (Output/rvc amd.pdf) are already covered by amd_common + retinal_common.
+#
+# Populate this file if RVC ships a cohort-specific abstraction
+# table (e.g. best-corrected visual acuity trajectory, intravitreal
+# anti-VEGF agent breakdown, geographic-atrophy area measurements),
+# or if the AMD-staging concept patterns diverge at this site.
+
+include:
+  - amd_common
+
+variables: []

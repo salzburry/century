@@ -1,0 +1,136 @@
+# Age-related Macular Degeneration — shared variable base.
+#
+# Intermediate layer, not a final pack. The only AMD cohort currently
+# in scope is RVC AMD (packs/variables/rvc_amd_curated.yaml). This
+# pack sits between retinal_common and the per-cohort pack in the
+# three-layer include chain.
+#
+# Row provenance from Output/rvc amd.pdf. Top condition concepts:
+#   - Presence of intraocular lens           27.6%  (captured by retinal_common)
+#   - Essential (primary) hypertension       21.5%  (captured by retinal_common)
+#   - Vitreous degeneration, bilateral       5.7%
+#   - Type 2 diabetes mellitus               3.7%
+#   - Exudative AMD, left eye, with CNV      3.0%
+# Top drug concepts:
+#   - aspirin 81 MG                          4.0%
+#   - vitamin D3                             1.7%
+#   - vitamin D                              1.5%
+#   - calcium                                1.0%
+#   - fish oil (omega-3)                     0.9%
+# The vitamin-D / calcium / omega-3 cluster matches the AREDS2
+# supplement formulation used as AMD-progression prophylaxis.
+
+include:
+  - retinal_common
+
+variables:
+  # ----- Diagnosis — AMD-specific -----------------------------------
+  - category: Diagnosis
+    variable: Age-Related Macular Degeneration
+    description: >
+      AMD umbrella diagnosis — captures all severities and both
+      exudative (wet) and non-exudative (dry / atrophic) variants.
+      Separate rows below split wet vs dry because intravitreal
+      therapy is wet-AMD-only.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%age-related macular degeneration%' OR
+      condition_concept_name ILIKE '%age related macular degeneration%' OR
+      condition_concept_name ILIKE '%macular degeneration%' OR
+      condition_concept_name ILIKE '%AMD%' OR
+      condition_concept_name ILIKE '%ARMD%'
+    extraction_type: Structured
+    notes: Cohort-defining diagnosis.
+
+  - category: Diagnosis
+    variable: Exudative (Wet) AMD with Choroidal Neovascularization
+    description: >
+      Wet / exudative AMD with active choroidal neovascularization
+      — the subset that drives intravitreal anti-VEGF utilisation.
+      RVC AMD dump shows "Exudative age-related macular
+      degeneration, left eye, with active choroidal
+      neovascularization" at 3.0 % of all conditions.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%exudative%macular degeneration%' OR
+      condition_concept_name ILIKE '%wet%macular degeneration%' OR
+      condition_concept_name ILIKE '%macular degeneration%choroidal neovascular%' OR
+      condition_concept_name ILIKE '%neovascular AMD%'
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Non-exudative (Dry) AMD
+    description: >
+      Dry / non-exudative AMD — includes early-stage and
+      geographic-atrophy variants. No intravitreal therapy today;
+      AREDS2 supplementation is the mainstay.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%non-exudative%macular degeneration%' OR
+      condition_concept_name ILIKE '%nonexudative%macular degeneration%' OR
+      condition_concept_name ILIKE '%dry%macular degeneration%' OR
+      condition_concept_name ILIKE '%atrophic%macular degeneration%' OR
+      condition_concept_name ILIKE '%geographic atrophy%'
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Vitreous Degeneration
+    description: >
+      Vitreous degeneration — common AMD-associated comorbidity,
+      often bilateral. Flagged separately because it complicates
+      OCT imaging and affects intravitreal-injection risk-benefit.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%vitreous degeneration%' OR
+      condition_concept_name ILIKE '%posterior vitreous detachment%'
+    extraction_type: Structured
+
+  # ----- Medications — AREDS2 formulation + comorbidity markers ----
+  # AMD pharmacotherapy is anti-VEGF delivered by intravitreal
+  # injection; that shows up as a PROCEDURE (captured by the
+  # Intravitreal Injection row in retinal_common), not in
+  # drug_exposure. drug_exposure in this cohort is dominated by
+  # cardiovascular-prevention and AREDS2-formulation over-the-
+  # counter supplements (vitamin D / calcium / omega-3).
+  - category: Medications
+    variable: AREDS2 Supplementation (Vitamin D / Calcium / Omega-3)
+    description: >
+      The AREDS2 formulation — vitamin D, calcium, omega-3 fatty
+      acids (fish oil), plus the original AREDS antioxidants
+      (vitamins C / E, zinc, copper, lutein, zeaxanthin) — is the
+      standard non-pharmacologic intervention to slow AMD
+      progression in intermediate disease. Top 4 of the 5 most-
+      frequent drugs in the RVC AMD dump are in this cluster.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%vitamin D%' OR
+      drug_concept_name ILIKE '%calcium%' OR
+      drug_concept_name ILIKE '%fish oil%' OR
+      drug_concept_name ILIKE '%omega-3%' OR
+      drug_concept_name ILIKE '%omega 3%' OR
+      drug_concept_name ILIKE '%lutein%' OR
+      drug_concept_name ILIKE '%zeaxanthin%' OR
+      drug_concept_name ILIKE '%zinc%' AND drug_concept_name ILIKE '%copper%'
+    extraction_type: Structured
+    notes: >
+      Row is deliberately broad — captures the over-the-counter
+      supplement footprint a wet/dry-AMD cohort typically shows.
+      Vitamin D + calcium + omega-3 are common ingredients in
+      non-AMD formulations too; do not treat the row alone as
+      evidence of AREDS2 adherence.
+
+  - category: Medications
+    variable: Aspirin (Antiplatelet)
+    description: >
+      Low-dose aspirin — top drug in the RVC AMD dump (4.0 % of
+      all drug rows). Not AMD-specific; flagged as a cardiovascular-
+      prevention comorbidity marker alongside the AREDS2 cluster.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: drug_concept_name ILIKE '%aspirin%'
+    extraction_type: Structured

@@ -1,0 +1,342 @@
+# IBD (Inflammatory Bowel Disease) — shared variable base.
+#
+# Intermediate layer. Currently one IBD cohort: Newtown IBD
+# (packs/variables/newtown_ibd.yaml). Self-contained — no
+# "gastroenterology_common" because IBD is the only GI cohort in
+# scope today.
+#
+# Row provenance from Output/newton ibd.pdf. Top condition concepts:
+#   - Ulcerative colitis, unspecified, without complications  12.9%
+#   - Epigastric pain                                         6.1%
+#   - Diarrhea, unspecified                                   4.8%
+#   - Helicobacter pylori                                     4.8%
+#   - Hemorrhage of anus and rectum
+# Top drug concepts:
+#   - 24 HR mesalamine 375 MG Extended Release [Apriso]       9.0%
+#   - pantoprazole 40 MG                                      7.2%
+#   - hydrocortisone 25 MG/ML topical cream [Anusol HC]       4.8%
+#   - mesalamine 1200 MG Delayed Release                      4.8%
+#   - pancrelipase (amylase + lipase + protease) [Creon]      3.6%
+#
+# 5-ASA therapy (mesalamine) is the confirmed first-line IBD drug in
+# this cohort. Deliberately does NOT include speculative biologic
+# rows (anti-TNF, anti-integrin, IL-12/23 inhibitors, JAK
+# inhibitors, S1P modulators) because none were in top concepts at
+# Newtown.
+
+variables:
+  # ----- Demographics -------------------------------------------------
+  - category: Demographics
+    variable: Ethnicity
+    description: The patient's self-identified ethnicity, distinguishing Hispanic or Latino origin.
+    table: person
+    column: ethnicity_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Race
+    description: The patient's self-identified racial category.
+    table: person
+    column: race_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Sex
+    description: The patient's biological sex at birth.
+    table: person
+    column: gender_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Birth Year
+    description: Year the patient was born. Used for age calculation.
+    table: person
+    column: year_of_birth
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: ZIP code (3-digit prefix)
+    description: First three digits of the patient ZIP code — HIPAA Safe Harbor "large geographic area" generalisation.
+    table: location
+    column: zip
+    expression: LEFT("zip"::text, 3)
+    extraction_type: Structured
+    notes: Emitted only for the technical audience; redacted for sales and pharma.
+
+  - category: Demographics
+    variable: Language
+    description: Primary language of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%language%'
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Marital Status
+    description: Marital status of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%marital status%'
+    extraction_type: Structured
+
+  # ----- Vitals -------------------------------------------------------
+  - category: Vitals
+    variable: Blood Pressure
+    description: Sitting blood pressure values taken at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%blood pressure%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Heart Rate
+    description: Patient heart rate / pulse taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%heart rate%' OR observation_concept_name ILIKE '%pulse%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Body Weight
+    description: Patient weight taken at the office visit. Weight loss is an IBD disease-activity signal and malnutrition drives treatment escalation.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Patient Height
+    description: Patient height recorded at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%height%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: BMI (Body Mass Index)
+    description: Body mass index — IBD prognosis marker; low BMI correlates with more aggressive disease.
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%body mass index%' OR
+      observation_concept_name ILIKE '%BMI%'
+    extraction_type: Structured
+
+  # ----- Observations -------------------------------------------------
+  - category: Observations
+    variable: Allergies
+    description: Observation of patient allergies.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%allerg%'
+    extraction_type: Structured
+
+  - category: Observations
+    variable: Smoking Status
+    description: >
+      Current / former / never smoker status. Clinically informative
+      in IBD — former smokers are at elevated UC risk; active
+      smoking worsens Crohn's outcomes.
+    table: observation
+    column: value_as_concept_name
+    criteria: >
+      observation_concept_name ILIKE '%smoking%' OR
+      observation_concept_name ILIKE '%tobacco%' OR
+      observation_concept_name ILIKE '%cigarette%'
+    extraction_type: Structured
+
+  # ----- Diagnosis ----------------------------------------------------
+  - category: Diagnosis
+    variable: Diagnosis
+    description: Medical diagnoses and conditions recorded for the patient.
+    table: condition_occurrence
+    column: condition_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Type
+    description: Source from which the diagnosis was captured.
+    table: condition_occurrence
+    column: condition_type_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Start Date
+    description: Date the condition was first recorded.
+    table: condition_occurrence
+    column: condition_start_date
+    extraction_type: Structured
+
+  # ----- Diagnosis — IBD-specific ------------------------------------
+  - category: Diagnosis
+    variable: IBD Diagnosis
+    description: >
+      Inflammatory bowel disease — captures both major subtypes
+      (ulcerative colitis, Crohn's disease) and the indeterminate /
+      unclassified umbrella. Does NOT match microscopic /
+      collagenous / lymphocytic colitis, which are clinically
+      distinct entities.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%ulcerative colitis%' OR
+      condition_concept_name ILIKE '%Crohn%disease%' OR
+      condition_concept_name ILIKE '%Crohn%' OR
+      condition_concept_name ILIKE '%inflammatory bowel disease%' OR
+      condition_concept_name ILIKE '%IBD%' OR
+      condition_concept_name ILIKE '%regional enteritis%'
+    extraction_type: Structured
+    notes: Cohort-defining diagnosis. `%regional enteritis%` is a legacy SNOMED synonym for Crohn's disease.
+
+  - category: Diagnosis
+    variable: GI Symptoms (Diarrhea / Rectal Bleeding / Epigastric Pain)
+    description: >
+      GI symptoms commonly associated with IBD activity. The
+      Newtown dump shows diarrhea (4.8 %), hemorrhage of anus and
+      rectum, and epigastric pain (6.1 %) as top conditions
+      alongside UC.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%diarrhea%' OR
+      condition_concept_name ILIKE '%hemorrhage of anus%' OR
+      condition_concept_name ILIKE '%rectal bleeding%' OR
+      condition_concept_name ILIKE '%rectal hemorrhage%' OR
+      condition_concept_name ILIKE '%epigastric pain%' OR
+      condition_concept_name ILIKE '%abdominal pain%'
+    extraction_type: Structured
+
+  # ----- Medications — IBD-specific therapy -------------------------
+  - category: Medications
+    variable: 5-ASA (Aminosalicylate)
+    description: >
+      5-aminosalicylate therapy — mesalamine (oral ER, delayed
+      release, suppository, enema), sulfasalazine, balsalazide,
+      olsalazine. First-line UC induction and maintenance therapy.
+      Top drug in the Newtown dump: 24 HR mesalamine 375 MG ER
+      [Apriso] (9.0 %) plus mesalamine 1200 MG DR (4.8 %).
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%mesalamine%' OR
+      drug_concept_name ILIKE '%mesalazine%' OR
+      drug_concept_name ILIKE '%sulfasalazine%' OR
+      drug_concept_name ILIKE '%balsalazide%' OR
+      drug_concept_name ILIKE '%olsalazine%' OR
+      drug_concept_name ILIKE '%Apriso%' OR
+      drug_concept_name ILIKE '%Asacol%' OR
+      drug_concept_name ILIKE '%Pentasa%' OR
+      drug_concept_name ILIKE '%Lialda%' OR
+      drug_concept_name ILIKE '%Delzicol%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Corticosteroid (Topical / Systemic / Budesonide)
+    description: >
+      Corticosteroid therapy for IBD flares — topical hydrocortisone
+      [Anusol HC] (4.8 % of Newtown drug rows), oral prednisone /
+      methylprednisolone for systemic flares, and budesonide for
+      ileal / right-colon Crohn's.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%hydrocortisone%' OR
+      drug_concept_name ILIKE '%prednisone%' OR
+      drug_concept_name ILIKE '%prednisolone%' OR
+      drug_concept_name ILIKE '%methylprednisolone%' OR
+      drug_concept_name ILIKE '%budesonide%' OR
+      drug_concept_name ILIKE '%Entocort%' OR
+      drug_concept_name ILIKE '%Uceris%' OR
+      drug_concept_name ILIKE '%Anusol%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Proton Pump Inhibitor (PPI)
+    description: PPIs — pantoprazole, omeprazole. Secondary in Newtown IBD (pantoprazole 40 MG at 7.2 %) because coexisting upper-GI symptoms are common.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%pantoprazole%' OR
+      drug_concept_name ILIKE '%omeprazole%' OR
+      drug_concept_name ILIKE '%esomeprazole%' OR
+      drug_concept_name ILIKE '%lansoprazole%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Pancreatic Enzyme Replacement (Pancrelipase)
+    description: >
+      Pancrelipase — amylase/lipase/protease combo [Creon] (3.6 %
+      in Newtown). Indicated for pancreatic insufficiency, which
+      is an IBD-adjacent GI comorbidity.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%pancrelipase%' OR
+      drug_concept_name ILIKE '%lipase%protease%' OR
+      drug_concept_name ILIKE '%amylase%lipase%' OR
+      drug_concept_name ILIKE '%Creon%' OR
+      drug_concept_name ILIKE '%Zenpep%' OR
+      drug_concept_name ILIKE '%Pancreaze%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: IBD Biologic / Immunomodulator (Abstracted)
+    description: >
+      Anti-TNF (infliximab, adalimumab, golimumab, certolizumab),
+      anti-integrin (vedolizumab, natalizumab), anti-IL-12/23
+      (ustekinumab, risankizumab, mirikizumab), JAK inhibitors
+      (tofacitinib, upadacitinib), S1P modulators (ozanimod,
+      etrasimod), and traditional immunomodulators (azathioprine,
+      methotrexate).
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%infliximab%' OR
+      drug_concept_name ILIKE '%adalimumab%' OR
+      drug_concept_name ILIKE '%golimumab%' OR
+      drug_concept_name ILIKE '%certolizumab%' OR
+      drug_concept_name ILIKE '%vedolizumab%' OR
+      drug_concept_name ILIKE '%natalizumab%' OR
+      drug_concept_name ILIKE '%ustekinumab%' OR
+      drug_concept_name ILIKE '%risankizumab%' OR
+      drug_concept_name ILIKE '%mirikizumab%' OR
+      drug_concept_name ILIKE '%tofacitinib%' OR
+      drug_concept_name ILIKE '%upadacitinib%' OR
+      drug_concept_name ILIKE '%ozanimod%' OR
+      drug_concept_name ILIKE '%etrasimod%' OR
+      drug_concept_name ILIKE '%azathioprine%' OR
+      drug_concept_name ILIKE '%6-mercaptopurine%' OR
+      drug_concept_name ILIKE '%methotrexate%' OR
+      drug_concept_name ILIKE '%Humira%' OR
+      drug_concept_name ILIKE '%Remicade%' OR
+      drug_concept_name ILIKE '%Stelara%' OR
+      drug_concept_name ILIKE '%Entyvio%'
+    extraction_type: Abstracted
+    notes: >
+      TODO (clinical review) — not directly confirmed in Newtown
+      top drug concepts. Standard-of-care for moderate-to-severe
+      IBD; expect Implemented=No on mild-disease sites, but
+      worth tracking as a severity proxy.
+
+  # ----- Visits -------------------------------------------------------
+  - category: Visits
+    variable: Visit Type
+    description: Type of healthcare visit or encounter.
+    table: visit_occurrence
+    column: visit_concept_name
+    extraction_type: Structured
+
+  - category: Visits
+    variable: Visit Date
+    description: Start date of each visit.
+    table: visit_occurrence
+    column: visit_start_date
+    extraction_type: Structured
+
+  # ----- Reports ------------------------------------------------------
+  - category: Reports
+    variable: Clinical Note
+    description: Free text of the office-visit clinical note.
+    table: note
+    column: note_text
+    extraction_type: Unstructured

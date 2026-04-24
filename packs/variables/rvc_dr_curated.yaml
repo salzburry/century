@@ -1,0 +1,19 @@
+# RVC DR — final variables pack.
+#
+# Cohort-specific source of truth for
+# packs/cohorts/rvc_dr_curated.yaml. Inherits every row from
+# dr_common (which in turn includes retinal_common). No cohort-
+# specific overrides yet — all top concepts in the RVC DR raw dump
+# (Output/rvc dr.pdf) are already covered by dr_common + retinal_common.
+#
+# Populate this file if:
+#   - RVC ships a cohort-specific abstraction table (e.g. curated
+#     visual-acuity or OCT-layer thickness abstractions)
+#   - A concept-name divergence from dr_common surfaces in a live
+#     build — e.g. a DR-staging concept RVC uses that the shared
+#     base doesn't match
+
+include:
+  - dr_common
+
+variables: []

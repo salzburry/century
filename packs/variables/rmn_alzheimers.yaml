@@ -1,0 +1,20 @@
+# RMN Alzheimer's — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/rmn_alzheimers.yaml.
+# Inherits every Alzheimer's-level row from alzheimers_common (which
+# in turn includes adrd_common). Structural placeholder — the RMN
+# raw dump (Output/rmn alzheimers.pdf) confirms the cohort mirrors
+# MTC Alzheimer's clinically: top drugs are donepezil + memantine,
+# top conditions are Alzheimer's + MCI + amnesia + memory impairment,
+# all of which are already covered by alzheimers_common.
+#
+# Populate this file if:
+#   - RMN starts shipping a cohort-specific abstraction table (the
+#     way Nimbus COPD added `eosinophil_standardized`)
+#   - A concept-name divergence from MTC Alzheimer's surfaces in a
+#     live build — e.g. different anti-amyloid utilisation patterns
+
+include:
+  - alzheimers_common
+
+variables: []

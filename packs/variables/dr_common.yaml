@@ -1,0 +1,196 @@
+# Diabetic Retinopathy — shared variable base.
+#
+# Intermediate layer, not a final pack. The only DR cohort currently
+# in scope is RVC DR (packs/variables/rvc_dr_curated.yaml); that
+# per-cohort pack includes this one, which in turn includes the
+# retinal_common base. Same three-layer model as the respiratory
+# packs.
+#
+# Row provenance is mined directly from Output/rvc dr.pdf. Top
+# condition concepts (per the raw dump):
+#   - Essential (primary) hypertension         22.5%  (captured by retinal_common)
+#   - Presence of intraocular lens             19.1%  (captured by retinal_common)
+#   - T2DM with proliferative DR + macular edema, bilateral   5.8%
+#   - Age-related nuclear cataract bilateral   3.2%
+#   - T2DM with moderate nonproliferative DR + macular edema  2.7%
+# Top drug concepts:
+#   - aspirin 81 MG                            4.0%   (cardiovascular / retinal prevention)
+#   - metformin hydrochloride 500 MG           1.6%   (diabetes control)
+#   - insulin glargine [Lantus]                1.3%   (diabetes control)
+
+include:
+  - retinal_common
+
+variables:
+  # ----- Diagnosis — DR-specific -----------------------------------
+  - category: Diagnosis
+    variable: Diabetic Retinopathy
+    description: >
+      Diabetic retinopathy umbrella — captures proliferative (PDR)
+      and nonproliferative (NPDR) variants across severity classes
+      (mild / moderate / severe) and with or without macular edema.
+      The DR staging row below splits these out for reviewers who
+      need G/A-style staging.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%diabetic retinopathy%' OR
+      condition_concept_name ILIKE '%diabetic eye disease%' OR
+      condition_concept_name ILIKE '%retinopathy%diabet%' OR
+      condition_concept_name ILIKE '%diabetic macular edema%' OR
+      condition_concept_name ILIKE '%DME%'
+    extraction_type: Structured
+    notes: Cohort-defining diagnosis. Intentionally does NOT match non-diabetic retinopathy variants.
+
+  - category: Diagnosis
+    variable: DR Staging (PDR vs NPDR)
+    description: >
+      Proliferative vs nonproliferative diabetic retinopathy —
+      cohort dumps show both severities are captured with explicit
+      concept names. Separate from the umbrella DR row because
+      staging drives intravitreal-therapy decisions.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%proliferative diabetic retinopathy%' OR
+      condition_concept_name ILIKE '%nonproliferative diabetic retinopathy%' OR
+      condition_concept_name ILIKE '%non-proliferative diabetic retinopathy%' OR
+      condition_concept_name ILIKE '%NPDR%' OR
+      condition_concept_name ILIKE '%PDR%'
+    extraction_type: Structured
+    notes: >
+      Overlaps with the Diabetic Retinopathy row above on purpose —
+      reviewers can use this row for severity stratification without
+      re-filtering the broader DR count.
+
+  - category: Diagnosis
+    variable: Type 2 Diabetes Mellitus
+    description: >
+      T2DM — underlying disease driving diabetic retinopathy.
+      Captured here because DR without T2DM evidence may indicate
+      a coding gap; tracking both lets reviewers spot that mismatch.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%type 2 diabetes%' OR
+      condition_concept_name ILIKE '%diabetes mellitus type 2%' OR
+      condition_concept_name ILIKE '%DM type 2%'
+    extraction_type: Structured
+    notes: >
+      Does NOT match Type 1 DM (different CV/renal trajectory) or
+      gestational diabetes (transient). Narrow on purpose.
+
+  - category: Diagnosis
+    variable: Cataract
+    description: >
+      Age-related nuclear cataract and related cataract variants.
+      Often co-present with DR in older adults; cataract extraction
+      changes OCT baseline and must be accounted for in retinal-
+      thickness trending.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%cataract%' AND
+      condition_concept_name NOT ILIKE '%no cataract%'
+    extraction_type: Structured
+
+  # ----- Medications — diabetes control ------------------------------
+  # DR pack tracks the diabetes-control meds actually seen in the
+  # cohort raw dump. Ophthalmology-side therapy (anti-VEGF
+  # aflibercept / ranibizumab / bevacizumab) is administered as an
+  # intravitreal injection and doesn't populate drug_exposure at
+  # this cohort's site — the intravitreal injection row in
+  # retinal_common captures the procedure volume instead.
+  - category: Medications
+    variable: Metformin
+    description: >
+      Metformin — first-line type-2 diabetes therapy. Tracks cohort
+      exposure to the principal DM drug that drives DR progression
+      control.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: drug_concept_name ILIKE '%metformin%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: Insulin
+    description: >
+      Insulin — covers basal (glargine, detemir, degludec) and
+      prandial formulations. RVC DR dump shows insulin glargine
+      [Lantus] as a top drug.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%insulin glargine%' OR
+      drug_concept_name ILIKE '%insulin detemir%' OR
+      drug_concept_name ILIKE '%insulin degludec%' OR
+      drug_concept_name ILIKE '%insulin aspart%' OR
+      drug_concept_name ILIKE '%insulin lispro%' OR
+      drug_concept_name ILIKE '%insulin regular%' OR
+      drug_concept_name ILIKE '%insulin NPH%' OR
+      drug_concept_name ILIKE '%Lantus%' OR
+      drug_concept_name ILIKE '%Humalog%' OR
+      drug_concept_name ILIKE '%Novolog%' OR
+      drug_concept_name ILIKE '%Tresiba%'
+    extraction_type: Structured
+
+  - category: Medications
+    variable: SGLT2 Inhibitor
+    description: >
+      Sodium-glucose cotransporter-2 inhibitors — empagliflozin,
+      dapagliflozin, canagliflozin. Modern DM therapy with
+      cardiovascular + renal benefit; expected to be present in a
+      DR cohort.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%empagliflozin%' OR
+      drug_concept_name ILIKE '%dapagliflozin%' OR
+      drug_concept_name ILIKE '%canagliflozin%' OR
+      drug_concept_name ILIKE '%ertugliflozin%' OR
+      drug_concept_name ILIKE '%Jardiance%' OR
+      drug_concept_name ILIKE '%Farxiga%' OR
+      drug_concept_name ILIKE '%Invokana%'
+    extraction_type: Structured
+    notes: >
+      Not directly confirmed in the top concepts of the RVC DR dump;
+      expect Implemented=No at sites whose data predates broad
+      SGLT2 adoption. Row kept for completeness.
+
+  - category: Medications
+    variable: GLP-1 Receptor Agonist
+    description: >
+      GLP-1 RAs — semaglutide, liraglutide, dulaglutide, exenatide,
+      tirzepatide. Modern injectable DM therapy with cardiovascular
+      + weight benefits.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%semaglutide%' OR
+      drug_concept_name ILIKE '%liraglutide%' OR
+      drug_concept_name ILIKE '%dulaglutide%' OR
+      drug_concept_name ILIKE '%exenatide%' OR
+      drug_concept_name ILIKE '%tirzepatide%' OR
+      drug_concept_name ILIKE '%Ozempic%' OR
+      drug_concept_name ILIKE '%Wegovy%' OR
+      drug_concept_name ILIKE '%Mounjaro%' OR
+      drug_concept_name ILIKE '%Trulicity%' OR
+      drug_concept_name ILIKE '%Victoza%'
+    extraction_type: Structured
+    notes: >
+      Not directly confirmed in the top concepts of the RVC DR
+      dump; expect Implemented=No on older data. Worth tracking
+      because GLP-1 RAs have been associated with transient
+      worsening of DR in clinical trials — a signal reviewers
+      frequently ask about.
+
+  - category: Medications
+    variable: Aspirin (Antiplatelet)
+    description: >
+      Low-dose aspirin — top drug in the RVC DR dump (4.0 % of all
+      drug rows). Not DR-specific but a meaningful comorbidity
+      signal for cardiovascular risk in the diabetic population.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: drug_concept_name ILIKE '%aspirin%'
+    extraction_type: Structured

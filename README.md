@@ -65,25 +65,28 @@ Source: `century/ask.pdf` + `century/Adobe Scan 19 Apr 2026.pdf`.
 | 8 | Balboa | Renal | `balboa_ckd_cohort` | High | `balboackd.pdf` | Packs committed; awaiting live build | |
 | 9 | MTC | Alzheimer's | `mtc_alzheimers_cohort` | High | `mtcalzhiemer.pdf` | Dump available | Filename typo (`alzhiemer`) |
 | 10 | MTC | AAT | `mtc_aat_cohort` | High | `mtcaat.pdf` | Dump available | Anti-amyloid therapies |
-| 11 | Newtown | MASH | `newtown_mash_cohort` | High | — | Missing dump | |
-| 12 | Newtown | IBD | `newtown_ibd_cohort` | Low | — | Missing dump | |
+| 11 | Newtown | MASH | `newtown_mash_cohort` | High | `newtown mash.pdf` | Packs committed; awaiting live build | |
+| 12 | Newtown | IBD | `newtown_ibd_cohort` | Low | `newton ibd.pdf` | Packs committed; awaiting live build | Filename has "newton" typo; schema uses correct "newtown" |
 | 13 | DRG | Renal | `drg_ckd_cohort` | High | `drgckd.pdf` | Packs committed; awaiting live build | |
 | 14 | PRINE | Renal | TBD | — | — | Blocked | Schema not yet provisioned |
-| 15 | Rocky Mountain Neurology | Alzheimer's | `rmn_alzheimers_cohort` | — | — | Missing dump | |
+| 15 | Rocky Mountain Neurology | Alzheimer's | `rmn_alzheimers_cohort` | — | `rmn alzheimers.pdf` | Packs committed; awaiting live build | |
 | 16 | Southland Neurologic Institute | TBD | TBD | — | — | Blocked | Disease and schema unconfirmed |
 | 17 | Eye Health America (EHA) | TBD | TBD | High | — | Blocked | Disease and schema unconfirmed |
-| 18 | RVC | DR | `rvc_dr_curated` | — | — | Missing dump | |
+| 18 | RVC | DR | `rvc_dr_curated` | — | `rvc dr.pdf` | Packs committed; awaiting live build | |
+| 19 | RVC | AMD | `rvc_amd_curated` | — | `rvc amd.pdf` | Packs committed; awaiting live build | Added during the retinal pack buildout alongside RVC DR |
 
 ### 2.2 Backlog summary
 
-- 8 of 18 have a raw introspection dump in `Output/`.
-- All 8 of those also have committed `packs/cohorts/*.yaml` + variable
-  packs (MTC AAT, MTC Alzheimer's, Nimbus COPD, Nimbus Asthma,
-  Nimbus AZ COPD, Nimbus AZ Asthma, Balboa CKD, DRG CKD). The six
-  non-MTC cohorts are awaiting their first live build + clinical
-  Variables-sheet review.
-- 7 more are runnable once the cohort dump is generated.
-- 3 are blocked on upstream schema provisioning or unresolved metadata.
+- 13 of 19 have a raw introspection dump in `Output/`.
+- All 13 of those also have committed `packs/cohorts/*.yaml` + variable
+  packs (MTC AAT, MTC Alzheimer's, Nimbus COPD / Asthma, Nimbus AZ
+  COPD / Asthma, Balboa CKD, DRG CKD, RMN Alzheimer's, Newtown MASH,
+  Newtown IBD, RVC DR, RVC AMD). The 11 non-MTC cohorts are awaiting
+  their first live build + clinical Variables-sheet review.
+- 3 more are runnable once the cohort dump is generated
+  (Nira MS / MS-all / MG — missing dump).
+- 3 are blocked on upstream schema provisioning or unresolved metadata
+  (PRINE, Southland, EHA).
 
 ## 3. Verified baseline from `Output/*.pdf`
 
@@ -162,6 +165,11 @@ Explicit so the plan matches the codebase we have.
     `packs/cohorts/nimbus_az_asthma.yaml`
   - `packs/cohorts/balboa_ckd.yaml`,
     `packs/cohorts/drg_ckd.yaml`
+  - `packs/cohorts/rmn_alzheimers.yaml`,
+    `packs/cohorts/newtown_mash.yaml`,
+    `packs/cohorts/newtown_ibd.yaml`,
+    `packs/cohorts/rvc_dr_curated.yaml`,
+    `packs/cohorts/rvc_amd_curated.yaml`
   - Variable packs are layered. Every cohort has its own ETL, so the
     final source of truth is always a per-cohort pack — disease-common
     bases exist for reuse, never as the cohort's variables_pack target:
@@ -174,7 +182,12 @@ Explicit so the plan matches the codebase we have.
       `packs/variables/asthma_common.yaml` (includes `respiratory_common`),
       `packs/variables/ckd_common.yaml` (top of the renal chain — no
       renal_common parent yet because CKD is the only renal disease
-      in scope; refactor to introduce one when AKI lands)
+      in scope; refactor to introduce one when AKI lands),
+      `packs/variables/mash_common.yaml` (standalone hepatology base),
+      `packs/variables/ibd_common.yaml` (standalone gastroenterology base),
+      `packs/variables/retinal_common.yaml` (shared ophthalmology base),
+      `packs/variables/dr_common.yaml` (includes `retinal_common`),
+      `packs/variables/amd_common.yaml` (includes `retinal_common`)
     - per-cohort final packs — `cohort.variables_pack` always points
       at one of these, never at a `*_common` base directly:
       `packs/variables/mtc_aat.yaml` (includes `aat_common`,
@@ -191,8 +204,18 @@ Explicit so the plan matches the codebase we have.
       placeholder, no overrides yet),
       `packs/variables/balboa_ckd.yaml` (includes `ckd_common`,
       placeholder, no overrides yet),
-      `packs/variables/drg_ckd.yaml` (includes `ckd_common`,
-      placeholder, no overrides yet)
+      `packs/variables/drg_ckd.yaml` (includes `ckd_common`, plus a
+      cohort-specific procedure-coded Smoking Status row),
+      `packs/variables/rmn_alzheimers.yaml` (includes
+      `alzheimers_common`, placeholder),
+      `packs/variables/newtown_mash.yaml` (includes `mash_common`,
+      placeholder),
+      `packs/variables/newtown_ibd.yaml` (includes `ibd_common`,
+      placeholder),
+      `packs/variables/rvc_dr_curated.yaml` (includes `dr_common`,
+      placeholder),
+      `packs/variables/rvc_amd_curated.yaml` (includes `amd_common`,
+      placeholder)
   - `packs/categories.yaml`, `packs/pii.yaml`,
     `packs/table_descriptions.yaml`, `packs/column_descriptions.yaml`
 - `scripts/validate_packs.py` + `VALIDATION_REPORT.md` — static
