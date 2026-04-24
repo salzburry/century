@@ -757,6 +757,27 @@ class VisualPolishXlsxTests(unittest.TestCase):
         self.assertIsNone(ws.auto_filter.ref,
                           "Summary sheet must not have auto-filter")
 
+    def test_summary_sheet_header_is_plain(self):
+        """Summary must stay visually plain — no navy fill, no bold
+        header — so it reads as key/value metadata rather than
+        a stylised dataset. Regression guard for the Tier-1 fix that
+        moved `_style_xlsx_header_row` inside the data-sheet branch."""
+        wb = self._write()
+        ws = wb["Summary"]
+        first_cell = ws.cell(row=1, column=1)
+        self.assertFalse(
+            first_cell.font.bold,
+            "Summary A1 must NOT be bold (bold header means it was "
+            "styled like a data sheet, contradicting Tier-1 design)",
+        )
+        # openpyxl's default unfilled cell has fill_type None or 'none'.
+        self.assertIn(
+            first_cell.fill.fill_type, (None, "none"),
+            f"Summary A1 must NOT have a solid fill — Tier-1 design "
+            f"says Summary stays plain (fill_type was "
+            f"{first_cell.fill.fill_type!r})",
+        )
+
     def test_header_row_is_styled(self):
         """Bold white text on a solid fill, row height >= 20 so the
         styled header actually shows. Asserts presentation without
