@@ -1,0 +1,23 @@
+# Balboa CKD — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/balboa_ckd.yaml.
+# Inherits every CKD-level row from ckd_common. Does NOT currently add
+# any cohort-specific rows — Balboa ships standard OMOP plus
+# standard_profile_data_model / dv_tokenized_profile_data / fact_of_death
+# (all handled through pii.yaml and the Columns page, not Variables),
+# and no Balboa-only abstraction table has been confirmed.
+#
+# Populate this file when:
+#   - The Balboa ETL starts emitting cohort-specific tables (e.g. a
+#     curated eGFR or UACR abstraction analogous to Nimbus COPD's
+#     eosinophil_standardized)
+#   - A concept-name pattern diverges from ckd_common in this cohort
+#     only and a live build confirms it
+#
+# Until then, this pack is a structural placeholder — every row comes
+# from the shared ckd_common chain.
+
+include:
+  - ckd_common
+
+variables: []

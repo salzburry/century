@@ -1682,5 +1682,300 @@ class MTCCohortPackTests(unittest.TestCase):
                              f"{[f.message for f in warnings]}")
 
 
+# --------------------------------------------------------------------- #
+# CKD pack split — two layers (CKD is the only renal disease in scope
+# right now, so there is no separate renal_common above ckd_common):
+#
+#   ckd_common
+#       ├── balboa_ckd     (final; placeholder)
+#       └── drg_ckd        (final; placeholder)
+#
+# When AKI or another renal disease lands as its own cohort, refactor
+# to introduce renal_common as a parent and pull demographics / vitals
+# / generic visits rows up into it.
+# --------------------------------------------------------------------- #
+
+
+CKD_FINAL_PACKS = ("balboa_ckd", "drg_ckd")
+
+
+class CKDPackSplitTests(unittest.TestCase):
+
+    def test_ckd_common_exists_as_top_level_renal_base(self):
+        """ckd_common is the top of the renal chain — it must NOT
+        include any other pack today (no renal_common parent yet)."""
+        ckd = _load_yaml("packs/variables/ckd_common.yaml")
+        self.assertIn("variables", ckd)
+        self.assertFalse(
+            ckd.get("include"),
+            "ckd_common must not include another pack — it's the top "
+            "of the renal chain. If AKI or another renal disease "
+            "lands as a separate cohort, add a renal_common parent "
+            "first and move the demographics / vitals rows up into it.",
+        )
+        # Disease-common base should carry enough rows to be useful.
+        self.assertGreater(len(ckd["variables"]), 25)
+
+    def test_each_ckd_pack_includes_ckd_common(self):
+        """Per-cohort CKD packs layer on top of ckd_common. Same
+        per-cohort-ETL rule as the Nimbus and MTC packs."""
+        for pack in CKD_FINAL_PACKS:
+            data = _load_yaml(f"packs/variables/{pack}.yaml")
+            self.assertEqual(
+                data.get("include"), ["ckd_common"],
+                f"{pack} must include exactly ['ckd_common'] — each "
+                f"per-cohort CKD pack layers on top of the disease-"
+                f"common base, not on another cohort",
+            )
+
+    def test_no_duplicate_variables_in_either_ckd_cohort(self):
+        for slug in CKD_FINAL_PACKS:
+            all_vars = _all_variables_for(slug)
+            keys = [(v.get("category"), v.get("variable")) for v in all_vars]
+            dupes = sorted({k for k in keys if keys.count(k) > 1})
+            self.assertEqual(
+                dupes, [],
+                f"duplicate (category, variable) in {slug}: {dupes}",
+            )
+
+
+# --------------------------------------------------------------------- #
+# CKD pack curation — key concept-name and class-row guards. Mirrors
+# the respiratory / MTC curation tests.
+# --------------------------------------------------------------------- #
+
+
+class CKDPackCurationTests(unittest.TestCase):
+
+    def _find(self, pack_slug: str, name: str) -> dict:
+        for v in _all_variables_for(pack_slug):
+            if v.get("variable") == name:
+                return v
+        self.fail(f"variable {name!r} not found in {pack_slug}")
+
+    # -- CKD diagnosis row covers the major condition families seen
+    # in both Balboa and DRG dumps (CKD stages, ESRD, dialysis
+    # dependence, hypertensive renal disease, diabetic nephropathy).
+    def test_ckd_diagnosis_matches_major_condition_families(self):
+        dx = self._find("ckd_common", "CKD Diagnosis")
+        c = dx["criteria"].lower()
+        for token in ("chronic kidney disease",
+                      "end stage renal disease",
+                      "dependence on renal dialysis",
+                      "hypertensive renal disease",
+                      "diabetic nephropathy"):
+            self.assertIn(
+                token, c,
+                f"CKD Diagnosis criteria must match {token!r} "
+                f"(got: {dx['criteria']!r})",
+            )
+
+    # -- AKI row tracks acute episodes separately from chronic CKD.
+    def test_aki_row_is_distinct_from_ckd(self):
+        aki = self._find("ckd_common", "Acute Kidney Injury")
+        c = aki["criteria"].lower()
+        for token in ("acute kidney failure",
+                      "acute renal failure",
+                      "acute kidney injury"):
+            self.assertIn(token, c)
+
+    # -- Class-level CKD medication rows exist (not one catch-all).
+    def test_ckd_ships_class_level_medication_rows(self):
+        expected = [
+            "RAAS Blockade (ACE Inhibitor / ARB)",
+            "SGLT2 Inhibitor",
+            "Mineralocorticoid Receptor Antagonist (MRA)",
+            "Loop Diuretic",
+            "Statin (HMG-CoA Reductase Inhibitor)",
+            "Sodium Bicarbonate (Acidosis Correction)",
+            "Phosphate Binder",
+            "Potassium Binder",
+            "Erythropoiesis-Stimulating Agent (ESA)",
+        ]
+        for slug in ("ckd_common",) + CKD_FINAL_PACKS:
+            names = [v.get("variable") for v in _all_variables_for(slug)]
+            for label in expected:
+                self.assertIn(
+                    label, names,
+                    f"{slug} must expose class-level row {label!r}",
+                )
+
+    # -- RAAS row covers both ACE inhibitors and ARBs (alternatives
+    # for the same indication; combining them keeps the row name
+    # honest about what's being aggregated).
+    def test_raas_row_covers_ace_and_arb_ingredients(self):
+        raas = self._find("ckd_common", "RAAS Blockade (ACE Inhibitor / ARB)")
+        c = raas["criteria"].lower()
+        # ACE inhibitors
+        for ing in ("lisinopril", "enalapril", "ramipril"):
+            self.assertIn(ing, c, f"RAAS row must match ACE-i {ing!r}")
+        # ARBs
+        for ing in ("losartan", "valsartan"):
+            self.assertIn(ing, c, f"RAAS row must match ARB {ing!r}")
+
+    # -- SGLT2 row covers the three FDA-approved CKD-indicated agents.
+    def test_sglt2_row_covers_three_ingredients(self):
+        sglt2 = self._find("ckd_common", "SGLT2 Inhibitor")
+        c = sglt2["criteria"].lower()
+        for ing in ("empagliflozin", "dapagliflozin", "canagliflozin"):
+            self.assertIn(ing, c, f"SGLT2 row must match {ing!r}")
+
+    # -- Serum Creatinine row requires a serum/plasma/blood qualifier
+    # so the urine-creatinine panels (used in UACR) don't leak into
+    # this row.
+    def test_serum_creatinine_requires_serum_qualifier(self):
+        cr = self._find("ckd_common", "Serum Creatinine")
+        c = cr["criteria"].lower()
+        self.assertIn("creatinine", c)
+        self.assertTrue(
+            any(tok in c for tok in ("serum", "plasma", "blood")),
+            "Serum Creatinine row must AND in a serum/plasma/blood "
+            "qualifier so urine-creatinine panels don't pollute it",
+        )
+
+    # -- Hemoglobin row qualifier prevents HbA1c / hemoglobin A1c from
+    # leaking in.
+    def test_hemoglobin_row_excludes_hba1c(self):
+        hgb = self._find("ckd_common", "Hemoglobin")
+        c = hgb["criteria"].lower()
+        self.assertIn("hemoglobin", c)
+        self.assertTrue(
+            any(tok in c for tok in ("blood", "mass/volume")),
+            "Hemoglobin row must AND in a blood / mass-per-volume "
+            "qualifier so HbA1c is not counted here",
+        )
+
+    # -- Smoking Status uses the wider %tobacco% pattern (vs the
+    # respiratory_common %tobacco use% pattern) — required because
+    # DRG records "Current tobacco non-user (CAD, CAP, COPD, PV) (DM)"
+    # which would not match the narrower clause.
+    def test_smoking_row_uses_widened_tobacco_pattern(self):
+        for slug in CKD_FINAL_PACKS:
+            sm = self._find(slug, "Smoking Status")
+            c = sm["criteria"].lower()
+            self.assertIn(
+                "ilike '%tobacco%'", c,
+                f"{slug}: Smoking Status criteria must use the "
+                f"widened %tobacco% pattern so DRG-style "
+                f"'Current tobacco non-user' concepts match "
+                f"(got: {sm['criteria']!r})",
+            )
+
+
+# --------------------------------------------------------------------- #
+# CKD broad-wildcard regression guards — same approach as respiratory.
+# --------------------------------------------------------------------- #
+
+
+class CKDBroadWildcardRegressionTests(unittest.TestCase):
+
+    def test_no_catch_wide_drug_wildcards_in_ckd_packs(self):
+        # Patterns that would be trivially too broad for CKD:
+        #   ILIKE '%blocker%'   — matches ARBs but also beta-blockers,
+        #                          calcium blockers, etc.
+        #   ILIKE '%diuretic%'  — would catch thiazides on the loop
+        #                          diuretic row
+        #   ILIKE '%kidney%'    — would match every renal-related
+        #                          drug indication string
+        #   ILIKE '%renal%'     — same problem
+        banned_patterns = ("'%blocker%'", "'%diuretic%'",
+                           "'%kidney%'", "'%renal%'", "'%dialysis%'")
+        for slug in CKD_FINAL_PACKS + ("ckd_common",):
+            for v in _all_variables_for(slug):
+                # Procedure rows naturally use %dialysis% / %kidney% /
+                # %renal% in their criteria — only ban these on the
+                # drug_exposure-table rows.
+                if v.get("table") != "drug_exposure":
+                    continue
+                c = (v.get("criteria") or "").lower()
+                for bad in banned_patterns:
+                    self.assertNotIn(
+                        bad, c,
+                        f"{slug}/{v.get('variable')} drug criteria "
+                        f"contains overly broad wildcard {bad} — narrow "
+                        f"to a specific ingredient list "
+                        f"(got: {v.get('criteria')!r})",
+                    )
+
+    def test_no_ckd_variable_points_at_id_column_without_id_name(self):
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            import importlib
+            validate_packs = importlib.import_module("validate_packs")
+        finally:
+            sys.path.pop(0)
+
+        leaf_packs = CKD_FINAL_PACKS + ("ckd_common",)
+        for slug in leaf_packs:
+            for v in _all_variables_for(slug):
+                msg = validate_packs._check_id_column_name_mismatch(v)
+                self.assertIsNone(
+                    msg,
+                    f"{slug}/{v.get('variable')}: {msg}",
+                )
+
+
+# --------------------------------------------------------------------- #
+# CKD cohort packs — point at the correct per-cohort variables pack
+# and carry the required validator-enforced fields.
+# --------------------------------------------------------------------- #
+
+
+class CKDCohortPackTests(unittest.TestCase):
+
+    EXPECTED = {
+        "balboa_ckd":  ("Balboa", "Renal", "balboa_ckd", "balboa_ckd_cohort"),
+        "drg_ckd":     ("DRG",    "Renal", "drg_ckd",    "drg_ckd_cohort"),
+    }
+
+    def test_both_ckd_cohort_packs_exist(self):
+        for slug in self.EXPECTED:
+            path = REPO_ROOT / "packs" / "cohorts" / f"{slug}.yaml"
+            self.assertTrue(path.is_file(),
+                            f"missing cohort pack: {path}")
+
+    def test_ckd_cohort_packs_point_at_per_cohort_variable_packs(self):
+        for slug, (provider, disease, var_pack, schema) in self.EXPECTED.items():
+            data = _load_yaml(f"packs/cohorts/{slug}.yaml")
+            self.assertEqual(data.get("provider"), provider, slug)
+            self.assertEqual(data.get("disease"), disease, slug)
+            self.assertEqual(
+                data.get("variables_pack"), var_pack,
+                f"{slug} must point at its per-cohort variable pack "
+                f"{var_pack!r} — separate ETL per cohort means each "
+                f"cohort owns its final source of truth",
+            )
+            self.assertEqual(
+                data.get("schema_name"), schema,
+                f"{slug} schema_name must match the on-warehouse "
+                f"layout (got {data.get('schema_name')!r})",
+            )
+            var_path = REPO_ROOT / "packs" / "variables" / f"{var_pack}.yaml"
+            self.assertTrue(
+                var_path.is_file(),
+                f"{slug}: variables_pack file {var_path} is missing",
+            )
+
+    def test_validator_clean_on_ckd_cohorts(self):
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            import importlib
+            validate_packs = importlib.import_module("validate_packs")
+        finally:
+            sys.path.pop(0)
+
+        known = validate_packs._load_known_categories()
+        for slug in self.EXPECTED:
+            report = validate_packs.validate_cohort(slug, known)
+            errors = [f for f in report.findings if f.severity == "error"]
+            warnings = [f for f in report.findings if f.severity == "warning"]
+            self.assertEqual(errors, [],
+                             f"{slug} has validator errors: "
+                             f"{[f.message for f in errors]}")
+            self.assertEqual(warnings, [],
+                             f"{slug} has validator warnings: "
+                             f"{[f.message for f in warnings]}")
+
+
 if __name__ == "__main__":
     unittest.main()

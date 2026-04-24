@@ -1,0 +1,40 @@
+# Cohort pack: DRG CKD
+#
+# DRG patients with chronic kidney disease.
+# Schema name matches the raw dump in Output/drgckd.pdf.
+
+provider: DRG
+disease: Renal
+display_name: DRG CKD
+cohort_name: drg_ckd_cohort
+schema_name: drg_ckd_cohort
+variant: raw
+site_group: DRG
+status: active
+
+description: >
+  DRG patients with a chronic kidney disease diagnosis. Schema is
+  slimmer than Balboa's — core OMOP tables only (no
+  standard_profile_data_model, no dv_tokenized_profile_data, no
+  fact_of_death). Acute kidney injury is captured alongside CKD.
+
+notes:
+  - Technical dictionary generated from schema introspection.
+  - Variables pack is `drg_ckd` (per-cohort). Currently a structural
+    placeholder that inherits everything from the shared `ckd_common`
+    chain; cohort-specific rows land here once a divergence is
+    confirmed.
+  - DRG dump shows "Urea/Creatinine [Ratio] in Urine" as a urine
+    biomarker — that's a urea-side ratio, NOT the canonical
+    albumin-side UACR. The shared UACR row will likely show
+    Implemented=No until the cohort either records true UACR or a
+    DRG-specific urea-creatinine-ratio row is added here.
+  - Smoking Status row in ckd_common uses the widened `%tobacco%`
+    pattern specifically because DRG records statuses as
+    "Current tobacco non-user (CAD, CAP, COPD, PV) (DM)".
+
+# Optional table -> Category override. Empty -> use packs/categories.yaml.
+category_rules: {}
+
+# Variables pack (Page 4) — per-cohort final pack.
+variables_pack: drg_ckd
