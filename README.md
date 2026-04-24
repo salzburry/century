@@ -208,6 +208,16 @@ Explicit so the plan matches the codebase we have.
   design docs. Extract, `pip install -r requirements.txt`, fill in
   `.env` from `.env.example`, and `python3 build_dictionary.py
   --cohort <slug>` runs.
+- `scripts/dump_new_schemas.py` — raw-dump helper for the backlog
+  cohorts that don't have a reference PDF under `Output/` yet
+  (Rocky Mountain Neurology Alzheimer's, Newtown MASH, Newtown IBD,
+  RVC DR, RVC AMD). Hands each schema name to
+  `introspect_cohort.py --schema`, which walks the warehouse without
+  needing a cohort pack. Output lands under `Output/raw/<schema>/`
+  (gitignored — dumps carry real warehouse distributions). Run once
+  the schemas are provisioned; mine the resulting files the same
+  way the existing Nimbus / Balboa / DRG cohorts were mined, then
+  commit proper `<disease>_common` + per-cohort packs.
 
 ### 5.2 What is NOT a clinical validation
 `VALIDATION_REPORT.md` is a structural lint, not a clinical

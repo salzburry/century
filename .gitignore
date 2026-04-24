@@ -13,3 +13,9 @@ __pycache__/
 Output/**/*.xlsx
 Output/**/*.html
 Output/**/*.json
+
+# Raw schema dumps produced by scripts/dump_new_schemas.py. These
+# contain real warehouse concept-name distributions, row counts, and
+# person counts — privacy-sensitive enough that they stay out of git.
+# Mine them locally to inform pack curation, then delete.
+Output/raw/

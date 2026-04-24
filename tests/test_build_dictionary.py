@@ -2295,5 +2295,63 @@ class CKDCohortPackTests(unittest.TestCase):
         _assert_validator_clean(self, self.EXPECTED)
 
 
+# --------------------------------------------------------------------- #
+# dump_new_schemas.py — thin subprocess wrapper that hands each of the
+# five backlog-cohort schemas to `introspect_cohort.py --schema`. We
+# can't test the actual DB dump here (no warehouse in the sandbox) but
+# we CAN lock in the SCHEMAS list shape so a future edit that drops a
+# cohort or renames a schema fails loudly at test time.
+# --------------------------------------------------------------------- #
+
+
+class DumpNewSchemasTests(unittest.TestCase):
+
+    def _load_module(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "dump_new_schemas",
+            REPO_ROOT / "scripts" / "dump_new_schemas.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_script_is_importable(self):
+        # Syntactic validity + clean import (no accidental top-level
+        # side effects that would break on a server without a DB).
+        mod = self._load_module()
+        self.assertTrue(hasattr(mod, "SCHEMAS"))
+        self.assertTrue(hasattr(mod, "main"))
+
+    def test_schemas_list_covers_the_five_backlog_cohorts(self):
+        mod = self._load_module()
+        # Ordered list — order doesn't matter clinically but locking
+        # membership prevents accidental drops.
+        expected = {
+            "rmn_alzheimers_cohort",
+            "newtown_mash_cohort",
+            "newtown_ibd_cohort",
+            "rvc_dr_curated",
+            "rvc_amd_curated",
+        }
+        self.assertEqual(
+            set(mod.SCHEMAS), expected,
+            f"dump_new_schemas.SCHEMAS drifted from the backlog list. "
+            f"Expected {sorted(expected)}, got {sorted(mod.SCHEMAS)}.",
+        )
+
+    def test_raw_output_dir_is_gitignored(self):
+        # The dumps carry real warehouse data distributions, so
+        # Output/raw/ must stay out of git. Check .gitignore directly
+        # so a future cleanup can't silently drop the rule.
+        ignore_text = (REPO_ROOT / ".gitignore").read_text()
+        self.assertIn(
+            "Output/raw/", ignore_text,
+            ".gitignore must keep Output/raw/ out of git — the raw "
+            "dumps produced by scripts/dump_new_schemas.py contain "
+            "warehouse data distributions that are privacy-sensitive.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
