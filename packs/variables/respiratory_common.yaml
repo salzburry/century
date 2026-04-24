@@ -74,12 +74,14 @@ variables:
       Emitted only in the technical audience; redacted by the PII
       filter for sales and pharma.
 
-  - category: Demographics
-    variable: Payer Type
-    description: Insurance or payer responsible for coverage.
-    table: payer_plan_period
-    column: payer_concept_name
-    extraction_type: Structured
+  # NOTE: Payer Type is intentionally NOT included here. None of the
+  # respiratory cohorts (Nimbus COPD / Asthma, Nimbus AZ COPD / Asthma)
+  # ship a `payer_plan_period` table — confirmed in the raw dumps under
+  # Output/nimbus*.pdf. The ADRD packs do include a Payer Type row via
+  # adrd_common.yaml because MTC schemas do carry payer_plan_period;
+  # respiratory_common deliberately diverges. A future respiratory
+  # cohort that ships payer data can add the row in its per-cohort
+  # pack rather than here.
 
   - category: Demographics
     variable: Language
