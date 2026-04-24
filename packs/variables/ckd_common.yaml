@@ -81,19 +81,44 @@ variables:
 
   # ----- Vitals -------------------------------------------------------
   # Sites split blood pressure differently — Balboa records separate
-  # "Diastolic blood pressure" and "Systolic blood pressure" rows;
-  # DRG records a combined "Sitting blood pressure". Both match the
-  # ILIKE '%blood pressure%' criteria.
+  # "Diastolic blood pressure" and "Systolic blood pressure" rows in
+  # observation.value_as_number; DRG records a combined "Sitting blood
+  # pressure" string in observation.value_as_string. Two rows cover
+  # both representations so neither is silently lost.
   - category: Vitals
-    variable: Blood Pressure
+    variable: Blood Pressure (Combined)
     description: >
-      Sitting blood pressure values taken at the office visit. Matches
-      both combined (Sitting blood pressure) and split (Systolic /
-      Diastolic blood pressure) representations.
+      Combined-format blood-pressure readings (e.g. "120/80") stored
+      as an observation value string. DRG-style Sitting blood pressure
+      records land here.
     table: observation
     column: value_as_string
     criteria: observation_concept_name ILIKE '%blood pressure%'
     extraction_type: Structured
+    notes: >
+      Matches only the `value_as_string` column. Sites that record
+      systolic / diastolic numerically as separate observations
+      populate the "Blood Pressure (Systolic / Diastolic, numeric)"
+      row below instead.
+
+  - category: Vitals
+    variable: Blood Pressure (Systolic / Diastolic, numeric)
+    description: >
+      Systolic and diastolic blood pressure recorded as separate
+      numeric observations. Balboa-style "Systolic blood pressure"
+      and "Diastolic blood pressure" records (each 15.1% of all
+      observation rows per Output/balboackd.pdf) land here.
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%systolic blood pressure%' OR
+      observation_concept_name ILIKE '%diastolic blood pressure%'
+    extraction_type: Structured
+    notes: >
+      Criteria is deliberately scoped to systolic / diastolic so
+      generic "Blood pressure" concept rows — which typically live
+      in `value_as_string` — don't leak into this numeric row.
+      Combined BP-string records are captured by the row above.
 
   - category: Vitals
     variable: Temperature
@@ -165,28 +190,10 @@ variables:
       Captures smoking status at sites that record it in the OMOP
       `observation` table (Balboa-style). Sites that record smoking
       as a procedure-coded SNOMED "Current tobacco non-user ..."
-      concept — as DRG does — are captured by the separate
-      "Smoking Status (Procedure-coded)" row below.
-
-  - category: Observations
-    variable: Smoking Status (Procedure-coded)
-    description: >
-      Smoking status captured in `procedure_occurrence` via the SNOMED
-      "Current tobacco non-user ..." / "Current tobacco user ..." style
-      concepts. DRG ships this as a procedure (5.6% of all procedure
-      rows, confirmed in Output/drgckd.pdf) rather than an observation.
-    table: procedure_occurrence
-    column: procedure_concept_name
-    criteria: >
-      procedure_concept_name ILIKE '%tobacco%' OR
-      procedure_concept_name ILIKE '%smoking%' OR
-      procedure_concept_name ILIKE '%cigarette%'
-    extraction_type: Structured
-    notes: >
-      Parallel to the observation-side Smoking Status row. Both should
-      be reported in a live build so reviewers can see which table
-      holds the cohort's smoking-status signal. Combined cohort-level
-      counts require de-duplicating by person across the two rows.
+      concept — DRG being the current example — supply that row in
+      their per-cohort pack (packs/variables/drg_ckd.yaml) rather
+      than here, so it doesn't leak into cohorts where the concept
+      isn't used.
 
   # ----- Diagnosis ----------------------------------------------------
   - category: Diagnosis
@@ -632,16 +639,15 @@ variables:
     extraction_type: Structured
 
   - category: Medications
-    variable: Calcium Channel Blocker (Dihydropyridine)
+    variable: Calcium Channel Blocker
     description: >
-      Dihydropyridine calcium channel blockers (amlodipine,
-      nifedipine, felodipine, nicardipine) used for blood-pressure
-      control in CKD, often paired with an ACE-i / ARB. Non-
-      dihydropyridine CCBs (diltiazem, verapamil) included here too
-      because they are prescribed for the same indication in
-      patients intolerant of dihydropyridines. amlodipine is the
-      #3-4 most-frequent drug in BOTH Balboa (1.6%) and DRG (1.1%)
-      dumps.
+      Calcium channel blockers used for blood-pressure control in
+      CKD, often paired with an ACE-i / ARB. Covers both
+      dihydropyridine agents (amlodipine, nifedipine, felodipine,
+      nicardipine, isradipine) and non-dihydropyridine agents
+      (diltiazem, verapamil) since both classes are prescribed for
+      the same HTN-in-CKD indication. amlodipine is the #3-4
+      most-frequent drug in BOTH Balboa (1.6%) and DRG (1.1%) dumps.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -659,7 +665,10 @@ variables:
       CCBs are not CKD-specific but are foundational for HTN
       management in CKD (where ACE/ARB alone rarely reaches BP
       targets). Row is deliberately by explicit-ingredient list to
-      avoid the banned '%blocker%' wildcard.
+      avoid the banned '%blocker%' wildcard. Split into DHP vs
+      non-DHP per-cohort packs if a reviewer needs the class-level
+      breakdown — the clinical literature typically treats them
+      separately for MI / heart-failure co-management.
 
   - category: Medications
     variable: Statin (HMG-CoA Reductase Inhibitor)

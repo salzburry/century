@@ -1,8 +1,8 @@
 # DRG CKD — final variables pack.
 #
 # Cohort-specific source of truth for packs/cohorts/drg_ckd.yaml.
-# Inherits every CKD-level row from ckd_common. Does NOT currently add
-# any cohort-specific rows.
+# Inherits every CKD-level row from ckd_common and adds rows that are
+# specific to how the DRG ETL captures data.
 #
 # Populate this file when:
 #   - The DRG ETL starts emitting cohort-specific tables
@@ -11,11 +11,35 @@
 #     "Urea/Creatinine [Ratio] in Urine" rather than the canonical
 #     UACR — if that's the only proxy DRG ships, a DRG-specific
 #     UACR-style row may belong here)
-#
-# Until then, this pack is a structural placeholder — every row comes
-# from the shared ckd_common chain.
 
 include:
   - ckd_common
 
-variables: []
+variables:
+  # ----- Observations — DRG-specific smoking-status capture -------
+  # DRG records smoking status as a SNOMED concept in
+  # `procedure_occurrence` (5.6% of all procedure rows per
+  # Output/drgckd.pdf — "Current tobacco non-user (CAD, CAP, COPD,
+  # PV) (DM) (IBD)"). Balboa uses the OMOP `observation` table for
+  # the same clinical signal, which the shared ckd_common row
+  # already covers. This row is DRG-only so it doesn't leak into
+  # Balboa's workbook with DRG-specific wording.
+  - category: Observations
+    variable: Smoking Status (Procedure-coded)
+    description: >
+      Smoking status captured in `procedure_occurrence` via the SNOMED
+      "Current tobacco non-user ..." / "Current tobacco user ..." style
+      concepts. DRG ships this as a procedure (5.6% of all procedure
+      rows, confirmed in Output/drgckd.pdf) rather than an observation.
+    table: procedure_occurrence
+    column: procedure_concept_name
+    criteria: >
+      procedure_concept_name ILIKE '%tobacco%' OR
+      procedure_concept_name ILIKE '%smoking%' OR
+      procedure_concept_name ILIKE '%cigarette%'
+    extraction_type: Structured
+    notes: >
+      Parallel to the observation-side "Smoking Status" row from
+      ckd_common. Combined cohort-level counts for DRG require
+      de-duplicating by person across the two rows because some
+      sites may populate both.
