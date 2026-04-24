@@ -13,3 +13,9 @@ __pycache__/
 Output/**/*.xlsx
 Output/**/*.html
 Output/**/*.json
+
+# Runtime bundle(s) produced by scripts/build_runtime_bundle.sh. These
+# are regenerated from source on demand, so committing them just
+# creates a stale snapshot (the old century-dictionary-runtime.zip went
+# exactly that way before it was removed). Keep them out of git.
+*.zip

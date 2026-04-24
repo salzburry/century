@@ -200,6 +200,14 @@ Explicit so the plan matches the codebase we have.
   ILIKE, missing criteria on clinically-specific rows, and column
   vs variable-name mismatches (e.g. `_concept_id` column under a row
   whose name doesn't mention "ID").
+- `scripts/build_runtime_bundle.sh` — emits
+  `century-dictionary-runtime.zip` (~90 KB, ~30 files) containing
+  exactly what a server needs to run the generator: the two Python
+  entrypoints, the validator, `packs/`, `requirements.txt`,
+  `.env.example`, and a snapshot of `VALIDATION_REPORT.md`. No tests,
+  no reference PDFs, no historical design docs. The bundle itself is
+  gitignored so it can't go stale in history; regenerate with
+  `bash scripts/build_runtime_bundle.sh` whenever the packs change.
 
 ### 5.2 What is NOT a clinical validation
 `VALIDATION_REPORT.md` is a structural lint, not a clinical
