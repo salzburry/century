@@ -1,17 +1,27 @@
 # Shared respiratory (obstructive airway disease) variable base.
 #
-# Used by packs/variables/copd.yaml and packs/variables/asthma.yaml via
-# `include: [respiratory_common]`. Mirrors the role of adrd_common.yaml
-# for the ADRD packs — covers everything an obstructive-airway cohort
-# dictionary needs that is not disease-specific:
+# Used by packs/variables/copd_common.yaml and
+# packs/variables/asthma_common.yaml via `include: [respiratory_common]`.
+# The disease-common packs are themselves intermediate — every cohort
+# pack (e.g. nimbus_copd.yaml, nimbus_az_copd.yaml) layers on top of
+# its disease-common base, so the final include chain a cohort sees is:
+#
+#   nimbus_*  →  <disease>_common  →  respiratory_common
+#
+# Mirrors the role of adrd_common.yaml for the ADRD packs — covers
+# everything an obstructive-airway cohort dictionary needs that is
+# not disease-specific:
 #
 #   Demographics, Vitals, Observations, Diagnosis, Labs/Biomarkers,
 #   Visits, Reports.
 #
-# Disease-specific packs add rows on top (COPD exacerbations, asthma
-# biologics, disease-specific PFT thresholds). Keep this file narrow —
+# Disease-common packs add rows on top (COPD exacerbations, asthma
+# biologics, disease-specific PFT thresholds). Per-cohort packs add
+# cohort-specific rows on top of those (e.g. Nimbus COPD's curated
+# `eosinophil_standardized` abstraction table). Keep this file narrow —
 # anything that isn't equally meaningful across COPD and asthma belongs
-# in the disease-level pack.
+# in the disease-common pack, and anything that exists in only one
+# cohort's ETL belongs in the per-cohort pack.
 #
 # Clinical provenance: rows here are drawn from the concept names
 # actually seen in the Nimbus and Nimbus AZ raw dumps (smoking status,
@@ -227,15 +237,16 @@ variables:
 
   # ----- Labs / Biomarkers -------------------------------------------
   # Eosinophils are shared between COPD (exacerbation/biologic
-  # stratification) and asthma (T2-high phenotype), so the row lives
-  # here rather than in either disease pack. IgE and FeNO stay in
-  # asthma.yaml because they don't play the same role in COPD.
+  # stratification, ICS-response prediction) and asthma (type-2
+  # phenotype, biologic eligibility), so the row lives here rather
+  # than in either disease pack. IgE and FeNO stay in asthma_common
+  # because they don't play the same role in COPD.
   - category: Labs / Biomarkers
     variable: Blood Eosinophils
     description: >
       Absolute or percentage eosinophil count from peripheral blood —
-      type-2 inflammation marker used to triage biologic eligibility
-      and to predict ICS response in COPD.
+      type-2 inflammation marker used across obstructive airway
+      cohorts to phenotype patients and triage biologic eligibility.
     table: measurement
     column: value_as_number
     criteria: >
