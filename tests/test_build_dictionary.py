@@ -2019,6 +2019,42 @@ class CKDPackCurationTests(unittest.TestCase):
                 f"in Balboa's workbook",
             )
 
+    def test_smoking_status_procedure_row_criteria_is_status_anchored(self):
+        """The procedure-coded smoking row must match status concepts
+        only (current / former / never tobacco/smoker, smoking-status
+        umbrella) — NOT generic tobacco-related procedures like
+        cessation counselling, screening, or pharmacotherapy
+        administration. Otherwise a row labelled 'Smoking Status'
+        would silently aggregate intervention records too."""
+        sm = _find_variable_in("drg_ckd",
+                               "Smoking Status (Procedure-coded)")
+        c = sm["criteria"].lower()
+        # The row's status anchors — at least one of these must be
+        # present so the criteria is genuinely status-bound.
+        status_anchors = (
+            "current tobacco", "former tobacco", "never%tobacco",
+            "tobacco%user", "tobacco%non-user",
+            "current%smoker", "former%smoker", "never%smoker",
+            "smoking status",
+        )
+        self.assertTrue(
+            any(a in c for a in status_anchors),
+            f"Procedure-coded Smoking Status criteria must anchor on "
+            f"a status fragment (current/former/never + tobacco/smoker, "
+            f"or 'smoking status'); got: {sm['criteria']!r}",
+        )
+        # And the row must NOT use the bare wildcards on their own,
+        # which would have matched cessation / counselling / screening
+        # procedures in addition to status concepts.
+        for bare in ("'%tobacco%'", "'%smoking%'", "'%cigarette%'"):
+            self.assertNotIn(
+                bare, c,
+                f"Procedure-coded Smoking Status criteria must not "
+                f"use the bare {bare} wildcard — that would pull in "
+                f"tobacco-cessation, screening, and counselling "
+                f"procedures (intervention records, not status records)",
+            )
+
 
 # --------------------------------------------------------------------- #
 # CKD broad-wildcard regression guards — same approach as respiratory.

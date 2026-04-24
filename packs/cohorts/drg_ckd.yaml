@@ -20,10 +20,12 @@ description: >
 
 notes:
   - Technical dictionary generated from schema introspection.
-  - Variables pack is `drg_ckd` (per-cohort). Currently a structural
-    placeholder that inherits everything from the shared `ckd_common`
-    chain; cohort-specific rows land here once a divergence is
-    confirmed.
+  - Variables pack is `drg_ckd` (per-cohort). It inherits the shared
+    `ckd_common` chain and adds a DRG-only row for procedure-coded
+    smoking status, since DRG records that signal in
+    `procedure_occurrence` rather than the OMOP `observation` table
+    used by the shared row. Additional cohort-specific rows land
+    here as more DRG-only divergences are confirmed.
   - DRG dump shows "Urea/Creatinine [Ratio] in Urine" as a urine
     biomarker — that's a urea-side ratio, NOT the canonical
     albumin-side UACR. The shared UACR row will likely show

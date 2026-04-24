@@ -48,7 +48,7 @@ variables:
        drug_concept_name ILIKE '%aducanumab%' OR
        drug_concept_name ILIKE '%Aduhelm%')
     extraction_type: Structured
-    notes: Cohort-defining therapies for MTC AAT.
+    notes: Cohort-defining therapies for any AAT cohort.
 
   - category: Medications
     variable: Anti-amyloid Therapy (Administration)

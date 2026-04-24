@@ -51,7 +51,7 @@ variables:
       condition_concept_name ILIKE '%chronic bronchitis%' OR
       condition_concept_name ILIKE '%chronic obstructive airway%'
     extraction_type: Structured
-    notes: Cohort-defining diagnosis for Nimbus COPD and Nimbus AZ COPD.
+    notes: Cohort-defining diagnosis for any COPD cohort.
 
   # ----- Medications — inhaled bronchodilators / anti-inflammatories -
   # Rows split by pharmacologic class so the Variables sheet shows
@@ -229,9 +229,9 @@ variables:
       measurement_concept_name ILIKE '%forced expir%1 second%'
     extraction_type: Abstracted
     notes: >
-      Per README §2.1, Nimbus AZ COPD has FEV1 abstraction in progress;
-      Nimbus COPD curated may or may not populate this row. Expect
-      Implemented=No at most sites until the abstraction pipeline lands.
+      Abstracted from PFT reports rather than a structured lab feed
+      at most sites. Expect Implemented=No until the per-cohort
+      abstraction pipeline lands.
 
   - category: Labs / Biomarkers
     variable: FVC (Forced Vital Capacity)
