@@ -191,10 +191,10 @@ variables:
   - category: Diagnosis
     variable: GI Symptoms (Diarrhea / Rectal Bleeding / Epigastric Pain)
     description: >
-      GI symptoms commonly associated with IBD activity. The
-      Newtown dump shows diarrhea (4.8 %), hemorrhage of anus and
-      rectum, and epigastric pain (6.1 %) as top conditions
-      alongside UC.
+      GI symptoms commonly associated with IBD activity — diarrhea,
+      rectal bleeding, abdominal / epigastric pain. Tracked
+      separately so flare-activity signal is distinguishable from
+      quiescent disease.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >
@@ -213,8 +213,6 @@ variables:
       5-aminosalicylate therapy — mesalamine (oral ER, delayed
       release, suppository, enema), sulfasalazine, balsalazide,
       olsalazine. First-line UC induction and maintenance therapy.
-      Top drug in the Newtown dump: 24 HR mesalamine 375 MG ER
-      [Apriso] (9.0 %) plus mesalamine 1200 MG DR (4.8 %).
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -233,10 +231,9 @@ variables:
   - category: Medications
     variable: Corticosteroid (Topical / Systemic / Budesonide)
     description: >
-      Corticosteroid therapy for IBD flares — topical hydrocortisone
-      [Anusol HC] (4.8 % of Newtown drug rows), oral prednisone /
-      methylprednisolone for systemic flares, and budesonide for
-      ileal / right-colon Crohn's.
+      Corticosteroid therapy for IBD flares — topical hydrocortisone,
+      oral prednisone / methylprednisolone for systemic flares, and
+      budesonide for ileal / right-colon Crohn's.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -252,7 +249,7 @@ variables:
 
   - category: Medications
     variable: Proton Pump Inhibitor (PPI)
-    description: PPIs — pantoprazole, omeprazole. Secondary in Newtown IBD (pantoprazole 40 MG at 7.2 %) because coexisting upper-GI symptoms are common.
+    description: PPIs — pantoprazole, omeprazole, esomeprazole, lansoprazole. Common in IBD cohorts because coexisting upper-GI symptoms are frequent.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -265,9 +262,9 @@ variables:
   - category: Medications
     variable: Pancreatic Enzyme Replacement (Pancrelipase)
     description: >
-      Pancrelipase — amylase/lipase/protease combo [Creon] (3.6 %
-      in Newtown). Indicated for pancreatic insufficiency, which
-      is an IBD-adjacent GI comorbidity.
+      Pancrelipase — amylase / lipase / protease combination
+      (Creon, Zenpep, Pancreaze). Indicated for pancreatic
+      insufficiency, an IBD-adjacent GI comorbidity.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -313,10 +310,9 @@ variables:
       drug_concept_name ILIKE '%Entyvio%'
     extraction_type: Abstracted
     notes: >
-      TODO (clinical review) — not directly confirmed in Newtown
-      top drug concepts. Standard-of-care for moderate-to-severe
-      IBD; expect Implemented=No on mild-disease sites, but
-      worth tracking as a severity proxy.
+      TODO (clinical review) — standard-of-care for moderate-to-
+      severe IBD. Expect Implemented=No on sites dominated by mild
+      disease; worth tracking as a severity proxy regardless.
 
   # ----- Visits -------------------------------------------------------
   - category: Visits

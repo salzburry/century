@@ -46,11 +46,10 @@ variables:
   - category: Diagnosis
     variable: Exudative (Wet) AMD with Choroidal Neovascularization
     description: >
-      Wet / exudative AMD with active choroidal neovascularization
-      — the subset that drives intravitreal anti-VEGF utilisation.
-      RVC AMD dump shows "Exudative age-related macular
-      degeneration, left eye, with active choroidal
-      neovascularization" at 3.0 % of all conditions.
+      Wet / exudative AMD with active choroidal neovascularization —
+      the subset that drives intravitreal anti-VEGF utilisation.
+      Captured separately from the AMD umbrella row because therapy
+      decisions track the wet / dry split.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >
@@ -103,8 +102,7 @@ variables:
       acids (fish oil), plus the original AREDS antioxidants
       (vitamins C / E, zinc, copper, lutein, zeaxanthin) — is the
       standard non-pharmacologic intervention to slow AMD
-      progression in intermediate disease. Top 4 of the 5 most-
-      frequent drugs in the RVC AMD dump are in this cluster.
+      progression in intermediate disease.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -127,8 +125,7 @@ variables:
   - category: Medications
     variable: Aspirin (Antiplatelet)
     description: >
-      Low-dose aspirin — top drug in the RVC AMD dump (4.0 % of
-      all drug rows). Not AMD-specific; flagged as a cardiovascular-
+      Low-dose aspirin. Not AMD-specific; flagged as a cardiovascular-
       prevention comorbidity marker alongside the AREDS2 cluster.
     table: drug_exposure
     column: drug_concept_name

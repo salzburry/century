@@ -116,8 +116,8 @@ variables:
     variable: Insulin
     description: >
       Insulin — covers basal (glargine, detemir, degludec) and
-      prandial formulations. RVC DR dump shows insulin glargine
-      [Lantus] as a top drug.
+      prandial (aspart, lispro, regular, NPH) formulations, plus
+      common branded combinations.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -153,8 +153,7 @@ variables:
       drug_concept_name ILIKE '%Invokana%'
     extraction_type: Structured
     notes: >
-      Not directly confirmed in the top concepts of the RVC DR dump;
-      expect Implemented=No at sites whose data predates broad
+      Expect Implemented=No at sites whose data predates broad
       SGLT2 adoption. Row kept for completeness.
 
   - category: Medications
@@ -178,18 +177,17 @@ variables:
       drug_concept_name ILIKE '%Victoza%'
     extraction_type: Structured
     notes: >
-      Not directly confirmed in the top concepts of the RVC DR
-      dump; expect Implemented=No on older data. Worth tracking
-      because GLP-1 RAs have been associated with transient
-      worsening of DR in clinical trials — a signal reviewers
-      frequently ask about.
+      Expect Implemented=No on older data. Worth tracking because
+      GLP-1 RAs have been associated with transient worsening of
+      DR in clinical trials — a signal reviewers frequently ask
+      about.
 
   - category: Medications
     variable: Aspirin (Antiplatelet)
     description: >
-      Low-dose aspirin — top drug in the RVC DR dump (4.0 % of all
-      drug rows). Not DR-specific but a meaningful comorbidity
-      signal for cardiovascular risk in the diabetic population.
+      Low-dose aspirin. Not DR-specific, but a meaningful
+      comorbidity signal for cardiovascular risk in the diabetic
+      population.
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_concept_name ILIKE '%aspirin%'

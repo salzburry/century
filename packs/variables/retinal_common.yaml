@@ -171,10 +171,9 @@ variables:
   - category: Diagnosis
     variable: Hypertension
     description: >
-      Essential / primary hypertension. Dominant comorbidity in both
-      DR and AMD cohorts (~21-22 % of all conditions); a major driver
-      of retinal vascular disease beyond the primary diabetic or
-      age-related pathology.
+      Essential / primary hypertension. Dominant comorbidity in
+      retinal cohorts and a major driver of retinal vascular disease
+      beyond the primary diabetic or age-related pathology.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >
