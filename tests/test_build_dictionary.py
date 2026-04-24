@@ -400,51 +400,14 @@ class MedianIQRAndCompletenessTests(unittest.TestCase):
         #   3. GROUP BY value_as_number (top-10)    -> two rows
         #   4. PERCENTILE_CONT(0.25/0.5/0.75)       -> (150, 170, 190)
         #   5. COUNT(DISTINCT person_id)            -> 400
-
-        class _Conn2:
-            """COUNT(*) is called twice; state lives on the conn so each
-            cursor() call sees the right count in sequence."""
-            def __init__(self):
-                self._count_sequence = [1000, 800]
-                self._count_idx = 0
-
-            def cursor(self):
-                conn = self
-
-                class _Cur:
-                    def execute(self, sql, *params):
-                        if "PERCENTILE_CONT" in sql:
-                            self._next = ("150", "170", "190")
-                        elif "GROUP BY" in sql:
-                            self._next = [("170", 5), ("180", 3)]
-                        elif "COUNT(DISTINCT" in sql:
-                            self._next = (400,)
-                        elif "COUNT(*)" in sql:
-                            i = conn._count_idx
-                            self._next = (conn._count_sequence[i],)
-                            conn._count_idx += 1
-                        else:
-                            raise AssertionError(f"unexpected SQL: {sql!r}")
-
-                    def fetchone(self):
-                        return self._next
-
-                    def fetchall(self):
-                        return self._next
-
-                    def __enter__(self):
-                        return self
-
-                    def __exit__(self, *exc):
-                        return False
-
-                return _Cur()
-
-            def rollback(self):
-                pass
-
+        conn = _SqlRouterConn(
+            count_sequence=(1000, 800),
+            percentile_cont=("150", "170", "190"),
+            group_by=[("170", 5), ("180", 3)],
+            count_distinct=(400,),
+        )
         rows = resolve_variables(
-            _Conn2(), "s", pack, total_patients=1000,
+            conn, "s", pack, total_patients=1000,
             pii_pairs=set(), pii_patterns=[],
             tables_with_person_id={"observation"},
             column_types={("observation", "value_as_number"): "numeric"},
@@ -762,6 +725,138 @@ def _all_variables_for(pack_slug: str) -> list[dict]:
     return _resolve(pack_slug)
 
 
+def _find_variable_in(pack_slug: str, name: str) -> dict:
+    """Return the resolved variable row with `variable == name` from the
+    given pack. Raises AssertionError if absent — callers inside
+    unittest will fail naturally. Replaces four per-class copies of the
+    same lookup that used to live as `_find` / `_find_variable` methods."""
+    for v in _all_variables_for(pack_slug):
+        if v.get("variable") == name:
+            return v
+    raise AssertionError(f"variable {name!r} not found in {pack_slug}")
+
+
+def _load_validate_packs():
+    """Import scripts/validate_packs as a module. Cached on the
+    function attribute so the sys.path dance only happens once."""
+    mod = getattr(_load_validate_packs, "_cached", None)
+    if mod is not None:
+        return mod
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    try:
+        import importlib
+        mod = importlib.import_module("validate_packs")
+    finally:
+        sys.path.pop(0)
+    _load_validate_packs._cached = mod
+    return mod
+
+
+def _assert_validator_clean(test_case: unittest.TestCase,
+                            cohort_slugs) -> None:
+    """Run scripts/validate_packs.validate_cohort on each slug and
+    assert zero errors and zero warnings. Used by the per-domain
+    Cohort pack test classes (Nimbus / MTC / CKD) so the validator-
+    sweep body lives in exactly one place."""
+    validate_packs = _load_validate_packs()
+    known = validate_packs._load_known_categories()
+    for slug in cohort_slugs:
+        report = validate_packs.validate_cohort(slug, known)
+        errors = [f for f in report.findings if f.severity == "error"]
+        warnings = [f for f in report.findings if f.severity == "warning"]
+        test_case.assertEqual(
+            errors, [],
+            f"{slug} has validator errors: "
+            f"{[f.message for f in errors]}",
+        )
+        test_case.assertEqual(
+            warnings, [],
+            f"{slug} has validator warnings: "
+            f"{[f.message for f in warnings]}",
+        )
+
+
+def _assert_no_id_column_mismatch(test_case: unittest.TestCase,
+                                  pack_slugs,
+                                  extra_standalone_packs=()) -> None:
+    """Run validate_packs._check_id_column_name_mismatch over every
+    resolved row in each pack and assert None. `extra_standalone_packs`
+    takes pack names that don't have an include chain (e.g.
+    respiratory_common) — their variables are read directly rather
+    than via _all_variables_for."""
+    validate_packs = _load_validate_packs()
+    for slug in pack_slugs:
+        for v in _all_variables_for(slug):
+            msg = validate_packs._check_id_column_name_mismatch(v)
+            test_case.assertIsNone(
+                msg, f"{slug}/{v.get('variable')}: {msg}",
+            )
+    for slug in extra_standalone_packs:
+        for v in _load_yaml(f"packs/variables/{slug}.yaml").get("variables", []):
+            msg = validate_packs._check_id_column_name_mismatch(v)
+            test_case.assertIsNone(
+                msg, f"{slug}/{v.get('variable')}: {msg}",
+            )
+
+
+class _SqlRouterConn:
+    """Reusable stub psycopg-style connection that routes SQL strings
+    to canned responses based on substring matches. Replaces two
+    near-identical `_Conn2` inline classes.
+
+    `count_sequence` is consumed one value per COUNT(*) call so tests
+    can script the criteria-count / nonnull-count sequence used by
+    `resolve_variables`. PERCENTILE_CONT / GROUP BY / COUNT(DISTINCT)
+    have one canned response each; unexpected SQL raises
+    AssertionError so tests that wander off the expected path fail
+    loudly rather than silently."""
+
+    def __init__(self, *, count_sequence=(0, 0),
+                 percentile_cont=None,
+                 group_by=None,
+                 count_distinct=None):
+        self._count_sequence = list(count_sequence)
+        self._count_idx = 0
+        self._percentile_cont = percentile_cont
+        self._group_by = group_by
+        self._count_distinct = count_distinct
+
+    def cursor(self):
+        conn = self
+
+        class _Cur:
+            def execute(self, sql, *params):
+                if "PERCENTILE_CONT" in sql:
+                    self._next = conn._percentile_cont
+                elif "GROUP BY" in sql:
+                    self._next = conn._group_by
+                elif "COUNT(DISTINCT" in sql:
+                    self._next = conn._count_distinct
+                elif "COUNT(*)" in sql:
+                    i = conn._count_idx
+                    self._next = (conn._count_sequence[i],)
+                    conn._count_idx += 1
+                else:
+                    raise AssertionError(f"unexpected SQL: {sql!r}")
+
+            def fetchone(self):
+                return self._next
+
+            def fetchall(self):
+                return self._next
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return _Cur()
+
+    def rollback(self):
+        pass
+
+
 # --------------------------------------------------------------------- #
 # ADRD pack split — three layers, mirroring the respiratory layout:
 #
@@ -835,18 +930,12 @@ class PackSplitTests(unittest.TestCase):
 
 class PackCurationFixTests(unittest.TestCase):
 
-    def _find_variable(self, pack_slug: str, name: str) -> dict:
-        for v in _all_variables_for(pack_slug):
-            if v.get("variable") == name:
-                return v
-        self.fail(f"variable {name!r} not found in {pack_slug}")
-
     # -- P2: ARIA criteria must use %ARIA% (not prefix-only ARIA%).
     # ARIA rows are disease-level (aat_common / alzheimers_common).
     def test_aria_uses_fuzzy_match_not_prefix(self):
-        aria_aat_h = self._find_variable("aat_common", "ARIA-H (microhemorrhage)")
-        aria_aat_e = self._find_variable("aat_common", "ARIA-E (edema)")
-        aria_alz = self._find_variable("alzheimers_common", "ARIA")
+        aria_aat_h = _find_variable_in("aat_common", "ARIA-H (microhemorrhage)")
+        aria_aat_e = _find_variable_in("aat_common", "ARIA-E (edema)")
+        aria_alz = _find_variable_in("alzheimers_common", "ARIA")
         for v in (aria_aat_h, aria_aat_e, aria_alz):
             c = v["criteria"]
             # Pattern must start with a %
@@ -869,7 +958,7 @@ class PackCurationFixTests(unittest.TestCase):
     # -- P2: Document variable has MRI / PET / EEG criteria.
     # Document row lives in adrd_common, surfaced via alzheimers_common.
     def test_document_variable_has_imaging_criteria(self):
-        doc = self._find_variable(
+        doc = _find_variable_in(
             "alzheimers_common", "Document (MRI / PET / EEG)"
         )
         self.assertTrue(doc.get("criteria"),
@@ -882,7 +971,7 @@ class PackCurationFixTests(unittest.TestCase):
 
     # -- P2: AAT administration mirrors prescription brand+generic matching.
     def test_aat_administration_matches_brands_and_generics(self):
-        admin = self._find_variable(
+        admin = _find_variable_in(
             "aat_common", "Anti-amyloid Therapy (Administration)"
         )
         c = admin["criteria"].lower()
@@ -898,7 +987,7 @@ class PackCurationFixTests(unittest.TestCase):
     #   Anti-amyloid Infusion Procedure  ->
     #   Infusion Procedure Codes (candidate AAT attribution)
     def test_anti_amyloid_procedure_has_disambiguation_note(self):
-        proc = self._find_variable(
+        proc = _find_variable_in(
             "aat_common",
             "Infusion Procedure Codes (candidate AAT attribution)",
         )
@@ -946,14 +1035,7 @@ class PackCurationFixTests(unittest.TestCase):
 class ValidatorTests(unittest.TestCase):
 
     def test_validator_on_committed_packs_is_clean(self):
-        # Import the validator as a module so we run its logic in-process.
-        sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        try:
-            import importlib
-            validate_packs = importlib.import_module("validate_packs")
-        finally:
-            sys.path.pop(0)
-
+        validate_packs = _load_validate_packs()
         known = validate_packs._load_known_categories()
         reports = [
             validate_packs.validate_cohort(p.stem, known)
@@ -975,13 +1057,7 @@ class ValidatorTests(unittest.TestCase):
         )
 
     def test_validator_flags_prefix_only_ilike(self):
-        sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        try:
-            import importlib
-            validate_packs = importlib.import_module("validate_packs")
-        finally:
-            sys.path.pop(0)
-
+        validate_packs = _load_validate_packs()
         msgs = validate_packs._check_unsafe_ilike(
             "observation_concept_name ILIKE 'ARIA%'"
         )
@@ -1000,13 +1076,7 @@ class ValidatorTests(unittest.TestCase):
     def test_validator_flags_id_column_on_non_id_variable(self):
         """Catches the Infusion-Drug-style mistake: row named as a
         business concept but pointing at `*_concept_id`."""
-        sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        try:
-            import importlib
-            validate_packs = importlib.import_module("validate_packs")
-        finally:
-            sys.path.pop(0)
-
+        validate_packs = _load_validate_packs()
         # Bad: "Infusion Drug" with column drug_concept_id
         bad = {"variable": "Infusion Drug",
                "column": "drug_concept_id", "table": "infusion"}
@@ -1048,18 +1118,12 @@ class ValidatorTests(unittest.TestCase):
 
 class PackTighteningTests(unittest.TestCase):
 
-    def _find(self, pack: str, name: str) -> dict:
-        for v in _all_variables_for(pack):
-            if v.get("variable") == name:
-                return v
-        self.fail(f"{name!r} not found in {pack}")
-
     def test_abeta_criteria_does_not_use_catch_wide_wildcards(self):
         # `%A%42%` / `%A%40%` had matched anything with an 'A' before the
         # number (HbA1c, ALT pre-42, etc.). Assert they're gone.
         # A-beta rows live in adrd_common, surfaced via alzheimers_common.
-        ab42 = self._find("alzheimers_common", "Amyloid-beta 42 (A-beta 42)")
-        ab40 = self._find("alzheimers_common", "Amyloid-beta 40 (A-beta 40)")
+        ab42 = _find_variable_in("alzheimers_common", "Amyloid-beta 42 (A-beta 42)")
+        ab40 = _find_variable_in("alzheimers_common", "Amyloid-beta 40 (A-beta 40)")
         for v in (ab42, ab40):
             c = v["criteria"]
             self.assertNotIn(
@@ -1076,7 +1140,7 @@ class PackTighteningTests(unittest.TestCase):
         # Old "Medication (Prescription)" row has been renamed and
         # narrowed — the new row should filter by explicit ADRD drugs.
         # Symptomatic ADRD rows live in alzheimers_common.
-        rx = self._find(
+        rx = _find_variable_in(
             "alzheimers_common", "Symptomatic ADRD Therapy (Prescription)"
         )
         c = rx["criteria"].lower()
@@ -1096,7 +1160,7 @@ class PackTighteningTests(unittest.TestCase):
                          "old broad Medication (Administration) row still present")
 
     def test_infusion_drug_row_is_clearly_labeled_as_concept_id(self):
-        drug = self._find("aat_common", "Infusion Drug (Concept ID)")
+        drug = _find_variable_in("aat_common", "Infusion Drug (Concept ID)")
         self.assertEqual(drug["column"], "drug_concept_id")
         # Old ambiguous name must not coexist with the new one in the
         # resolved AAT chain.
@@ -1161,34 +1225,14 @@ class PackTighteningTests(unittest.TestCase):
             "extraction_type": "Structured",
         }]
 
-        class _Conn2:
-            def __init__(self):
-                self._counts = [1000, 800]
-                self._i = 0
-            def cursor(self):
-                conn = self
-                class _Cur:
-                    def execute(self, sql, *p):
-                        if "PERCENTILE_CONT" in sql:
-                            self._next = ("10", "20", "30")
-                        elif "GROUP BY" in sql:
-                            self._next = [("20", 5)]
-                        elif "COUNT(DISTINCT" in sql:
-                            self._next = (400,)
-                        elif "COUNT(*)" in sql:
-                            self._next = (conn._counts[conn._i],)
-                            conn._i += 1
-                        else:
-                            raise AssertionError(f"unexpected SQL: {sql!r}")
-                    def fetchone(self): return self._next
-                    def fetchall(self): return self._next
-                    def __enter__(self): return self
-                    def __exit__(self, *e): return False
-                return _Cur()
-            def rollback(self): pass
-
+        conn = _SqlRouterConn(
+            count_sequence=(1000, 800),
+            percentile_cont=("10", "20", "30"),
+            group_by=[("20", 5)],
+            count_distinct=(400,),
+        )
         rows = resolve_variables(
-            _Conn2(), "s", pack, total_patients=1000,
+            conn, "s", pack, total_patients=1000,
             tables_with_person_id={"measurement"},
             column_types={("measurement", "value_as_number"): "numeric"},
         )
@@ -1299,16 +1343,10 @@ class RespiratoryPackSplitTests(unittest.TestCase):
 
 class RespiratoryPackCurationTests(unittest.TestCase):
 
-    def _find(self, pack_slug: str, name: str) -> dict:
-        for v in _all_variables_for(pack_slug):
-            if v.get("variable") == name:
-                return v
-        self.fail(f"variable {name!r} not found in {pack_slug}")
-
     # -- COPD diagnosis covers the three standard condition families.
     # Defined in copd_common so every COPD cohort inherits it.
     def test_copd_diagnosis_matches_all_three_condition_families(self):
-        dx = self._find("copd_common", "COPD Diagnosis")
+        dx = _find_variable_in("copd_common", "COPD Diagnosis")
         c = dx["criteria"].lower()
         for token in ("chronic obstructive pulmonary",
                       "emphysema", "chronic bronchitis"):
@@ -1339,7 +1377,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
 
     # -- LAMA criteria for COPD must not collapse to an oral/injectable match.
     def test_copd_lama_glycopyrrolate_row_is_inhaled_only(self):
-        lama = self._find("copd_common",
+        lama = _find_variable_in("copd_common",
                           "Long-acting Muscarinic Antagonist (LAMA)")
         c = lama["criteria"].lower()
         # The glycopyrrolate clause must be paired with an 'inhal' filter.
@@ -1351,7 +1389,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
 
     # -- Asthma diagnosis picks up severity / persistence variants.
     def test_asthma_diagnosis_matches_status_asthmaticus(self):
-        dx = self._find("asthma_common", "Asthma Diagnosis")
+        dx = _find_variable_in("asthma_common", "Asthma Diagnosis")
         c = dx["criteria"].lower()
         self.assertIn("asthma", c)
         self.assertIn(
@@ -1362,7 +1400,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
 
     # -- Asthma biologic row covers the six FDA-approved agents.
     def test_asthma_biologic_row_covers_all_six_ingredients(self):
-        bio = self._find(
+        bio = _find_variable_in(
             "asthma_common",
             "Asthma Biologic (Anti-IgE / Anti-IL5 / Anti-IL4R / Anti-TSLP)",
         )
@@ -1379,7 +1417,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
     # Must flow through to every final respiratory pack.
     def test_eosinophils_row_requires_blood_qualifier(self):
         for slug in NIMBUS_FINAL_PACKS:
-            eos = self._find(slug, "Blood Eosinophils")
+            eos = _find_variable_in(slug, "Blood Eosinophils")
             c = eos["criteria"]
             self.assertIn("%eosinophil%", c.lower(),
                           f"{slug}: Blood Eosinophils must match eosinophil")
@@ -1394,7 +1432,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
     # -- SpO2 is in respiratory_common with a widened ILIKE pattern.
     def test_oxygen_saturation_row_matches_spo2_and_peripheral_oxygen(self):
         for slug in NIMBUS_FINAL_PACKS:
-            o2 = self._find(slug, "Oxygen Saturation (SpO2)")
+            o2 = _find_variable_in(slug, "Oxygen Saturation (SpO2)")
             c = o2["criteria"].lower()
             for token in ("o2 saturation", "oxygen saturation",
                           "peripheral oxygen", "spo2"):
@@ -1470,7 +1508,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
     # without the time specifier.
     def test_fev1_criteria_anchors_on_1_second(self):
         for slug in NIMBUS_FINAL_PACKS:
-            fev1 = self._find(slug, "FEV1 (Forced Expiratory Volume in 1 second)")
+            fev1 = _find_variable_in(slug, "FEV1 (Forced Expiratory Volume in 1 second)")
             c = fev1["criteria"].lower()
             self.assertIn("fev1", c)
             # Either explicit '1 second' or '%1%' anchor on the phrase
@@ -1518,30 +1556,11 @@ class RespiratoryBroadWildcardRegressionTests(unittest.TestCase):
         """Regression guard: no respiratory variable row should silently
         render opaque `*_concept_id` values under a business-facing name
         (the Infusion-Drug-style mistake from the MTC pack review)."""
-        sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        try:
-            import importlib
-            validate_packs = importlib.import_module("validate_packs")
-        finally:
-            sys.path.pop(0)
-
-        leaf_packs = NIMBUS_FINAL_PACKS + ("copd_common", "asthma_common")
-        for slug in leaf_packs:
-            for v in _all_variables_for(slug):
-                msg = validate_packs._check_id_column_name_mismatch(v)
-                self.assertIsNone(
-                    msg,
-                    f"{slug}/{v.get('variable')}: {msg}",
-                )
-        # And respiratory_common itself (not resolved by _all_variables_for
-        # since it has no include).
-        for v in _load_yaml(
-            "packs/variables/respiratory_common.yaml"
-        ).get("variables", []):
-            msg = validate_packs._check_id_column_name_mismatch(v)
-            self.assertIsNone(
-                msg, f"respiratory_common/{v.get('variable')}: {msg}",
-            )
+        _assert_no_id_column_mismatch(
+            self,
+            pack_slugs=NIMBUS_FINAL_PACKS + ("copd_common", "asthma_common"),
+            extra_standalone_packs=("respiratory_common",),
+        )
 
 
 # --------------------------------------------------------------------- #
@@ -1594,24 +1613,7 @@ class NimbusCohortPackTests(unittest.TestCase):
         # Re-run the validator and confirm the four Nimbus cohorts are
         # error- and warning-free. Guards against future pack edits
         # sneaking a duplicate / unsafe ILIKE / id-column mismatch in.
-        sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        try:
-            import importlib
-            validate_packs = importlib.import_module("validate_packs")
-        finally:
-            sys.path.pop(0)
-
-        known = validate_packs._load_known_categories()
-        for slug in self.EXPECTED:
-            report = validate_packs.validate_cohort(slug, known)
-            errors = [f for f in report.findings if f.severity == "error"]
-            warnings = [f for f in report.findings if f.severity == "warning"]
-            self.assertEqual(errors, [],
-                             f"{slug} has validator errors: "
-                             f"{[f.message for f in errors]}")
-            self.assertEqual(warnings, [],
-                             f"{slug} has validator warnings: "
-                             f"{[f.message for f in warnings]}")
+        _assert_validator_clean(self, self.EXPECTED)
 
 
 # --------------------------------------------------------------------- #
@@ -1662,24 +1664,7 @@ class MTCCohortPackTests(unittest.TestCase):
             )
 
     def test_validator_clean_on_mtc_cohorts(self):
-        sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        try:
-            import importlib
-            validate_packs = importlib.import_module("validate_packs")
-        finally:
-            sys.path.pop(0)
-
-        known = validate_packs._load_known_categories()
-        for slug in self.EXPECTED:
-            report = validate_packs.validate_cohort(slug, known)
-            errors = [f for f in report.findings if f.severity == "error"]
-            warnings = [f for f in report.findings if f.severity == "warning"]
-            self.assertEqual(errors, [],
-                             f"{slug} has validator errors: "
-                             f"{[f.message for f in errors]}")
-            self.assertEqual(warnings, [],
-                             f"{slug} has validator warnings: "
-                             f"{[f.message for f in warnings]}")
+        _assert_validator_clean(self, self.EXPECTED)
 
 
 # --------------------------------------------------------------------- #
@@ -1747,17 +1732,11 @@ class CKDPackSplitTests(unittest.TestCase):
 
 class CKDPackCurationTests(unittest.TestCase):
 
-    def _find(self, pack_slug: str, name: str) -> dict:
-        for v in _all_variables_for(pack_slug):
-            if v.get("variable") == name:
-                return v
-        self.fail(f"variable {name!r} not found in {pack_slug}")
-
     # -- CKD diagnosis row covers the major condition families seen
     # in both Balboa and DRG dumps (CKD stages, ESRD, dialysis
     # dependence, hypertensive renal disease, diabetic nephropathy).
     def test_ckd_diagnosis_matches_major_condition_families(self):
-        dx = self._find("ckd_common", "CKD Diagnosis")
+        dx = _find_variable_in("ckd_common", "CKD Diagnosis")
         c = dx["criteria"].lower()
         for token in ("chronic kidney disease",
                       "end stage renal disease",
@@ -1772,7 +1751,7 @@ class CKDPackCurationTests(unittest.TestCase):
 
     # -- AKI row tracks acute episodes separately from chronic CKD.
     def test_aki_row_is_distinct_from_ckd(self):
-        aki = self._find("ckd_common", "Acute Kidney Injury")
+        aki = _find_variable_in("ckd_common", "Acute Kidney Injury")
         c = aki["criteria"].lower()
         for token in ("acute kidney failure",
                       "acute renal failure",
@@ -1805,7 +1784,7 @@ class CKDPackCurationTests(unittest.TestCase):
     # -- CCB row uses explicit ingredients (not the banned %blocker%
     # wildcard) and covers amlodipine — the top-3 drug in both cohorts.
     def test_calcium_channel_blocker_row_matches_amlodipine(self):
-        ccb = self._find("ckd_common",
+        ccb = _find_variable_in("ckd_common",
                          "Calcium Channel Blocker (Dihydropyridine)")
         c = ccb["criteria"].lower()
         self.assertIn("amlodipine", c,
@@ -1818,7 +1797,7 @@ class CKDPackCurationTests(unittest.TestCase):
 
     # -- Aspirin row captures the top-1 drug in DRG.
     def test_aspirin_row_matches_aspirin(self):
-        asa = self._find("ckd_common", "Aspirin (Antiplatelet)")
+        asa = _find_variable_in("ckd_common", "Aspirin (Antiplatelet)")
         self.assertIn("aspirin", asa["criteria"].lower())
 
     # -- Serum Calcium / Serum Sodium rows use a serum/plasma/blood
@@ -1826,7 +1805,7 @@ class CKDPackCurationTests(unittest.TestCase):
     # mentions or sodium bicarbonate drug mentions.
     def test_calcium_and_sodium_labs_have_blood_qualifier(self):
         for name in ("Serum Calcium", "Serum Sodium"):
-            row = self._find("ckd_common", name)
+            row = _find_variable_in("ckd_common", name)
             c = row["criteria"].lower()
             self.assertTrue(
                 any(tok in c for tok in ("serum", "plasma", "blood")),
@@ -1852,7 +1831,7 @@ class CKDPackCurationTests(unittest.TestCase):
     # -- Hypertension row avoids double-counting with CKD Diagnosis
     # (which already covers "Hypertensive renal disease" variants).
     def test_hypertension_row_is_narrowed_to_essential_primary(self):
-        htn = self._find("ckd_common", "Hypertension")
+        htn = _find_variable_in("ckd_common", "Hypertension")
         c = htn["criteria"].lower()
         # Must require an essential / primary / disorder qualifier —
         # otherwise "Hypertensive renal disease" patients would be
@@ -1868,7 +1847,7 @@ class CKDPackCurationTests(unittest.TestCase):
 
     # -- ESRD Monthly Services row captures CPT 9095X-9096X billing.
     def test_esrd_monthly_services_row_exists_and_matches_related_services(self):
-        esrd = self._find(
+        esrd = _find_variable_in(
             "ckd_common",
             "End-Stage Renal Disease (ESRD) Monthly Services",
         )
@@ -1893,7 +1872,7 @@ class CKDPackCurationTests(unittest.TestCase):
     # for the same indication; combining them keeps the row name
     # honest about what's being aggregated).
     def test_raas_row_covers_ace_and_arb_ingredients(self):
-        raas = self._find("ckd_common", "RAAS Blockade (ACE Inhibitor / ARB)")
+        raas = _find_variable_in("ckd_common", "RAAS Blockade (ACE Inhibitor / ARB)")
         c = raas["criteria"].lower()
         # ACE inhibitors
         for ing in ("lisinopril", "enalapril", "ramipril"):
@@ -1904,7 +1883,7 @@ class CKDPackCurationTests(unittest.TestCase):
 
     # -- SGLT2 row covers the three FDA-approved CKD-indicated agents.
     def test_sglt2_row_covers_three_ingredients(self):
-        sglt2 = self._find("ckd_common", "SGLT2 Inhibitor")
+        sglt2 = _find_variable_in("ckd_common", "SGLT2 Inhibitor")
         c = sglt2["criteria"].lower()
         for ing in ("empagliflozin", "dapagliflozin", "canagliflozin"):
             self.assertIn(ing, c, f"SGLT2 row must match {ing!r}")
@@ -1913,7 +1892,7 @@ class CKDPackCurationTests(unittest.TestCase):
     # so the urine-creatinine panels (used in UACR) don't leak into
     # this row.
     def test_serum_creatinine_requires_serum_qualifier(self):
-        cr = self._find("ckd_common", "Serum Creatinine")
+        cr = _find_variable_in("ckd_common", "Serum Creatinine")
         c = cr["criteria"].lower()
         self.assertIn("creatinine", c)
         self.assertTrue(
@@ -1925,7 +1904,7 @@ class CKDPackCurationTests(unittest.TestCase):
     # -- Hemoglobin row qualifier prevents HbA1c / hemoglobin A1c from
     # leaking in.
     def test_hemoglobin_row_excludes_hba1c(self):
-        hgb = self._find("ckd_common", "Hemoglobin")
+        hgb = _find_variable_in("ckd_common", "Hemoglobin")
         c = hgb["criteria"].lower()
         self.assertIn("hemoglobin", c)
         self.assertTrue(
@@ -1977,7 +1956,7 @@ class CKDPackCurationTests(unittest.TestCase):
                 ("Smoking Status", "observation_concept_name"),
                 ("Smoking Status (Procedure-coded)", "procedure_concept_name"),
             ):
-                sm = self._find(slug, name)
+                sm = _find_variable_in(slug, name)
                 c = sm["criteria"].lower()
                 self.assertIn(
                     f"{col} ilike '%tobacco%'".lower(), c,
@@ -2022,21 +2001,10 @@ class CKDBroadWildcardRegressionTests(unittest.TestCase):
                     )
 
     def test_no_ckd_variable_points_at_id_column_without_id_name(self):
-        sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        try:
-            import importlib
-            validate_packs = importlib.import_module("validate_packs")
-        finally:
-            sys.path.pop(0)
-
-        leaf_packs = CKD_FINAL_PACKS + ("ckd_common",)
-        for slug in leaf_packs:
-            for v in _all_variables_for(slug):
-                msg = validate_packs._check_id_column_name_mismatch(v)
-                self.assertIsNone(
-                    msg,
-                    f"{slug}/{v.get('variable')}: {msg}",
-                )
+        _assert_no_id_column_mismatch(
+            self,
+            pack_slugs=CKD_FINAL_PACKS + ("ckd_common",),
+        )
 
 
 # --------------------------------------------------------------------- #
@@ -2081,24 +2049,7 @@ class CKDCohortPackTests(unittest.TestCase):
             )
 
     def test_validator_clean_on_ckd_cohorts(self):
-        sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        try:
-            import importlib
-            validate_packs = importlib.import_module("validate_packs")
-        finally:
-            sys.path.pop(0)
-
-        known = validate_packs._load_known_categories()
-        for slug in self.EXPECTED:
-            report = validate_packs.validate_cohort(slug, known)
-            errors = [f for f in report.findings if f.severity == "error"]
-            warnings = [f for f in report.findings if f.severity == "warning"]
-            self.assertEqual(errors, [],
-                             f"{slug} has validator errors: "
-                             f"{[f.message for f in errors]}")
-            self.assertEqual(warnings, [],
-                             f"{slug} has validator warnings: "
-                             f"{[f.message for f in warnings]}")
+        _assert_validator_clean(self, self.EXPECTED)
 
 
 if __name__ == "__main__":
