@@ -198,11 +198,10 @@ variables:
     variable: Alzheimer's / Cognitive Impairment Diagnosis
     description: >
       Alzheimer's disease and the cognitive-impairment concept
-      family that defines ADRD cohorts — Alzheimer's disease
-      (all onset variants), mild cognitive impairment (MCI),
-      amnesia, memory impairment, other dementias, and cognitive-
-      function symptom concepts. Cohort-defining for both MTC /
-      RMN Alzheimer's and (by clinical definition) MTC AAT.
+      family — Alzheimer's disease (all onset variants), mild
+      cognitive impairment (MCI), amnesia, memory impairment,
+      other dementias, and cognitive-function symptom concepts.
+      The cohort-defining diagnosis family for ADRD populations.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >

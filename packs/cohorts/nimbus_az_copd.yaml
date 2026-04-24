@@ -14,8 +14,8 @@ status: active
 
 description: >
   Nimbus Arizona-site patients with a chronic obstructive pulmonary
-  disease diagnosis. Kept provider-separate from the broader Nimbus
-  COPD cohort per the §1.1 site-consolidation decision.
+  disease diagnosis, including emphysema and chronic-bronchitis
+  variants.
 
 notes:
   - Technical dictionary generated from schema introspection.

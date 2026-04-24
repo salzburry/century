@@ -15,10 +15,10 @@ status: active
 
 description: >
   RVC patients with age-related macular degeneration — wet
-  (exudative, with choroidal neovascularization) and dry (non-
-  exudative, atrophic) variants. Intraocular-lens / post-cataract
-  state is the top condition at 27.6 % — the cohort skews heavily
-  toward elderly patients with prior cataract surgery.
+  (exudative, with choroidal neovascularization) and dry
+  (non-exudative, atrophic) variants. Cohort skews toward
+  elderly patients with post-cataract pseudophakia; hypertension
+  and type 2 diabetes are prevalent comorbidities.
 
 notes:
   - Variables pack is `rvc_amd_curated` (per-cohort). Inherits the

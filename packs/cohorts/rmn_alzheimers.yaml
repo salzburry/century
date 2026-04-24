@@ -16,10 +16,9 @@ status: active
 
 description: >
   Rocky Mountain Neurology patients with an Alzheimer's disease or
-  related dementia diagnosis. Clinical variable list matches MTC
-  Alzheimer's (shared alzheimers_common / adrd_common chain); RMN-
-  specific divergences (if any surface in a live build) land in
-  the per-cohort variables pack, not in the shared base.
+  related dementia diagnosis. Broad inclusion — captures patients
+  across cognitive-impairment severity, regardless of whether they
+  are on anti-amyloid therapy.
 
 notes:
   - Raw dump available at Output/rmn alzheimers.pdf; top conditions

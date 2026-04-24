@@ -16,9 +16,10 @@ status: active
 
 description: >
   Newtown patients with inflammatory bowel disease — ulcerative
-  colitis and Crohn's disease. 5-ASA (mesalamine) is the top drug
-  at 9.0 % + 4.8 % across two formulations; topical hydrocortisone
-  and PPIs dominate the rest of the drug utilisation.
+  colitis, Crohn's disease, and the unclassified umbrella.
+  5-ASA (mesalamine) is the predominant first-line therapy;
+  topical hydrocortisone and PPIs round out the medication
+  exposure for flare management and GI comorbidity.
 
 notes:
   - Variables pack is `newtown_ibd` (per-cohort). Inherits the
