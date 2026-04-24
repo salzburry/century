@@ -1,4 +1,11 @@
-# AAT (Anti-Amyloid Therapy) variable pack.
+# AAT (Anti-Amyloid Therapy) — shared variable base.
+#
+# Intermediate layer, not a final pack: every AAT cohort has its own
+# ETL, so the final source of truth lives in a per-cohort pack under
+# `packs/variables/<cohort>.yaml` (today: mtc_aat.yaml) that
+# `include: [aat_common]` and owns its own cohort-specific rows. This
+# file carries only logic that is genuinely identical across every AAT
+# cohort we ship.
 #
 # Inherits the ADRD common base (demographics, vitals, diagnosis,
 # biomarkers, visits, outcomes, reports) and adds the on-therapy
@@ -9,11 +16,16 @@
 #     generic names)
 #   - infusion table (drug + start date + end date)
 #   - ARIA-H (microhemorrhage) and ARIA-E (edema) — split out from
-#     the generic ARIA row in the alzheimers pack
+#     the generic ARIA row in the alzheimers_common pack
 #   - anti-amyloid infusion procedure codes
 #
-# Deliberately does NOT include the alzheimers pack. Earlier AAT
-# output inherited alzheimers' generic Medication (Prescription /
+# Cohort-specific rows — for example a future site's curated
+# infusion-administration abstraction — live in the per-cohort final
+# pack, not here, because the underlying table only exists in one
+# cohort's ETL.
+#
+# Deliberately does NOT include the alzheimers_common pack. Earlier
+# AAT output inherited alzheimers' generic Medication (Prescription /
 # Administration / Route) rows which overlapped with the AAT-specific
 # ones below and produced a noisy Page 4.
 

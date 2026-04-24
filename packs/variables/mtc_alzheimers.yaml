@@ -1,0 +1,23 @@
+# MTC Alzheimer's — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/mtc_alzheimers.yaml.
+# Inherits every Alzheimer's-level row from alzheimers_common (which
+# in turn includes adrd_common). Does NOT currently add any cohort-
+# specific rows.
+#
+# Populate this file when:
+#   - The MTC Alzheimer's ETL starts emitting cohort-specific tables
+#     (curated cognitive-battery abstraction, etc.)
+#   - A concept-name pattern diverges from alzheimers_common in this
+#     cohort only and a live build confirms it
+#   - A second Alzheimer's cohort (rmn_alzheimers per README §2.1)
+#     lands and we discover MTC-only abstractions baked into
+#     alzheimers_common that need to move down here
+#
+# Until then, this pack is a structural placeholder — every row comes
+# from the shared alzheimers_common / adrd_common chain.
+
+include:
+  - alzheimers_common
+
+variables: []

@@ -19,6 +19,11 @@ description: >
 
 notes:
   - Technical dictionary generated from schema introspection.
+  - Variables pack is `mtc_aat` (per-cohort). Currently a structural
+    placeholder that inherits everything from the shared
+    `aat_common` / `adrd_common` chain; cohort-specific rows land
+    here once a second AAT cohort lands or MTC ships an abstraction
+    table beyond the OMOP `infusion` entry.
   - Infusion records are split across drug_exposure and a dedicated
     infusion table; both feed the Medications / Infusions variables on
     Page 4. drug_concept_name is absent on infusion in some warehouses
@@ -33,6 +38,5 @@ notes:
 # Optional table -> Category override. Empty -> use packs/categories.yaml.
 category_rules: {}
 
-# Variables pack (Page 4). Points at the shared disease pack so the same
-# clinical variable list is reused across all MTC AAT-type cohorts.
-variables_pack: aat
+# Variables pack (Page 4) — per-cohort final pack.
+variables_pack: mtc_aat

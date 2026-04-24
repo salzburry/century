@@ -1,4 +1,11 @@
-# Alzheimer's-specific variable pack.
+# Alzheimer's — shared variable base.
+#
+# Intermediate layer, not a final pack: every Alzheimer's cohort has
+# its own ETL, so the final source of truth lives in a per-cohort
+# pack under `packs/variables/<cohort>.yaml` (today: mtc_alzheimers.yaml;
+# rmn_alzheimers.yaml is on the backlog) that `include: [alzheimers_common]`
+# and owns its own cohort-specific rows. This file carries only logic
+# that is genuinely identical across every Alzheimer's cohort we ship.
 #
 # Inherits the shared ADRD common base and adds rows that are
 # meaningful for the general Alzheimer's / dementia cohort but not
@@ -7,10 +14,10 @@
 #   - generic symptomatic medications (donepezil, rivastigmine,
 #     memantine) and route
 #   - generic ARIA observation (no microhemorrhage / edema split —
-#     that level of detail lives in aat.yaml)
+#     that level of detail lives in aat_common.yaml)
 #
 # Anti-amyloid infusion therapy, ARIA-H, and ARIA-E rows live in
-# aat.yaml because they only apply to the on-therapy subset.
+# aat_common.yaml because they only apply to the on-therapy subset.
 
 include:
   - adrd_common

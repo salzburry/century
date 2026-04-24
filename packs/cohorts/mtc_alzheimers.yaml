@@ -19,10 +19,14 @@ description: >
 
 notes:
   - Dictionary layout matches the reference century/Data dictionary.pdf.
-  - Shares the clinical variable list with Rocky Mountain Neurology
-    Alzheimer's (rmn_alzheimers_cohort) once that cohort is onboarded.
+  - Variables pack is `mtc_alzheimers` (per-cohort). Currently a
+    structural placeholder that inherits everything from the shared
+    `alzheimers_common` / `adrd_common` chain. When Rocky Mountain
+    Neurology Alzheimer's (rmn_alzheimers_cohort) lands per README
+    §2.1, that cohort gets its own per-cohort pack alongside this
+    one rather than sharing this file directly.
 
 category_rules: {}
 
-# Variables pack (Page 4) — same disease template as RMN Alzheimer's.
-variables_pack: alzheimers
+# Variables pack (Page 4) — per-cohort final pack.
+variables_pack: mtc_alzheimers

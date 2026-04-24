@@ -159,24 +159,30 @@ Explicit so the plan matches the codebase we have.
     `packs/cohorts/nimbus_asthma.yaml`,
     `packs/cohorts/nimbus_az_copd.yaml`,
     `packs/cohorts/nimbus_az_asthma.yaml`
-  - Variable packs are layered:
+  - Variable packs are layered. Every cohort has its own ETL, so the
+    final source of truth is always a per-cohort pack — disease-common
+    bases exist for reuse, never as the cohort's variables_pack target:
     - shared bases that multiple cohorts include:
       `packs/variables/adrd_common.yaml`,
+      `packs/variables/aat_common.yaml` (includes `adrd_common`),
+      `packs/variables/alzheimers_common.yaml` (includes `adrd_common`),
       `packs/variables/respiratory_common.yaml`,
       `packs/variables/copd_common.yaml` (includes `respiratory_common`),
       `packs/variables/asthma_common.yaml` (includes `respiratory_common`)
-    - per-cohort final packs — one per cohort because each cohort has
-      its own ETL and therefore its own source of truth:
-      `packs/variables/aat.yaml` (MTC AAT),
-      `packs/variables/alzheimers.yaml` (MTC Alzheimer's),
+    - per-cohort final packs — `cohort.variables_pack` always points
+      at one of these, never at a `*_common` base directly:
+      `packs/variables/mtc_aat.yaml` (includes `aat_common`,
+      placeholder, no cohort-specific overrides yet),
+      `packs/variables/mtc_alzheimers.yaml` (includes
+      `alzheimers_common`, placeholder, no overrides yet),
       `packs/variables/nimbus_copd.yaml` (includes `copd_common`, plus
       the Nimbus-curated `eosinophil_standardized` row),
       `packs/variables/nimbus_az_copd.yaml` (includes `copd_common`,
-      no cohort-specific overrides yet),
+      placeholder, no overrides yet),
       `packs/variables/nimbus_asthma.yaml` (includes `asthma_common`,
-      no cohort-specific overrides yet),
+      placeholder, no overrides yet),
       `packs/variables/nimbus_az_asthma.yaml` (includes `asthma_common`,
-      no cohort-specific overrides yet)
+      placeholder, no overrides yet)
   - `packs/categories.yaml`, `packs/pii.yaml`,
     `packs/table_descriptions.yaml`, `packs/column_descriptions.yaml`
 - `scripts/validate_packs.py` + `VALIDATION_REPORT.md` — static

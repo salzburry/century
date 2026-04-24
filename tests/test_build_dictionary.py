@@ -629,9 +629,14 @@ class ExpressionFieldTests(unittest.TestCase):
 
 class InfusionPackShapeTests(unittest.TestCase):
 
-    def test_aat_pack_splits_infusion_dates(self):
+    def test_aat_common_splits_infusion_dates(self):
+        # The two-row Start / End split lives in the disease-common
+        # base because it applies to every AAT cohort. Reads the file
+        # directly (rather than going through _all_variables_for) so
+        # the assertion is about the file's own contents, not a
+        # transitively-inherited row.
         import yaml as pyyaml
-        path = REPO_ROOT / "packs" / "variables" / "aat.yaml"
+        path = REPO_ROOT / "packs" / "variables" / "aat_common.yaml"
         data = pyyaml.safe_load(path.read_text(encoding="utf-8"))
         names = [v["variable"] for v in data.get("variables", [])]
         # One combined label that overclaims is gone; two specific ones exist.
@@ -757,6 +762,26 @@ def _all_variables_for(pack_slug: str) -> list[dict]:
     return _resolve(pack_slug)
 
 
+# --------------------------------------------------------------------- #
+# ADRD pack split — three layers, mirroring the respiratory layout:
+#
+#   adrd_common              (demographics, vitals, biomarkers, etc.)
+#       │
+#       ├── aat_common       (AAT-wide disease rows)
+#       │      └── mtc_aat   (per-cohort, no overrides yet)
+#       │
+#       └── alzheimers_common (Alzheimer's-wide disease rows)
+#              └── mtc_alzheimers (per-cohort, no overrides yet)
+#
+# Cohort packs in packs/cohorts/ point at the per-cohort final variable
+# pack (mtc_aat, mtc_alzheimers), never at the disease-common bases or
+# adrd_common directly. Same per-cohort-ETL rule as the Nimbus packs.
+# --------------------------------------------------------------------- #
+
+
+MTC_FINAL_PACKS = ("mtc_aat", "mtc_alzheimers")
+
+
 class PackSplitTests(unittest.TestCase):
 
     def test_adrd_common_exists_and_is_shared(self):
@@ -766,24 +791,46 @@ class PackSplitTests(unittest.TestCase):
         self.assertFalse(adrd.get("include"))
         self.assertGreater(len(adrd["variables"]), 30)
 
-    def test_alzheimers_includes_adrd_common(self):
-        alz = _load_yaml("packs/variables/alzheimers.yaml")
+    def test_alzheimers_common_includes_adrd_common(self):
+        alz = _load_yaml("packs/variables/alzheimers_common.yaml")
         self.assertEqual(alz.get("include"), ["adrd_common"])
 
-    def test_aat_includes_adrd_common_not_alzheimers(self):
-        aat = _load_yaml("packs/variables/aat.yaml")
+    def test_aat_common_includes_adrd_common_not_alzheimers(self):
+        aat = _load_yaml("packs/variables/aat_common.yaml")
         self.assertIn("adrd_common", aat.get("include", []))
-        self.assertNotIn("alzheimers", aat.get("include", []),
-                         "AAT must not transitively pull Alzheimer's-only "
-                         "rows (that's what caused the duplicate Medications")
+        self.assertNotIn(
+            "alzheimers_common", aat.get("include", []),
+            "aat_common must not transitively pull Alzheimer's-only "
+            "rows (that's what caused the duplicate Medications row "
+            "in the original AAT pack)",
+        )
 
-    def test_no_duplicate_variables_in_either_cohort(self):
-        for slug in ("alzheimers", "aat"):
+    def test_each_mtc_pack_includes_its_disease_common_base(self):
+        """Per-cohort MTC packs layer on top of the disease-common pack.
+        Mirrors the respiratory layout — separate ETL per cohort, so
+        the final source of truth lives in the cohort pack."""
+        expected = {
+            "mtc_aat":         "aat_common",
+            "mtc_alzheimers":  "alzheimers_common",
+        }
+        for pack, base in expected.items():
+            data = _load_yaml(f"packs/variables/{pack}.yaml")
+            self.assertEqual(
+                data.get("include"), [base],
+                f"{pack} must include exactly [{base!r}] — each per-cohort "
+                f"MTC pack layers on top of its disease-common base, not "
+                f"on adrd_common directly and not on the other disease",
+            )
+
+    def test_no_duplicate_variables_in_either_mtc_cohort(self):
+        for slug in MTC_FINAL_PACKS:
             all_vars = _all_variables_for(slug)
             keys = [(v.get("category"), v.get("variable")) for v in all_vars]
-            dupes = [k for k in set(keys) if keys.count(k) > 1]
-            self.assertEqual(dupes, [],
-                             f"duplicate (category, variable) in {slug}: {dupes}")
+            dupes = sorted({k for k in keys if keys.count(k) > 1})
+            self.assertEqual(
+                dupes, [],
+                f"duplicate (category, variable) in {slug}: {dupes}",
+            )
 
 
 class PackCurationFixTests(unittest.TestCase):
@@ -795,10 +842,11 @@ class PackCurationFixTests(unittest.TestCase):
         self.fail(f"variable {name!r} not found in {pack_slug}")
 
     # -- P2: ARIA criteria must use %ARIA% (not prefix-only ARIA%).
+    # ARIA rows are disease-level (aat_common / alzheimers_common).
     def test_aria_uses_fuzzy_match_not_prefix(self):
-        aria_aat_h = self._find_variable("aat", "ARIA-H (microhemorrhage)")
-        aria_aat_e = self._find_variable("aat", "ARIA-E (edema)")
-        aria_alz = self._find_variable("alzheimers", "ARIA")
+        aria_aat_h = self._find_variable("aat_common", "ARIA-H (microhemorrhage)")
+        aria_aat_e = self._find_variable("aat_common", "ARIA-E (edema)")
+        aria_alz = self._find_variable("alzheimers_common", "ARIA")
         for v in (aria_aat_h, aria_aat_e, aria_alz):
             c = v["criteria"]
             # Pattern must start with a %
@@ -808,7 +856,9 @@ class PackCurationFixTests(unittest.TestCase):
 
     # -- P2: Catch-all "Other Laboratory Measurements" row is gone.
     def test_no_other_laboratory_measurements_catch_all(self):
-        for slug in ("alzheimers", "aat"):
+        # Sweep every layer (disease-common bases + per-cohort finals)
+        # so a catch-all reintroduced at any level still trips the test.
+        for slug in ("aat_common", "alzheimers_common") + MTC_FINAL_PACKS:
             names = [v.get("variable") for v in _all_variables_for(slug)]
             self.assertNotIn(
                 "Other Laboratory Measurements", names,
@@ -817,8 +867,11 @@ class PackCurationFixTests(unittest.TestCase):
             )
 
     # -- P2: Document variable has MRI / PET / EEG criteria.
+    # Document row lives in adrd_common, surfaced via alzheimers_common.
     def test_document_variable_has_imaging_criteria(self):
-        doc = self._find_variable("alzheimers", "Document (MRI / PET / EEG)")
+        doc = self._find_variable(
+            "alzheimers_common", "Document (MRI / PET / EEG)"
+        )
         self.assertTrue(doc.get("criteria"),
                         "Document variable must have a criteria filter")
         c = doc["criteria"].upper()
@@ -830,7 +883,7 @@ class PackCurationFixTests(unittest.TestCase):
     # -- P2: AAT administration mirrors prescription brand+generic matching.
     def test_aat_administration_matches_brands_and_generics(self):
         admin = self._find_variable(
-            "aat", "Anti-amyloid Therapy (Administration)"
+            "aat_common", "Anti-amyloid Therapy (Administration)"
         )
         c = admin["criteria"].lower()
         for token in ("lecanemab", "leqembi", "donanemab", "kisunla",
@@ -846,7 +899,8 @@ class PackCurationFixTests(unittest.TestCase):
     #   Infusion Procedure Codes (candidate AAT attribution)
     def test_anti_amyloid_procedure_has_disambiguation_note(self):
         proc = self._find_variable(
-            "aat", "Infusion Procedure Codes (candidate AAT attribution)"
+            "aat_common",
+            "Infusion Procedure Codes (candidate AAT attribution)",
         )
         # The note explains why generic chemotherapy admin codes are kept.
         self.assertTrue(
@@ -862,7 +916,7 @@ class PackCurationFixTests(unittest.TestCase):
 
     # -- P3: Labs / Biomarkers spelling is consistent across packs.
     def test_biomarkers_category_label_consistent(self):
-        for slug in ("alzheimers", "aat"):
+        for slug in ("aat_common", "alzheimers_common") + MTC_FINAL_PACKS:
             cats = {v.get("category") for v in _all_variables_for(slug)}
             self.assertIn(
                 "Labs / Biomarkers", cats,
@@ -1003,8 +1057,9 @@ class PackTighteningTests(unittest.TestCase):
     def test_abeta_criteria_does_not_use_catch_wide_wildcards(self):
         # `%A%42%` / `%A%40%` had matched anything with an 'A' before the
         # number (HbA1c, ALT pre-42, etc.). Assert they're gone.
-        ab42 = self._find("alzheimers", "Amyloid-beta 42 (A-beta 42)")
-        ab40 = self._find("alzheimers", "Amyloid-beta 40 (A-beta 40)")
+        # A-beta rows live in adrd_common, surfaced via alzheimers_common.
+        ab42 = self._find("alzheimers_common", "Amyloid-beta 42 (A-beta 42)")
+        ab40 = self._find("alzheimers_common", "Amyloid-beta 40 (A-beta 40)")
         for v in (ab42, ab40):
             c = v["criteria"]
             self.assertNotIn(
@@ -1020,8 +1075,9 @@ class PackTighteningTests(unittest.TestCase):
     def test_symptomatic_adrd_therapy_rows_filter_to_chei_nmda(self):
         # Old "Medication (Prescription)" row has been renamed and
         # narrowed — the new row should filter by explicit ADRD drugs.
+        # Symptomatic ADRD rows live in alzheimers_common.
         rx = self._find(
-            "alzheimers", "Symptomatic ADRD Therapy (Prescription)"
+            "alzheimers_common", "Symptomatic ADRD Therapy (Prescription)"
         )
         c = rx["criteria"].lower()
         for drug in ("donepezil", "rivastigmine", "galantamine", "memantine"):
@@ -1030,25 +1086,28 @@ class PackTighteningTests(unittest.TestCase):
                 f"Symptomatic ADRD Therapy (Prescription) must filter "
                 f"by {drug!r} (got: {rx['criteria']!r})",
             )
-        # Ensure the old over-broad label isn't still present.
-        names = [v.get("variable") for v in _all_variables_for("alzheimers")]
+        # Ensure the old over-broad label isn't still present anywhere
+        # in the resolved Alzheimer's chain.
+        names = [v.get("variable")
+                 for v in _all_variables_for("mtc_alzheimers")]
         self.assertNotIn("Medication (Prescription)", names,
                          "old broad Medication (Prescription) row still present")
         self.assertNotIn("Medication (Administration)", names,
                          "old broad Medication (Administration) row still present")
 
     def test_infusion_drug_row_is_clearly_labeled_as_concept_id(self):
-        drug = self._find("aat", "Infusion Drug (Concept ID)")
+        drug = self._find("aat_common", "Infusion Drug (Concept ID)")
         self.assertEqual(drug["column"], "drug_concept_id")
-        # Old ambiguous name must not coexist with the new one.
-        aat_names = [v.get("variable") for v in _all_variables_for("aat")]
+        # Old ambiguous name must not coexist with the new one in the
+        # resolved AAT chain.
+        aat_names = [v.get("variable") for v in _all_variables_for("mtc_aat")]
         self.assertNotIn("Infusion Drug", aat_names,
                          "old ambiguous 'Infusion Drug' label still present")
 
     def test_anti_amyloid_procedure_row_signals_broad_match(self):
         # Old: "Anti-amyloid Infusion Procedure" (implied certainty).
         # New: "Infusion Procedure Codes (candidate AAT attribution)".
-        aat_names = [v.get("variable") for v in _all_variables_for("aat")]
+        aat_names = [v.get("variable") for v in _all_variables_for("mtc_aat")]
         self.assertNotIn("Anti-amyloid Infusion Procedure", aat_names)
         self.assertIn(
             "Infusion Procedure Codes (candidate AAT attribution)",
@@ -1535,6 +1594,74 @@ class NimbusCohortPackTests(unittest.TestCase):
         # Re-run the validator and confirm the four Nimbus cohorts are
         # error- and warning-free. Guards against future pack edits
         # sneaking a duplicate / unsafe ILIKE / id-column mismatch in.
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            import importlib
+            validate_packs = importlib.import_module("validate_packs")
+        finally:
+            sys.path.pop(0)
+
+        known = validate_packs._load_known_categories()
+        for slug in self.EXPECTED:
+            report = validate_packs.validate_cohort(slug, known)
+            errors = [f for f in report.findings if f.severity == "error"]
+            warnings = [f for f in report.findings if f.severity == "warning"]
+            self.assertEqual(errors, [],
+                             f"{slug} has validator errors: "
+                             f"{[f.message for f in errors]}")
+            self.assertEqual(warnings, [],
+                             f"{slug} has validator warnings: "
+                             f"{[f.message for f in warnings]}")
+
+
+# --------------------------------------------------------------------- #
+# MTC cohort packs — mirror the Nimbus checks. Per-cohort variable pack
+# per cohort, schema_name matches the on-warehouse layout, validator
+# clean for both. Locks the per-cohort layout in so a future edit can't
+# silently revert mtc_aat / mtc_alzheimers back to a shared disease pack.
+# --------------------------------------------------------------------- #
+
+
+class MTCCohortPackTests(unittest.TestCase):
+
+    EXPECTED = {
+        "mtc_aat":         ("MTC", "AAT",          "mtc_aat",        "mtc__aat_cohort"),
+        "mtc_alzheimers":  ("MTC", "Alzheimer's",  "mtc_alzheimers", "mtc__alzheimers_cohort"),
+    }
+
+    def test_both_mtc_cohort_packs_exist(self):
+        for slug in self.EXPECTED:
+            path = REPO_ROOT / "packs" / "cohorts" / f"{slug}.yaml"
+            self.assertTrue(path.is_file(),
+                            f"missing cohort pack: {path}")
+
+    def test_mtc_cohort_packs_point_at_per_cohort_variable_packs(self):
+        for slug, (provider, disease, var_pack, schema) in self.EXPECTED.items():
+            data = _load_yaml(f"packs/cohorts/{slug}.yaml")
+            self.assertEqual(data.get("provider"), provider, slug)
+            self.assertEqual(data.get("disease"), disease, slug)
+            self.assertEqual(
+                data.get("variables_pack"), var_pack,
+                f"{slug} must point at its per-cohort variable pack "
+                f"{var_pack!r} — separate ETL per cohort means each "
+                f"cohort owns its final source of truth (see the "
+                f"Nimbus refactor). When RMN Alzheimer's lands, it "
+                f"gets its own per-cohort pack rather than sharing "
+                f"this file directly.",
+            )
+            self.assertEqual(
+                data.get("schema_name"), schema,
+                f"{slug} schema_name must match the on-warehouse "
+                f"layout (got {data.get('schema_name')!r})",
+            )
+            # And the per-cohort variable pack file itself must exist.
+            var_path = REPO_ROOT / "packs" / "variables" / f"{var_pack}.yaml"
+            self.assertTrue(
+                var_path.is_file(),
+                f"{slug}: variables_pack file {var_path} is missing",
+            )
+
+    def test_validator_clean_on_mtc_cohorts(self):
         sys.path.insert(0, str(REPO_ROOT / "scripts"))
         try:
             import importlib
