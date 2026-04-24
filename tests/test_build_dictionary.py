@@ -1765,7 +1765,7 @@ class CKDPackCurationTests(unittest.TestCase):
             "SGLT2 Inhibitor",
             "Mineralocorticoid Receptor Antagonist (MRA)",
             "Loop Diuretic",
-            "Calcium Channel Blocker (Dihydropyridine)",
+            "Calcium Channel Blocker",
             "Statin (HMG-CoA Reductase Inhibitor)",
             "Aspirin (Antiplatelet)",
             "Sodium Bicarbonate (Acidosis Correction)",
@@ -1783,17 +1783,34 @@ class CKDPackCurationTests(unittest.TestCase):
 
     # -- CCB row uses explicit ingredients (not the banned %blocker%
     # wildcard) and covers amlodipine — the top-3 drug in both cohorts.
+    # Row is labelled "Calcium Channel Blocker" (not "(Dihydropyridine)")
+    # because it intentionally groups DHP and non-DHP agents together;
+    # the narrower label had a label-vs-criteria mismatch because
+    # diltiazem and verapamil are non-DHPs.
     def test_calcium_channel_blocker_row_matches_amlodipine(self):
-        ccb = _find_variable_in("ckd_common",
-                         "Calcium Channel Blocker (Dihydropyridine)")
+        ccb = _find_variable_in("ckd_common", "Calcium Channel Blocker")
         c = ccb["criteria"].lower()
         self.assertIn("amlodipine", c,
                       "CCB row must match amlodipine — #3-4 most-common "
                       "drug in both Balboa and DRG dumps")
         # Non-dihydropyridines (diltiazem, verapamil) are grouped in too
-        # because they're prescribed for the same HTN indication.
+        # because they're prescribed for the same HTN indication; the
+        # row name is therefore the generic class, not the DHP subclass.
         self.assertIn("diltiazem", c)
         self.assertIn("verapamil", c)
+
+    def test_ccb_row_is_not_named_dihydropyridine(self):
+        """Regression guard: row name must match its contents. The
+        label used to be "Calcium Channel Blocker (Dihydropyridine)"
+        which was clinically inaccurate because the criteria included
+        non-DHPs."""
+        names = [v.get("variable")
+                 for v in _all_variables_for("ckd_common")]
+        self.assertNotIn(
+            "Calcium Channel Blocker (Dihydropyridine)", names,
+            "The row must use the broader 'Calcium Channel Blocker' "
+            "label so the name matches the DHP + non-DHP criteria",
+        )
 
     # -- Aspirin row captures the top-1 drug in DRG.
     def test_aspirin_row_matches_aspirin(self):
@@ -1812,6 +1829,53 @@ class CKDPackCurationTests(unittest.TestCase):
                 f"{name} must AND in a serum/plasma/blood qualifier "
                 f"(got: {row['criteria']!r})",
             )
+
+    # -- Blood Pressure is represented by TWO rows because different
+    # cohorts store it differently:
+    #   DRG ships a combined string "Sitting blood pressure"
+    #     (value_as_string) and the "Combined" row picks it up.
+    #   Balboa ships separate Systolic / Diastolic numeric observations
+    #     (value_as_number) and the "Systolic / Diastolic, numeric"
+    #     row picks those up — the old single value_as_string row
+    #     would have silently shown Implemented=No for Balboa.
+    def test_blood_pressure_row_split_between_string_and_numeric(self):
+        names = [v.get("variable")
+                 for v in _all_variables_for("ckd_common")]
+        self.assertIn(
+            "Blood Pressure (Combined)", names,
+            "ckd_common must ship a value_as_string BP row for sites "
+            "that record combined 120/80-style strings",
+        )
+        self.assertIn(
+            "Blood Pressure (Systolic / Diastolic, numeric)", names,
+            "ckd_common must ship a value_as_number BP row for sites "
+            "that record systolic and diastolic as separate numeric "
+            "observations — confirmed in Output/balboackd.pdf",
+        )
+        # Old single "Blood Pressure" row must be gone — its description
+        # overclaimed that one value_as_string row covered numeric
+        # systolic/diastolic observations too.
+        self.assertNotIn(
+            "Blood Pressure", names,
+            "The old single 'Blood Pressure' row must not coexist — "
+            "its description overclaimed numeric support while the "
+            "column was hard-coded to value_as_string",
+        )
+        combined = _find_variable_in("ckd_common",
+                                     "Blood Pressure (Combined)")
+        self.assertEqual(combined["column"], "value_as_string")
+
+        numeric = _find_variable_in(
+            "ckd_common",
+            "Blood Pressure (Systolic / Diastolic, numeric)",
+        )
+        self.assertEqual(numeric["column"], "value_as_number")
+        nc = numeric["criteria"].lower()
+        # Numeric row criteria must be scoped to systolic / diastolic
+        # so the generic "Blood pressure" concept (where value_as_string
+        # is populated) doesn't leak into the numeric row.
+        self.assertIn("systolic blood pressure", nc)
+        self.assertIn("diastolic blood pressure", nc)
 
     # -- Proteinuria, Hypertension, Vitamin D deficiency diagnosis
     # rows exist as distinct condition-side rows rather than being
@@ -1913,18 +1977,13 @@ class CKDPackCurationTests(unittest.TestCase):
             "qualifier so HbA1c is not counted here",
         )
 
-    # -- Smoking Status is tracked on TWO tables because the cohorts
-    # disagree on where to put it:
-    #   Balboa: observation.value_as_concept_name (observation-side)
-    #   DRG:    procedure_occurrence.procedure_concept_name (SNOMED
-    #           "Current tobacco non-user ..." concept, 5.6% of
-    #           procedures)
-    # Both rows ship so a live build surfaces whichever one the
-    # cohort actually populates.
-    def test_smoking_status_has_both_observation_and_procedure_rows(self):
+    # -- Smoking Status rows are split by cohort:
+    #   ckd_common ships the observation-side row (Balboa-style).
+    #   drg_ckd adds a procedure-coded row — that concept-naming
+    #   pattern is DRG-specific and should NOT leak into Balboa.
+    def test_smoking_status_observation_row_in_ckd_common(self):
         for slug in ("ckd_common",) + CKD_FINAL_PACKS:
             rows = _all_variables_for(slug)
-
             obs_rows = [v for v in rows
                         if v.get("variable") == "Smoking Status"]
             self.assertEqual(
@@ -1933,36 +1992,32 @@ class CKDPackCurationTests(unittest.TestCase):
                 f"Smoking Status row, found {len(obs_rows)}",
             )
             self.assertEqual(obs_rows[0]["table"], "observation")
-
-            proc_rows = [v for v in rows
-                         if v.get("variable") == "Smoking Status (Procedure-coded)"]
-            self.assertEqual(
-                len(proc_rows), 1,
-                f"{slug}: expected exactly one procedure-coded "
-                f"Smoking Status row, found {len(proc_rows)}",
-            )
-            self.assertEqual(
-                proc_rows[0]["table"], "procedure_occurrence",
-                f"{slug}: procedure-coded Smoking Status row must "
-                f"target procedure_occurrence, not observation",
+            self.assertIn(
+                "observation_concept_name ilike '%tobacco%'",
+                obs_rows[0]["criteria"].lower(),
+                f"{slug}: observation Smoking Status row must use the "
+                f"widened %tobacco% pattern",
             )
 
-    # -- Both Smoking Status rows use the widened %tobacco% pattern
-    # (vs respiratory_common's `%tobacco use%`) so DRG-style
-    # "Current tobacco non-user" variants match.
-    def test_smoking_rows_use_widened_tobacco_pattern(self):
-        for slug in CKD_FINAL_PACKS:
-            for name, col in (
-                ("Smoking Status", "observation_concept_name"),
-                ("Smoking Status (Procedure-coded)", "procedure_concept_name"),
-            ):
-                sm = _find_variable_in(slug, name)
-                c = sm["criteria"].lower()
-                self.assertIn(
-                    f"{col} ilike '%tobacco%'".lower(), c,
-                    f"{slug}/{name}: must query {col} with the widened "
-                    f"%tobacco% pattern (got: {sm['criteria']!r})",
-                )
+    def test_smoking_status_procedure_row_is_drg_only(self):
+        # DRG-only: per-cohort pack is the final source of truth.
+        drg_names = [v.get("variable")
+                     for v in _all_variables_for("drg_ckd")]
+        self.assertIn(
+            "Smoking Status (Procedure-coded)", drg_names,
+            "drg_ckd must ship the procedure-coded Smoking Status row",
+        )
+
+        # Must NOT appear in ckd_common or balboa_ckd.
+        for slug in ("ckd_common", "balboa_ckd"):
+            names = [v.get("variable") for v in _all_variables_for(slug)]
+            self.assertNotIn(
+                "Smoking Status (Procedure-coded)", names,
+                f"{slug} must NOT inherit the DRG-specific procedure-"
+                f"coded Smoking Status row — its wording references "
+                f"DRG data shape and would read as a merged superset "
+                f"in Balboa's workbook",
+            )
 
 
 # --------------------------------------------------------------------- #
