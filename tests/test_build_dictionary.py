@@ -1786,7 +1786,9 @@ class CKDPackCurationTests(unittest.TestCase):
             "SGLT2 Inhibitor",
             "Mineralocorticoid Receptor Antagonist (MRA)",
             "Loop Diuretic",
+            "Calcium Channel Blocker (Dihydropyridine)",
             "Statin (HMG-CoA Reductase Inhibitor)",
+            "Aspirin (Antiplatelet)",
             "Sodium Bicarbonate (Acidosis Correction)",
             "Phosphate Binder",
             "Potassium Binder",
@@ -1799,6 +1801,93 @@ class CKDPackCurationTests(unittest.TestCase):
                     label, names,
                     f"{slug} must expose class-level row {label!r}",
                 )
+
+    # -- CCB row uses explicit ingredients (not the banned %blocker%
+    # wildcard) and covers amlodipine — the top-3 drug in both cohorts.
+    def test_calcium_channel_blocker_row_matches_amlodipine(self):
+        ccb = self._find("ckd_common",
+                         "Calcium Channel Blocker (Dihydropyridine)")
+        c = ccb["criteria"].lower()
+        self.assertIn("amlodipine", c,
+                      "CCB row must match amlodipine — #3-4 most-common "
+                      "drug in both Balboa and DRG dumps")
+        # Non-dihydropyridines (diltiazem, verapamil) are grouped in too
+        # because they're prescribed for the same HTN indication.
+        self.assertIn("diltiazem", c)
+        self.assertIn("verapamil", c)
+
+    # -- Aspirin row captures the top-1 drug in DRG.
+    def test_aspirin_row_matches_aspirin(self):
+        asa = self._find("ckd_common", "Aspirin (Antiplatelet)")
+        self.assertIn("aspirin", asa["criteria"].lower())
+
+    # -- Serum Calcium / Serum Sodium rows use a serum/plasma/blood
+    # qualifier so they don't pick up calcium-channel-blocker drug
+    # mentions or sodium bicarbonate drug mentions.
+    def test_calcium_and_sodium_labs_have_blood_qualifier(self):
+        for name in ("Serum Calcium", "Serum Sodium"):
+            row = self._find("ckd_common", name)
+            c = row["criteria"].lower()
+            self.assertTrue(
+                any(tok in c for tok in ("serum", "plasma", "blood")),
+                f"{name} must AND in a serum/plasma/blood qualifier "
+                f"(got: {row['criteria']!r})",
+            )
+
+    # -- Proteinuria, Hypertension, Vitamin D deficiency diagnosis
+    # rows exist as distinct condition-side rows rather than being
+    # swept into the generic Diagnosis row.
+    def test_ckd_ships_comorbidity_diagnosis_rows(self):
+        expected = [
+            "Proteinuria / Albuminuria",
+            "Hypertension",
+            "Vitamin D Deficiency",
+        ]
+        names = [v.get("variable") for v in _all_variables_for("ckd_common")]
+        for label in expected:
+            self.assertIn(label, names,
+                          f"ckd_common must expose {label!r} as a "
+                          f"distinct comorbidity row")
+
+    # -- Hypertension row avoids double-counting with CKD Diagnosis
+    # (which already covers "Hypertensive renal disease" variants).
+    def test_hypertension_row_is_narrowed_to_essential_primary(self):
+        htn = self._find("ckd_common", "Hypertension")
+        c = htn["criteria"].lower()
+        # Must require an essential / primary / disorder qualifier —
+        # otherwise "Hypertensive renal disease" patients would be
+        # double-counted between this row and CKD Diagnosis.
+        self.assertTrue(
+            any(tok in c for tok in ("essential", "primary",
+                                     "hypertensive disorder",
+                                     "benign hypertension")),
+            "Hypertension row must be scoped to essential / primary "
+            "variants to avoid overlap with the CKD Diagnosis row "
+            "that already covers hypertensive-renal-disease patients",
+        )
+
+    # -- ESRD Monthly Services row captures CPT 9095X-9096X billing.
+    def test_esrd_monthly_services_row_exists_and_matches_related_services(self):
+        esrd = self._find(
+            "ckd_common",
+            "End-Stage Renal Disease (ESRD) Monthly Services",
+        )
+        c = esrd["criteria"].lower()
+        # Must match the "ESRD related services" / "end stage renal
+        # disease services" billing-concept wording seen in Balboa
+        # (13.3% of procedures).
+        self.assertTrue(
+            any(tok in c for tok in ("esrd%services", "esrd%related",
+                                     "end-stage renal disease%services",
+                                     "end stage renal disease%services")),
+            "ESRD Monthly Services criteria must match the 'ESRD "
+            "related services' / 'end-stage renal disease ... services' "
+            "concept-name pattern",
+        )
+        # Must NOT match generic E&M visit concepts (office visit,
+        # subsequent hospital care) — those are covered by Visit Type.
+        self.assertNotIn("office visit", c)
+        self.assertNotIn("subsequent hospital", c)
 
     # -- RAAS row covers both ACE inhibitors and ARBs (alternatives
     # for the same indication; combining them keeps the row name
@@ -1845,21 +1934,56 @@ class CKDPackCurationTests(unittest.TestCase):
             "qualifier so HbA1c is not counted here",
         )
 
-    # -- Smoking Status uses the wider %tobacco% pattern (vs the
-    # respiratory_common %tobacco use% pattern) — required because
-    # DRG records "Current tobacco non-user (CAD, CAP, COPD, PV) (DM)"
-    # which would not match the narrower clause.
-    def test_smoking_row_uses_widened_tobacco_pattern(self):
-        for slug in CKD_FINAL_PACKS:
-            sm = self._find(slug, "Smoking Status")
-            c = sm["criteria"].lower()
-            self.assertIn(
-                "ilike '%tobacco%'", c,
-                f"{slug}: Smoking Status criteria must use the "
-                f"widened %tobacco% pattern so DRG-style "
-                f"'Current tobacco non-user' concepts match "
-                f"(got: {sm['criteria']!r})",
+    # -- Smoking Status is tracked on TWO tables because the cohorts
+    # disagree on where to put it:
+    #   Balboa: observation.value_as_concept_name (observation-side)
+    #   DRG:    procedure_occurrence.procedure_concept_name (SNOMED
+    #           "Current tobacco non-user ..." concept, 5.6% of
+    #           procedures)
+    # Both rows ship so a live build surfaces whichever one the
+    # cohort actually populates.
+    def test_smoking_status_has_both_observation_and_procedure_rows(self):
+        for slug in ("ckd_common",) + CKD_FINAL_PACKS:
+            rows = _all_variables_for(slug)
+
+            obs_rows = [v for v in rows
+                        if v.get("variable") == "Smoking Status"]
+            self.assertEqual(
+                len(obs_rows), 1,
+                f"{slug}: expected exactly one observation-side "
+                f"Smoking Status row, found {len(obs_rows)}",
             )
+            self.assertEqual(obs_rows[0]["table"], "observation")
+
+            proc_rows = [v for v in rows
+                         if v.get("variable") == "Smoking Status (Procedure-coded)"]
+            self.assertEqual(
+                len(proc_rows), 1,
+                f"{slug}: expected exactly one procedure-coded "
+                f"Smoking Status row, found {len(proc_rows)}",
+            )
+            self.assertEqual(
+                proc_rows[0]["table"], "procedure_occurrence",
+                f"{slug}: procedure-coded Smoking Status row must "
+                f"target procedure_occurrence, not observation",
+            )
+
+    # -- Both Smoking Status rows use the widened %tobacco% pattern
+    # (vs respiratory_common's `%tobacco use%`) so DRG-style
+    # "Current tobacco non-user" variants match.
+    def test_smoking_rows_use_widened_tobacco_pattern(self):
+        for slug in CKD_FINAL_PACKS:
+            for name, col in (
+                ("Smoking Status", "observation_concept_name"),
+                ("Smoking Status (Procedure-coded)", "procedure_concept_name"),
+            ):
+                sm = self._find(slug, name)
+                c = sm["criteria"].lower()
+                self.assertIn(
+                    f"{col} ilike '%tobacco%'".lower(), c,
+                    f"{slug}/{name}: must query {col} with the widened "
+                    f"%tobacco% pattern (got: {sm['criteria']!r})",
+                )
 
 
 # --------------------------------------------------------------------- #

@@ -29,9 +29,12 @@ notes:
     albumin-side UACR. The shared UACR row will likely show
     Implemented=No until the cohort either records true UACR or a
     DRG-specific urea-creatinine-ratio row is added here.
-  - Smoking Status row in ckd_common uses the widened `%tobacco%`
-    pattern specifically because DRG records statuses as
-    "Current tobacco non-user (CAD, CAP, COPD, PV) (DM)".
+  - DRG records smoking status in `procedure_occurrence`, not
+    `observation` — the "Current tobacco non-user (CAD, CAP, COPD,
+    PV) (DM) (IBD)" SNOMED concept appears at 5.6% of all procedure
+    rows. The observation-side Smoking Status row in ckd_common will
+    show Implemented=No for DRG; the parallel
+    "Smoking Status (Procedure-coded)" row picks up the real signal.
 
 # Optional table -> Category override. Empty -> use packs/categories.yaml.
 category_rules: {}

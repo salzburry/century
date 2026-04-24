@@ -162,10 +162,31 @@ variables:
       observation_concept_name ILIKE '%cigarette%'
     extraction_type: Structured
     notes: >
-      Wider `%tobacco%` clause (vs the respiratory_common
-      `%tobacco use%`) is data-driven: DRG records smoking status as
-      "Current tobacco non-user (CAD, CAP, COPD, PV) (DM)", which the
-      narrower clause would miss.
+      Captures smoking status at sites that record it in the OMOP
+      `observation` table (Balboa-style). Sites that record smoking
+      as a procedure-coded SNOMED "Current tobacco non-user ..."
+      concept — as DRG does — are captured by the separate
+      "Smoking Status (Procedure-coded)" row below.
+
+  - category: Observations
+    variable: Smoking Status (Procedure-coded)
+    description: >
+      Smoking status captured in `procedure_occurrence` via the SNOMED
+      "Current tobacco non-user ..." / "Current tobacco user ..." style
+      concepts. DRG ships this as a procedure (5.6% of all procedure
+      rows, confirmed in Output/drgckd.pdf) rather than an observation.
+    table: procedure_occurrence
+    column: procedure_concept_name
+    criteria: >
+      procedure_concept_name ILIKE '%tobacco%' OR
+      procedure_concept_name ILIKE '%smoking%' OR
+      procedure_concept_name ILIKE '%cigarette%'
+    extraction_type: Structured
+    notes: >
+      Parallel to the observation-side Smoking Status row. Both should
+      be reported in a live build so reviewers can see which table
+      holds the cohort's smoking-status signal. Combined cohort-level
+      counts require de-duplicating by person across the two rows.
 
   # ----- Diagnosis ----------------------------------------------------
   - category: Diagnosis
@@ -227,6 +248,56 @@ variables:
       condition_concept_name ILIKE '%acute renal failure%' OR
       condition_concept_name ILIKE '%acute kidney injury%' OR
       condition_concept_name ILIKE '%AKI%'
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Proteinuria / Albuminuria
+    description: >
+      Proteinuria (bulk urine protein) and albuminuria (albumin-
+      specific) — earliest clinical sign of kidney damage and the
+      A-stage driver of CKD G/A staging. DRG dump shows "Proteinuria,
+      unspecified" at 5.2% of all conditions.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%proteinuria%' OR
+      condition_concept_name ILIKE '%albuminuria%' OR
+      condition_concept_name ILIKE '%microalbuminuria%'
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Hypertension
+    description: >
+      Essential / primary hypertension — the dominant CKD comorbidity
+      and one of its leading causes. DRG dump shows "Essential
+      (primary) hypertension" at 12.2% of all conditions (top-1);
+      Balboa's "Hypertensive renal disease" variants are tracked by
+      the CKD Diagnosis row above.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%essential%hypertension%' OR
+      condition_concept_name ILIKE '%primary%hypertension%' OR
+      condition_concept_name ILIKE '%hypertensive disorder%' OR
+      condition_concept_name ILIKE '%benign hypertension%'
+    extraction_type: Structured
+    notes: >
+      Narrowed to essential / primary / hypertensive-disorder
+      variants to avoid double-counting hypertensive-renal-disease
+      patients already covered by the CKD Diagnosis row.
+
+  - category: Diagnosis
+    variable: Vitamin D Deficiency
+    description: >
+      Vitamin D deficiency — common in CKD because the kidney
+      performs the final 1-alpha-hydroxylation that activates
+      vitamin D. DRG dump shows "Vitamin D deficiency, unspecified"
+      at 3.7% of all conditions.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%vitamin D deficiency%' OR
+      condition_concept_name ILIKE '%25-hydroxyvitamin D deficiency%'
     extraction_type: Structured
 
   # ----- Labs / Biomarkers - CKD core -------------------------------
@@ -334,6 +405,47 @@ variables:
     extraction_type: Structured
 
   - category: Labs / Biomarkers
+    variable: Serum Calcium
+    description: >
+      Serum or plasma calcium — core CKD-MBD (mineral and bone
+      disorder) marker. Balboa dump shows "Calcium [Mass/volume] in
+      Serum or Plasma" at 3.6% of all measurements (#3 lab).
+    table: measurement
+    column: value_as_number
+    criteria: >
+      measurement_concept_name ILIKE '%calcium%' AND
+      (measurement_concept_name ILIKE '%serum%' OR
+       measurement_concept_name ILIKE '%plasma%' OR
+       measurement_concept_name ILIKE '%blood%')
+    extraction_type: Structured
+    notes: >
+      AND-qualifier on "serum/plasma/blood" so urine-calcium and
+      calcium-channel-blocker drug mentions don't leak in. Calcium
+      in CKD is interpreted together with phosphorus and PTH;
+      ionised vs total calcium distinction is left to a per-cohort
+      row if the reviewer needs it.
+
+  - category: Labs / Biomarkers
+    variable: Serum Sodium
+    description: >
+      Serum or plasma sodium — tracked in CKD for volume / free-water
+      balance, hyponatremia-related seizure risk, and response to
+      diuretic therapy. DRG dump shows "Sodium [Moles/volume] in
+      Serum or Plasma" among the most-frequent measurements.
+    table: measurement
+    column: value_as_number
+    criteria: >
+      measurement_concept_name ILIKE '%sodium%' AND
+      (measurement_concept_name ILIKE '%serum%' OR
+       measurement_concept_name ILIKE '%plasma%' OR
+       measurement_concept_name ILIKE '%blood%')
+    extraction_type: Structured
+    notes: >
+      AND-qualifier keeps urine sodium and "sodium bicarbonate"
+      drug mentions out; the drug is captured by the Sodium
+      Bicarbonate medication row.
+
+  - category: Labs / Biomarkers
     variable: HbA1c (Hemoglobin A1c)
     description: >
       Glycated hemoglobin — diabetic CKD monitoring. Co-management
@@ -410,6 +522,26 @@ variables:
       procedure_concept_name ILIKE '%kidney biopsy%' OR
       procedure_concept_name ILIKE '%renal biopsy%' OR
       procedure_concept_name ILIKE '%biopsy%kidney%'
+    extraction_type: Structured
+
+  - category: Procedures
+    variable: End-Stage Renal Disease (ESRD) Monthly Services
+    description: >
+      CPT 9095X-9096X monthly ESRD-related E&M services for patients
+      on dialysis — separate from the dialysis sessions themselves.
+      Balboa dump shows "End-stage renal disease (ESRD) related
+      services monthly, for patients 20 years of age and older; with
+      4 or more face-to-face visits ..." at 13.3% of all procedures
+      (#3 procedure). Kept distinct from the Dialysis row above
+      because these are billing/E&M records, not dialysis-session
+      procedures — conflating them would overclaim dialysis rates.
+    table: procedure_occurrence
+    column: procedure_concept_name
+    criteria: >
+      procedure_concept_name ILIKE '%end-stage renal disease%services%' OR
+      procedure_concept_name ILIKE '%end stage renal disease%services%' OR
+      procedure_concept_name ILIKE '%ESRD%services%' OR
+      procedure_concept_name ILIKE '%ESRD%related%'
     extraction_type: Structured
 
   # ----- Medications - CKD pharmacotherapy --------------------------
@@ -500,6 +632,36 @@ variables:
     extraction_type: Structured
 
   - category: Medications
+    variable: Calcium Channel Blocker (Dihydropyridine)
+    description: >
+      Dihydropyridine calcium channel blockers (amlodipine,
+      nifedipine, felodipine, nicardipine) used for blood-pressure
+      control in CKD, often paired with an ACE-i / ARB. Non-
+      dihydropyridine CCBs (diltiazem, verapamil) included here too
+      because they are prescribed for the same indication in
+      patients intolerant of dihydropyridines. amlodipine is the
+      #3-4 most-frequent drug in BOTH Balboa (1.6%) and DRG (1.1%)
+      dumps.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: >
+      drug_concept_name ILIKE '%amlodipine%' OR
+      drug_concept_name ILIKE '%nifedipine%' OR
+      drug_concept_name ILIKE '%felodipine%' OR
+      drug_concept_name ILIKE '%nicardipine%' OR
+      drug_concept_name ILIKE '%isradipine%' OR
+      drug_concept_name ILIKE '%diltiazem%' OR
+      drug_concept_name ILIKE '%verapamil%' OR
+      drug_concept_name ILIKE '%Norvasc%' OR
+      drug_concept_name ILIKE '%Procardia%'
+    extraction_type: Structured
+    notes: >
+      CCBs are not CKD-specific but are foundational for HTN
+      management in CKD (where ACE/ARB alone rarely reaches BP
+      targets). Row is deliberately by explicit-ingredient list to
+      avoid the banned '%blocker%' wildcard.
+
+  - category: Medications
     variable: Statin (HMG-CoA Reductase Inhibitor)
     description: >
       Statins — atorvastatin, rosuvastatin, simvastatin, pravastatin,
@@ -519,6 +681,24 @@ variables:
     notes: >
       TODO (clinical review): not directly confirmed in the dumps but
       standard-of-care in CKD with cardiovascular risk.
+
+  - category: Medications
+    variable: Aspirin (Antiplatelet)
+    description: >
+      Low-dose aspirin — cardiovascular-event prevention in CKD
+      patients with established atherosclerotic disease. DRG dump
+      shows "aspirin 81 MG Delayed Release Oral Tablet" as the #1
+      drug (1.2%); Balboa shows aspirin 81 MG among its top drugs as
+      well.
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: drug_concept_name ILIKE '%aspirin%'
+    extraction_type: Structured
+    notes: >
+      Not CKD-specific; aspirin is a cross-cohort cardiovascular-
+      prevention marker. Useful for reviewers triaging combined
+      CKD + CVD exposure; do not use this row alone to attribute
+      a cardiovascular prevention regimen.
 
   - category: Medications
     variable: Sodium Bicarbonate (Acidosis Correction)
