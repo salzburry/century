@@ -19,12 +19,16 @@ description: >
 
 notes:
   - Technical dictionary generated from schema introspection.
-  - Variables pack is the shared asthma template, also used by
-    nimbus_asthma. FEV1 / FVC / FEV1-FVC ratio, ACT, and FeNO rows
-    are abstracted and may show Implemented=No until the per-site
-    abstraction pipeline lands.
+  - Variables pack is `nimbus_az_asthma` (per-cohort). Currently a
+    structural placeholder that inherits everything from the shared
+    `asthma_common` / `respiratory_common` chain; cohort-specific
+    rows land here once a live build confirms a Nimbus-AZ-asthma
+    divergence from asthma_common.
+  - FEV1 / FVC / FEV1-FVC ratio, ACT, and FeNO rows are abstracted
+    and may show Implemented=No until the per-site abstraction
+    pipeline lands.
 
 category_rules: {}
 
-# Variables pack (Page 4) — shared asthma template.
-variables_pack: asthma
+# Variables pack (Page 4) — per-cohort final pack.
+variables_pack: nimbus_az_asthma

@@ -19,13 +19,17 @@ description: >
 
 notes:
   - Technical dictionary generated from schema introspection.
-  - Variables pack is the shared COPD template, also used by
-    nimbus_copd. Per README §2.1, FEV1 abstraction is in progress for
-    this site — the FEV1 / FVC / FEV1-FVC ratio rows are marked
-    Abstracted and will remain Implemented=No until that pipeline
-    ships.
+  - Variables pack is `nimbus_az_copd` (per-cohort). Currently a
+    structural placeholder that inherits everything from the shared
+    `copd_common` / `respiratory_common` chain; cohort-specific rows
+    land here once the Nimbus AZ ETL starts shipping abstracted
+    tables. Nimbus COPD's `eosinophil_standardized` row is NOT
+    inherited because the table does not exist in this schema.
+  - Per README §2.1, FEV1 abstraction is in progress for this site —
+    the FEV1 / FVC / FEV1-FVC ratio rows are marked Abstracted and
+    will remain Implemented=No until that pipeline ships.
 
 category_rules: {}
 
-# Variables pack (Page 4) — shared COPD template.
-variables_pack: copd
+# Variables pack (Page 4) — per-cohort final pack.
+variables_pack: nimbus_az_copd

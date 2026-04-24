@@ -1,0 +1,24 @@
+# Nimbus AZ COPD — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/nimbus_az_copd.yaml.
+# Inherits every COPD-level row from copd_common (which in turn
+# includes respiratory_common). Does NOT currently add any cohort-
+# specific rows — the Nimbus AZ ETL does not ship a dedicated
+# abstraction table analogous to Nimbus COPD's `eosinophil_standardized`
+# (per README §2.1, FEV1 abstraction is still in progress for this
+# site), and no variable divergence from copd_common has been confirmed
+# yet.
+#
+# Populate this file when:
+#   - The Nimbus AZ ETL starts emitting cohort-specific tables (e.g.
+#     an `fev1_standardized` abstraction)
+#   - A concept-name pattern diverges from copd_common in this cohort
+#     only and a live build confirms it
+#
+# Until then, this pack is a structural placeholder — every row comes
+# from the shared copd_common / respiratory_common chain.
+
+include:
+  - copd_common
+
+variables: []

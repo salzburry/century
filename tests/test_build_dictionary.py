@@ -1137,11 +1137,32 @@ class PackTighteningTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------- #
-# Respiratory pack split — respiratory_common shared by copd + asthma.
-# Mirrors the PackSplitTests for ADRD: assert the include chain is
-# intact, that neither disease pack transitively pulls in the other,
-# and that the resolved list has no duplicate (category, variable).
+# Respiratory pack split — three layers:
+#
+#   respiratory_common         (demographics, vitals, smoking, etc.)
+#        │
+#        ├── copd_common       (COPD-wide disease rows)
+#        │      │
+#        │      ├── nimbus_copd        (per-cohort, adds
+#        │      │                       eosinophil_standardized)
+#        │      └── nimbus_az_copd     (per-cohort, no overrides yet)
+#        │
+#        └── asthma_common     (asthma-wide disease rows)
+#               │
+#               ├── nimbus_asthma      (per-cohort, no overrides yet)
+#               └── nimbus_az_asthma   (per-cohort, no overrides yet)
+#
+# Cohort packs in packs/cohorts/ point at the per-cohort final variable
+# pack, never at copd_common / asthma_common / respiratory_common
+# directly. This matches the rule that each cohort has its own ETL and
+# therefore its own source of truth.
 # --------------------------------------------------------------------- #
+
+
+NIMBUS_FINAL_PACKS = (
+    "nimbus_copd", "nimbus_az_copd",
+    "nimbus_asthma", "nimbus_az_asthma",
+)
 
 
 class RespiratoryPackSplitTests(unittest.TestCase):
@@ -1156,27 +1177,51 @@ class RespiratoryPackSplitTests(unittest.TestCase):
         # Enough rows to be useful — demographics (9) + vitals (8) + basics.
         self.assertGreater(len(resp["variables"]), 20)
 
-    def test_copd_includes_respiratory_common_not_asthma(self):
-        copd = _load_yaml("packs/variables/copd.yaml")
+    def test_copd_common_includes_respiratory_common_not_asthma(self):
+        copd = _load_yaml("packs/variables/copd_common.yaml")
         self.assertIn("respiratory_common", copd.get("include", []))
         self.assertNotIn(
-            "asthma", copd.get("include", []),
-            "COPD must not transitively pull asthma-specific rows (biologics, "
-            "ACT, FeNO) — that would reintroduce the same duplication the "
-            "ADRD split was designed to prevent",
+            "asthma_common", copd.get("include", []),
+            "copd_common must not transitively pull asthma-specific rows "
+            "(biologics, ACT, FeNO) — that would reintroduce the same "
+            "duplication the ADRD split was designed to prevent",
         )
 
-    def test_asthma_includes_respiratory_common_not_copd(self):
-        asthma = _load_yaml("packs/variables/asthma.yaml")
+    def test_asthma_common_includes_respiratory_common_not_copd(self):
+        asthma = _load_yaml("packs/variables/asthma_common.yaml")
         self.assertIn("respiratory_common", asthma.get("include", []))
         self.assertNotIn(
-            "copd", asthma.get("include", []),
-            "Asthma must not transitively pull COPD-specific rows (triple "
-            "therapy, roflumilast, supplemental oxygen)",
+            "copd_common", asthma.get("include", []),
+            "asthma_common must not transitively pull COPD-specific rows "
+            "(triple therapy, roflumilast, supplemental oxygen)",
         )
 
-    def test_no_duplicate_variables_in_copd_or_asthma(self):
-        for slug in ("copd", "asthma"):
+    def test_each_nimbus_pack_includes_its_disease_common_base(self):
+        """Per-cohort packs layer on top of the disease-common pack.
+        Separate ETLs mean the final source of truth lives in the
+        cohort pack, but the shared disease rows must still flow in
+        via the include chain."""
+        expected = {
+            "nimbus_copd":       "copd_common",
+            "nimbus_az_copd":    "copd_common",
+            "nimbus_asthma":     "asthma_common",
+            "nimbus_az_asthma":  "asthma_common",
+        }
+        for pack, base in expected.items():
+            data = _load_yaml(f"packs/variables/{pack}.yaml")
+            self.assertEqual(
+                data.get("include"), [base],
+                f"{pack} must include exactly [{base!r}] — each per-cohort "
+                f"pack layers on top of its disease-common base, not on "
+                f"respiratory_common directly and not on another cohort",
+            )
+
+    def test_no_duplicate_variables_in_any_respiratory_pack(self):
+        """Duplicate (category, variable) in the resolved list of any
+        final pack would mean the include chain got tangled (e.g. a
+        cohort pack redeclares a row that already comes from its
+        common base)."""
+        for slug in NIMBUS_FINAL_PACKS:
             all_vars = _all_variables_for(slug)
             keys = [(v.get("category"), v.get("variable")) for v in all_vars]
             dupes = sorted({k for k in keys if keys.count(k) > 1})
@@ -1202,8 +1247,9 @@ class RespiratoryPackCurationTests(unittest.TestCase):
         self.fail(f"variable {name!r} not found in {pack_slug}")
 
     # -- COPD diagnosis covers the three standard condition families.
+    # Defined in copd_common so every COPD cohort inherits it.
     def test_copd_diagnosis_matches_all_three_condition_families(self):
-        dx = self._find("copd", "COPD Diagnosis")
+        dx = self._find("copd_common", "COPD Diagnosis")
         c = dx["criteria"].lower()
         for token in ("chronic obstructive pulmonary",
                       "emphysema", "chronic bronchitis"):
@@ -1214,8 +1260,9 @@ class RespiratoryPackCurationTests(unittest.TestCase):
             )
 
     # -- COPD inhaler rows exist as separate classes (not one catch-all).
+    # Must flow through to every nimbus_*_copd cohort via the
+    # copd_common include.
     def test_copd_ships_class_level_inhaler_rows(self):
-        names = [v.get("variable") for v in _all_variables_for("copd")]
         expected = [
             "Short-acting Bronchodilator (SABA / SAMA)",
             "Long-acting Beta-agonist (LABA)",
@@ -1223,15 +1270,17 @@ class RespiratoryPackCurationTests(unittest.TestCase):
             "Inhaled Corticosteroid (ICS)",
             "COPD Triple Therapy (ICS + LABA + LAMA)",
         ]
-        for label in expected:
-            self.assertIn(
-                label, names,
-                f"COPD pack must ship a dedicated class row for {label!r}",
-            )
+        for slug in ("copd_common", "nimbus_copd", "nimbus_az_copd"):
+            names = [v.get("variable") for v in _all_variables_for(slug)]
+            for label in expected:
+                self.assertIn(
+                    label, names,
+                    f"{slug} must expose class-level row {label!r}",
+                )
 
     # -- LAMA criteria for COPD must not collapse to an oral/injectable match.
     def test_copd_lama_glycopyrrolate_row_is_inhaled_only(self):
-        lama = self._find("copd",
+        lama = self._find("copd_common",
                           "Long-acting Muscarinic Antagonist (LAMA)")
         c = lama["criteria"].lower()
         # The glycopyrrolate clause must be paired with an 'inhal' filter.
@@ -1243,7 +1292,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
 
     # -- Asthma diagnosis picks up severity / persistence variants.
     def test_asthma_diagnosis_matches_status_asthmaticus(self):
-        dx = self._find("asthma", "Asthma Diagnosis")
+        dx = self._find("asthma_common", "Asthma Diagnosis")
         c = dx["criteria"].lower()
         self.assertIn("asthma", c)
         self.assertIn(
@@ -1255,7 +1304,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
     # -- Asthma biologic row covers the six FDA-approved agents.
     def test_asthma_biologic_row_covers_all_six_ingredients(self):
         bio = self._find(
-            "asthma",
+            "asthma_common",
             "Asthma Biologic (Anti-IgE / Anti-IL5 / Anti-IL4R / Anti-TSLP)",
         )
         c = bio["criteria"].lower()
@@ -1268,9 +1317,9 @@ class RespiratoryPackCurationTests(unittest.TestCase):
             )
 
     # -- Shared eosinophil row (in respiratory_common) uses a qualifier.
+    # Must flow through to every final respiratory pack.
     def test_eosinophils_row_requires_blood_qualifier(self):
-        # Resolves via both copd and asthma since it lives in the shared base.
-        for slug in ("copd", "asthma"):
+        for slug in NIMBUS_FINAL_PACKS:
             eos = self._find(slug, "Blood Eosinophils")
             c = eos["criteria"]
             self.assertIn("%eosinophil%", c.lower(),
@@ -1285,7 +1334,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
 
     # -- SpO2 is in respiratory_common with a widened ILIKE pattern.
     def test_oxygen_saturation_row_matches_spo2_and_peripheral_oxygen(self):
-        for slug in ("copd", "asthma"):
+        for slug in NIMBUS_FINAL_PACKS:
             o2 = self._find(slug, "Oxygen Saturation (SpO2)")
             c = o2["criteria"].lower()
             for token in ("o2 saturation", "oxygen saturation",
@@ -1297,37 +1346,63 @@ class RespiratoryPackCurationTests(unittest.TestCase):
                 )
 
     # -- Nimbus COPD ships a cohort-specific `eosinophil_standardized`
-    # abstraction table. copd.yaml must expose the curated row alongside
-    # the shared measurement-table row so Nimbus COPD surfaces its
-    # abstracted data and sites that record eosinophils as ordinary lab
-    # measurements still hit the shared respiratory_common row.
-    def test_copd_ships_standardized_eosinophil_row_alongside_measurement_row(self):
-        labs = [v for v in _all_variables_for("copd")
+    # abstraction table. The curated row lives in the per-cohort
+    # nimbus_copd pack ONLY — not in copd_common (would wrongly appear
+    # in Nimbus AZ) and not in nimbus_az_copd (the table isn't there).
+    def test_nimbus_copd_exposes_both_eosinophil_rows(self):
+        labs = [v for v in _all_variables_for("nimbus_copd")
                 if v.get("category") == "Labs / Biomarkers"]
         names = [v.get("variable") for v in labs]
         self.assertIn(
             "Blood Eosinophils", names,
             "measurement-table eosinophil row from respiratory_common "
-            "must remain so non-curated sites still surface a hit",
+            "must still flow through to nimbus_copd",
         )
         self.assertIn(
             "Blood Eosinophils (Standardized, Nimbus curated)", names,
-            "copd.yaml must ship a second eosinophil row pointing at "
-            "the Nimbus-curated `eosinophil_standardized` abstraction table",
+            "nimbus_copd must ship the cohort-specific eosinophil row "
+            "pointing at the Nimbus-curated `eosinophil_standardized` table",
         )
         std = next(v for v in labs
                    if v["variable"] == "Blood Eosinophils (Standardized, Nimbus curated)")
         self.assertEqual(std.get("table"), "eosinophil_standardized")
         self.assertEqual(std.get("column"), "value_as_number")
-        # Asthma pack must NOT get this row — the curated table only
-        # exists in the Nimbus COPD schema at the moment.
-        asthma_names = [v.get("variable") for v in _all_variables_for("asthma")]
+
+    def test_copd_common_does_not_ship_cohort_specific_eosinophil_row(self):
+        """The curated abstraction table belongs in the per-cohort
+        nimbus_copd pack, not the shared copd_common base — otherwise
+        nimbus_az_copd would wrongly inherit a row pointing at a table
+        its schema does not have."""
+        names = [v.get("variable")
+                 for v in _all_variables_for("copd_common")]
         self.assertNotIn(
-            "Blood Eosinophils (Standardized, Nimbus curated)", asthma_names,
-            "asthma.yaml must not inherit the Nimbus-COPD-curated "
-            "standardized eosinophil row (the table isn't present in "
-            "the asthma cohorts)",
+            "Blood Eosinophils (Standardized, Nimbus curated)", names,
+            "copd_common must not contain the Nimbus-curated row — it "
+            "belongs in packs/variables/nimbus_copd.yaml only",
         )
+
+    def test_nimbus_az_copd_does_not_inherit_standardized_eosinophil_row(self):
+        """nimbus_az_copd_cohort schema does not ship
+        `eosinophil_standardized`. The curated row must not reach this
+        pack via any include chain — otherwise the Variables sheet
+        would point the reviewer at a nonexistent table."""
+        names = [v.get("variable")
+                 for v in _all_variables_for("nimbus_az_copd")]
+        self.assertNotIn(
+            "Blood Eosinophils (Standardized, Nimbus curated)", names,
+            "nimbus_az_copd must not inherit the Nimbus-curated eosinophil "
+            "row (the cohort's schema has no eosinophil_standardized table)",
+        )
+
+    def test_asthma_packs_do_not_inherit_standardized_eosinophil_row(self):
+        """Neither asthma cohort's schema ships eosinophil_standardized."""
+        for slug in ("asthma_common", "nimbus_asthma", "nimbus_az_asthma"):
+            names = [v.get("variable") for v in _all_variables_for(slug)]
+            self.assertNotIn(
+                "Blood Eosinophils (Standardized, Nimbus curated)", names,
+                f"{slug} must not inherit the Nimbus-COPD-curated "
+                f"standardized eosinophil row",
+            )
 
     # -- FEV1 criteria is narrow enough not to match HFEV-like strings.
     # Regression guard: an earlier draft had `%FEV1%` only which is fine,
@@ -1335,7 +1410,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
     # so it doesn't match unrelated "forced expiratory volume" phrases
     # without the time specifier.
     def test_fev1_criteria_anchors_on_1_second(self):
-        for slug in ("copd", "asthma"):
+        for slug in NIMBUS_FINAL_PACKS:
             fev1 = self._find(slug, "FEV1 (Forced Expiratory Volume in 1 second)")
             c = fev1["criteria"].lower()
             self.assertIn("fev1", c)
@@ -1357,7 +1432,7 @@ class RespiratoryPackCurationTests(unittest.TestCase):
 
 class RespiratoryBroadWildcardRegressionTests(unittest.TestCase):
 
-    def test_no_catch_wide_drug_wildcards_in_copd_or_asthma(self):
+    def test_no_catch_wide_drug_wildcards_in_any_respiratory_pack(self):
         # Patterns that would be trivially too broad:
         #   ILIKE '%inhaler%'  — matches every inhaled drug including
         #                        antibiotics, salt water, DNAase
@@ -1365,7 +1440,10 @@ class RespiratoryBroadWildcardRegressionTests(unittest.TestCase):
         #   ILIKE '%beta%'     — matches beta-blockers (the opposite class!)
         banned_patterns = ("'%inhaler%'", "'%steroid%'",
                            "'%beta%'", "'%bronch%'")
-        for slug in ("copd", "asthma"):
+        # Cover every final pack (includes transitively resolve the
+        # common bases) plus the two common bases themselves, in case
+        # the final pack turns out to be empty.
+        for slug in NIMBUS_FINAL_PACKS + ("copd_common", "asthma_common"):
             for v in _all_variables_for(slug):
                 c = (v.get("criteria") or "").lower()
                 for bad in banned_patterns:
@@ -1388,14 +1466,23 @@ class RespiratoryBroadWildcardRegressionTests(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
-        for slug in ("copd", "asthma", "respiratory_common"):
-            for v in _all_variables_for(slug) if slug != "respiratory_common" \
-                    else _load_yaml(f"packs/variables/{slug}.yaml").get("variables", []):
+        leaf_packs = NIMBUS_FINAL_PACKS + ("copd_common", "asthma_common")
+        for slug in leaf_packs:
+            for v in _all_variables_for(slug):
                 msg = validate_packs._check_id_column_name_mismatch(v)
                 self.assertIsNone(
                     msg,
                     f"{slug}/{v.get('variable')}: {msg}",
                 )
+        # And respiratory_common itself (not resolved by _all_variables_for
+        # since it has no include).
+        for v in _load_yaml(
+            "packs/variables/respiratory_common.yaml"
+        ).get("variables", []):
+            msg = validate_packs._check_id_column_name_mismatch(v)
+            self.assertIsNone(
+                msg, f"respiratory_common/{v.get('variable')}: {msg}",
+            )
 
 
 # --------------------------------------------------------------------- #
@@ -1406,11 +1493,13 @@ class RespiratoryBroadWildcardRegressionTests(unittest.TestCase):
 
 class NimbusCohortPackTests(unittest.TestCase):
 
+    # Per-cohort final variable pack — the name MUST match the cohort
+    # slug. Separate ETL per cohort => separate final source of truth.
     EXPECTED = {
-        "nimbus_copd":        ("Nimbus",    "COPD",   "copd",   "nimbus_copd_curated"),
-        "nimbus_asthma":      ("Nimbus",    "Asthma", "asthma", "nimbus_asthma_curated"),
-        "nimbus_az_copd":     ("Nimbus AZ", "COPD",   "copd",   "nimbus_az_copd_cohort"),
-        "nimbus_az_asthma":   ("Nimbus AZ", "Asthma", "asthma", "nimbus_az_asthma_cohort"),
+        "nimbus_copd":       ("Nimbus",    "COPD",   "nimbus_copd",      "nimbus_copd_curated"),
+        "nimbus_asthma":     ("Nimbus",    "Asthma", "nimbus_asthma",    "nimbus_asthma_curated"),
+        "nimbus_az_copd":    ("Nimbus AZ", "COPD",   "nimbus_az_copd",   "nimbus_az_copd_cohort"),
+        "nimbus_az_asthma":  ("Nimbus AZ", "Asthma", "nimbus_az_asthma", "nimbus_az_asthma_cohort"),
     }
 
     def test_all_four_nimbus_cohort_packs_exist(self):
@@ -1419,20 +1508,27 @@ class NimbusCohortPackTests(unittest.TestCase):
             self.assertTrue(path.is_file(),
                             f"missing cohort pack: {path}")
 
-    def test_nimbus_cohort_packs_point_at_shared_disease_packs(self):
+    def test_nimbus_cohort_packs_point_at_per_cohort_variable_packs(self):
         for slug, (provider, disease, var_pack, schema) in self.EXPECTED.items():
             data = _load_yaml(f"packs/cohorts/{slug}.yaml")
             self.assertEqual(data.get("provider"), provider, slug)
             self.assertEqual(data.get("disease"), disease, slug)
             self.assertEqual(
                 data.get("variables_pack"), var_pack,
-                f"{slug} must reuse the shared {var_pack!r} disease pack "
-                f"(matches the 'one disease template, two providers' rule)",
+                f"{slug} must point at its per-cohort variable pack "
+                f"{var_pack!r} — separate ETL per cohort means each "
+                f"cohort owns its final source of truth",
             )
             self.assertEqual(
                 data.get("schema_name"), schema,
                 f"{slug} schema_name must match the raw dump filename "
                 f"in Output/ (got {data.get('schema_name')!r})",
+            )
+            # And the per-cohort variable pack file itself must exist.
+            var_path = REPO_ROOT / "packs" / "variables" / f"{var_pack}.yaml"
+            self.assertTrue(
+                var_path.is_file(),
+                f"{slug}: variables_pack file {var_path} is missing",
             )
 
     def test_validator_clean_on_nimbus_cohorts(self):

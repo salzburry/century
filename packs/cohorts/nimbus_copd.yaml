@@ -20,15 +20,16 @@ description: >
 
 notes:
   - Technical dictionary generated from schema introspection.
-  - Variables pack is the shared COPD template, also used by
-    nimbus_az_copd. FEV1 / FVC / FEV1-FVC ratio, CAT, and mMRC rows
-    are abstracted and may show Implemented=No until the chart-review
-    pipeline lands.
+  - Variables pack is `nimbus_copd` (per-cohort), which layers the
+    cohort-specific `eosinophil_standardized` abstraction row on top
+    of the shared `copd_common` / `respiratory_common` chain.
+  - FEV1 / FVC / FEV1-FVC ratio, CAT, and mMRC rows are abstracted
+    and may show Implemented=No until the chart-review pipeline lands.
   - Exacerbation row is condition-side only; confirm cohort-specific
     algorithmic definition before reporting rates.
 
 # Optional table -> Category override. Empty -> use packs/categories.yaml.
 category_rules: {}
 
-# Variables pack (Page 4) — shared COPD template.
-variables_pack: copd
+# Variables pack (Page 4) — per-cohort final pack.
+variables_pack: nimbus_copd
