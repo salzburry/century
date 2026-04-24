@@ -1,24 +1,32 @@
 #!/usr/bin/env python3
-"""Raw schema dumps for the five backlog cohorts that don't have a
-raw PDF under Output/ yet.
+"""Raw schema dumps for the five backlog cohorts covered by this
+script (RMN Alzheimer's, Newtown MASH, Newtown IBD, RVC DR,
+RVC AMD).
 
 Runs `introspect_cohort.py --schema <name>` for each cohort listed
 below and writes Summary + Tables + Columns output (xlsx + html) into
   Output/raw/<schema>/<schema>.xlsx
   Output/raw/<schema>/<schema>.html
 
-No pack is required — the existing `--schema` mode in
-introspect_cohort.py synthesises a lightweight Pack on the fly and
-walks the schema directly. That's exactly what we want for
-discovery: look at a cohort's real table shape, concept-name
-distributions, and row counts BEFORE committing to a pack design.
+These five cohorts now have committed packs (mined from the initial
+run of this script — see the matching PDFs under Output/: rmn
+alzheimers.pdf, newtown mash.pdf, newton ibd.pdf, rvc dr.pdf,
+rvc amd.pdf). Re-running this script is still the fastest way to
+refresh raw dumps when the warehouse changes, so the packs can be
+re-audited against the current shape.
 
-Once you have the dumps, mine them the way Nimbus / Balboa / DRG
-were mined (grep the concept_name distributions, identify the
-disease-defining diagnosis family, spot the standard-of-care
-medications actually present, note the cohort-specific abstraction
-tables) and then add the matching <disease>_common + per-cohort
-packs to packs/variables/ + packs/cohorts/.
+No pack is required to run — the existing `--schema` mode in
+introspect_cohort.py synthesises a lightweight Pack on the fly and
+walks the schema directly. That's exactly what you want for
+rediscovery: look at a cohort's real table shape, concept-name
+distributions, and row counts independently of whatever packs are
+currently committed.
+
+The mining-then-curation workflow is unchanged from the first pass:
+grep the concept_name distributions in the dump, compare against
+the committed `<disease>_common` + per-cohort packs, and add a
+cohort-specific override (or tighten a shared criteria) if the
+dump shows a divergence.
 
 Usage:
     python3 scripts/dump_new_schemas.py

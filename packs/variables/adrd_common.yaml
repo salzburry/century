@@ -186,6 +186,42 @@ variables:
     column: condition_start_date
     extraction_type: Structured
 
+  # ----- Diagnosis — ADRD-specific ---------------------------------
+  # Umbrella row capturing the cognitive-impairment concept family
+  # that defines ADRD cohorts: Alzheimer's disease variants, mild
+  # cognitive impairment (MCI), amnesia, memory impairment, and
+  # other dementias. Lives here (not in alzheimers_common or
+  # aat_common) because anti-amyloid-therapy patients carry these
+  # diagnoses too — AAT is administered on the basis of an
+  # Alzheimer's diagnosis.
+  - category: Diagnosis
+    variable: Alzheimer's / Cognitive Impairment Diagnosis
+    description: >
+      Alzheimer's disease and the cognitive-impairment concept
+      family that defines ADRD cohorts — Alzheimer's disease
+      (all onset variants), mild cognitive impairment (MCI),
+      amnesia, memory impairment, other dementias, and cognitive-
+      function symptom concepts. Cohort-defining for both MTC /
+      RMN Alzheimer's and (by clinical definition) MTC AAT.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%Alzheimer%' OR
+      condition_concept_name ILIKE '%mild cognitive impairment%' OR
+      condition_concept_name ILIKE '%MCI%' OR
+      condition_concept_name ILIKE '%amnesia%' OR
+      condition_concept_name ILIKE '%memory impairment%' OR
+      condition_concept_name ILIKE '%dementia%' OR
+      condition_concept_name ILIKE '%cognitive function%' OR
+      condition_concept_name ILIKE '%cognitive decline%' OR
+      condition_concept_name ILIKE '%cognitive impairment%'
+    extraction_type: Structured
+    notes: >
+      Broad on purpose — the ADRD-defining concept family uses many
+      related SNOMED strings. If a reviewer needs to split
+      Alzheimer's-only vs MCI vs dementia-other, add a narrower row
+      in a per-cohort pack rather than tightening this umbrella.
+
   # ----- Labs / Biomarkers -------------------------------------------
   # Category label matches packs/categories.yaml exactly ("Labs /
   # Biomarkers"). Earlier packs used "Biomarkers / Labs" — pinned to

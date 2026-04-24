@@ -198,6 +198,26 @@ variables:
       condition_concept_name ILIKE '%aphakia%'
     extraction_type: Structured
 
+  - category: Diagnosis
+    variable: Type 2 Diabetes Mellitus
+    description: >
+      T2DM — cohort-defining for DR (all DR patients are by
+      definition diabetic) and a meaningful comorbidity in AMD
+      (vascular-disease shared risk; some evidence DM accelerates
+      AMD progression). Captured in retinal_common so both
+      ophthalmology cohorts surface it rather than re-declaring it
+      per disease.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%type 2 diabetes%' OR
+      condition_concept_name ILIKE '%diabetes mellitus type 2%' OR
+      condition_concept_name ILIKE '%DM type 2%'
+    extraction_type: Structured
+    notes: >
+      Does NOT match Type 1 DM (different CV/renal trajectory) or
+      gestational diabetes (transient). Narrow on purpose.
+
   # ----- Labs / Biomarkers — OCT retinal thickness measurements ----
   # OCT-based thickness measurements show up in both DR and AMD
   # observation tables with very high prevalence (Foveal thickness
