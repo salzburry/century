@@ -695,6 +695,137 @@ class VariablesHeadersTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------- #
+# Tier-1 visual polish regression guards. Pure presentation assertions
+# — they lock in the freeze-panes / auto-filter / styled-header shape
+# for XLSX and the sticky-header CSS for HTML so a future edit can't
+# silently remove them. No behavior / value assertions.
+# --------------------------------------------------------------------- #
+
+
+class VisualPolishXlsxTests(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, audience="technical"):
+        try:
+            import openpyxl  # noqa: F401
+        except ImportError:
+            self.skipTest("openpyxl not installed")
+        out = self.tmp_dir / f"{audience}.xlsx"
+        write_xlsx(_make_full_model(), out, audience=audience)
+        import openpyxl as opx
+        return opx.load_workbook(out)
+
+    def test_data_sheets_have_freeze_panes(self):
+        """Top row pinned on every data sheet so reviewers scanning
+        long tables don't lose the header context."""
+        wb = self._write()
+        for name in ("Tables", "Columns", "Variables"):
+            ws = wb[name]
+            self.assertEqual(
+                ws.freeze_panes, "A2",
+                f"{name}: freeze_panes must be 'A2' (top header row)",
+            )
+
+    def test_data_sheets_have_auto_filter(self):
+        """Filter-arrow dropdowns on every data sheet's header row."""
+        wb = self._write()
+        for name in ("Tables", "Columns", "Variables"):
+            ws = wb[name]
+            self.assertIsNotNone(
+                ws.auto_filter.ref,
+                f"{name}: auto_filter.ref must be set",
+            )
+            self.assertTrue(
+                ws.auto_filter.ref.startswith("A1:"),
+                f"{name}: auto_filter.ref must start at A1 "
+                f"(got {ws.auto_filter.ref!r})",
+            )
+
+    def test_summary_sheet_has_no_freeze_or_filter(self):
+        """Summary is a key/value sheet — filtering makes no sense."""
+        wb = self._write()
+        ws = wb["Summary"]
+        # openpyxl's default freeze_panes is None (or 'A1' which is a no-op).
+        self.assertIn(ws.freeze_panes, (None, "A1"),
+                      "Summary sheet must not have freeze panes")
+        self.assertIsNone(ws.auto_filter.ref,
+                          "Summary sheet must not have auto-filter")
+
+    def test_header_row_is_styled(self):
+        """Bold white text on a solid fill, row height >= 20 so the
+        styled header actually shows. Asserts presentation without
+        pinning to a specific hex colour."""
+        wb = self._write()
+        ws = wb["Variables"]
+        first_cell = ws.cell(row=1, column=1)
+        self.assertTrue(
+            first_cell.font.bold,
+            "Header cells must be bold",
+        )
+        self.assertEqual(
+            first_cell.fill.fill_type, "solid",
+            "Header cells must have a solid fill",
+        )
+        self.assertGreaterEqual(
+            ws.row_dimensions[1].height or 0, 20,
+            "Header row must be tall enough for the styled text",
+        )
+
+
+class VisualPolishHtmlTests(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_dir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _render(self, audience="technical"):
+        out = self.tmp_dir / f"{audience}.html"
+        write_html(_make_full_model(), out, audience=audience)
+        return out.read_text()
+
+    def test_html_has_sticky_header_css(self):
+        """Long Variables tables need the header to stay visible
+        while scrolling — pure CSS, no JS."""
+        page = self._render()
+        self.assertIn(
+            "position: sticky", page,
+            "HTML must declare sticky thead so the column headers "
+            "remain visible while scrolling long tables",
+        )
+
+    def test_html_section_headings_still_bare(self):
+        """Regression guard for the dedup / styling pass: <h2>
+        tags must stay without attributes so test substring checks
+        like assertIn('<h2>Columns</h2>', page) keep matching."""
+        page = self._render()
+        for label in ("Summary", "Tables", "Columns", "Variables"):
+            self.assertIn(
+                f"<h2>{label}</h2>", page,
+                f"<h2>{label}</h2> must render without class / style "
+                f"attributes so downstream substring tests keep matching",
+            )
+
+    def test_html_column_headers_still_bare(self):
+        """<th> tags must stay attribute-free for the same reason."""
+        page = self._render()
+        # Spot-check a header that existing tests pin.
+        self.assertIn(
+            "<th>Median (IQR)</th>", page,
+            "<th>Median (IQR)</th> must stay bare — substring tests "
+            "in VariablesHeadersTests pin this literal",
+        )
+
+
+# --------------------------------------------------------------------- #
 # Pack curation — split into adrd_common + disease-specific, widened
 # ARIA match, tightened Document criteria, dropped catch-all lab row,
 # mirrored brand/generic matching on AAT administration, added
