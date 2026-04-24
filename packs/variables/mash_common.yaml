@@ -175,9 +175,8 @@ variables:
     description: >
       Metabolic dysfunction-associated steatohepatitis (MASH,
       formerly NASH) and the broader NAFLD / MASLD family. Also
-      catches the "Fatty (change of) liver" concept which is the
-      #1 condition in the Newtown MASH dump (15.1 % of all
-      conditions).
+      catches the "Fatty (change of) liver" SNOMED concept,
+      commonly the primary cohort-defining diagnosis.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >
@@ -206,17 +205,16 @@ variables:
       condition_concept_name ILIKE '%hepatic fibrosis%' OR
       condition_concept_name ILIKE '%liver fibrosis%'
     extraction_type: Structured
-    notes: TODO (clinical review) — confirm whether Newtown stratifies by fibrosis stage (F0-F4) on live build.
+    notes: TODO (clinical review) — confirm whether the cohort stratifies by fibrosis stage (F0-F4) on live build.
 
   - category: Diagnosis
     variable: Upper GI Comorbidities (Gastritis / Epigastric pain / H. pylori)
     description: >
-      GI comorbidities that dominate Newtown MASH cohort utilisation
-      alongside the primary MASH diagnosis — the raw dump shows
-      epigastric pain (12.7 %), acute gastritis (4.6 %), and
-      H. pylori (4.1 %) as top-5 conditions. Useful to surface
-      because the high PPI utilisation (see Medications) makes
-      sense only when reviewers see the matching GI disease burden.
+      GI comorbidities that commonly accompany MASH utilisation —
+      epigastric pain, acute gastritis, Helicobacter pylori, and
+      gastroesophageal reflux. Tracked separately so the heavy PPI
+      utilisation (see Medications) is explained by matching GI
+      disease burden rather than reflux alone.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >
@@ -229,17 +227,17 @@ variables:
     extraction_type: Structured
 
   # ----- Medications ------------------------------------------------
-  # Captures the drug utilisation actually seen in the Newtown MASH
-  # raw dump. No speculative MASH-specific therapy rows — resmetirom
-  # (Rezdiffra), GLP-1 RAs, pioglitazone, vitamin E are standards of
-  # care for MASH but none were in top concepts at this site.
+  # Covers the drug utilisation seen in real MASH cohorts. No
+  # speculative MASH-specific therapy rows — resmetirom (Rezdiffra),
+  # GLP-1 RAs, pioglitazone, and vitamin E are standards of care for
+  # MASH but were not in top concepts at the mined site; add them in
+  # a per-cohort pack when a cohort starts using them.
   - category: Medications
     variable: Proton Pump Inhibitor (PPI)
     description: >
       PPIs — pantoprazole, omeprazole, esomeprazole, lansoprazole,
-      rabeprazole, dexlansoprazole. Top drug in the Newtown dump
-      (pantoprazole 40 MG 14.0 % of all drug rows) plus omeprazole
-      (3.2 %).
+      rabeprazole, dexlansoprazole. Typically the top drug in a
+      MASH cohort because of co-existing reflux / gastritis burden.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -254,9 +252,8 @@ variables:
   - category: Medications
     variable: Mucosal Protectant (Sucralfate)
     description: >
-      Sucralfate — mucosal protectant used for peptic-ulcer
-      disease, seen in the Newtown dump as "sucralfate 1000 MG
-      Oral Tablet [Carafate]" (3.6 %).
+      Sucralfate — mucosal protectant used for peptic-ulcer disease
+      and reflux-related mucosal injury.
     table: drug_exposure
     column: drug_concept_name
     criteria: >

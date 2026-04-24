@@ -90,7 +90,10 @@ Source: `century/ask.pdf` + `century/Adobe Scan 19 Apr 2026.pdf`.
 
 ## 3. Verified baseline from `Output/*.pdf`
 
-Counts verified against the Summary pages of the current raw dumps.
+Raw introspection dumps under `Output/` — each is a scan / HTML-render
+archive of `introspect_cohort.py --schema <name>` output against the
+live warehouse. Used as evidence for pack curation. Counts verified
+against the Summary pages.
 
 | File | Cohort | Patients | Tables | Columns |
 |---|---|---:|---:|---:|
@@ -102,49 +105,80 @@ Counts verified against the Summary pages of the current raw dumps.
 | `nimbusazasthma.pdf` | `nimbus_az_asthma_cohort` | 4,334 | 14 | 300 |
 | `minbuscopdcurated.pdf` | `nimbus_copd_curated` | 7,233 | 12 | 253 |
 | `nimbusasthmacurated.pdf` | `nimbus_asthma_curated` | 3,654 | 11 | 242 |
+| `rmn alzheimers.pdf` | `rmn_alzheimers_cohort` | (per dump) | 11 | (per dump) |
+| `newtown mash.pdf` | `newtown_mash_cohort` | (per dump) | 12 | (per dump) |
+| `newton ibd.pdf` | `newtown_ibd_cohort` | (per dump) | 11 | (per dump) |
+| `rvc dr.pdf` | `rvc_dr_curated` | (per dump) | 12 | (per dump) |
+| `rvc amd.pdf` | `rvc_amd_curated` | (per dump) | 12 | (per dump) |
 
-## 4. What the existing outputs prove
+The last five rows were added after the `scripts/dump_new_schemas.py`
+sweep and drove the MASH / IBD / DR / AMD / RMN Alzheimer's pack
+curation. Patient / column counts for those five are in the PDFs
+themselves; they're not repeated here because the numbers are
+site-specific and shift between pulls.
 
-Every file in `Output/` is an Adobe Scan / photo-style PDF of the HTML
-emitted by the current generator. Shared shape: Summary + Variables.
-Enough to show the technical inventory works; the gaps are:
+## 4. Current generator output
 
-### 4.1 Export-path problems
-- PDFs carry browser chrome, URL bar text, tab text, OCR-like corruption.
-- Root cause: iPhone scan-to-PDF loop, not clean render.
-- Direct HTML → PDF render replaces the scan loop entirely.
+`build_dictionary.py --cohort <slug>` writes four deliverables per
+cohort:
 
-### 4.2 Content-model problems
-- `Category`, `Description`, `Criteria`, `Notes` blank everywhere
-  (hardcoded `""` in `introspect_cohort.py` around lines 736 and 819).
-- `% Patient` doesn't exist — only row-level `Completeness` today.
-- Summary lacks provider, disease, years of data, variant, site/schema notes.
+- `Output/<schema>_dictionary.xlsx` — four-sheet workbook
+- `Output/<schema>_dictionary.html` — single-page HTML, same shape
+- `Output/<schema>_dictionary.json` — canonical model dump
+- `Output/<schema>_dictionary.pdf` — print-friendly HTML (when run
+  with `--formats pdf` via an external wrap-to-PDF step)
 
-### 4.3 Representation problems
-- The current `Variables` sheet is really Page 3 (columns), not Page 4.
-- Page 4 semantic variables don't exist yet.
-- `TableInfo` is collected (`introspect_cohort.py:266`) but never rendered.
-- `_compile_date_range` (`introspect_cohort.py:505`) runs per column but
-  isn't rolled up into `years_of_data`.
+### 4.1 Workbook shape
 
-### 4.4 Data-quality problems on the page
-- Surrogate keys (`person_id`, `*_occurrence_id`, `*_concept_id`) are
-  summarised like measurements → useless scientific-notation medians
-  (`9.22e+18`, `IQR: 2.31e+18–6.9e+18`).
-- `Values` truncates at 60 chars mid-string; fine for HTML, lossy in XLSX.
-- Top-N depth (5) is too shallow for `*_concept_name` columns.
-- Empty tables still emit a row per column.
-- `dv_tokenized_profile_data` contributes many low-signal `token_*`
-  fields (111 in `mtc_aat`).
-- `standard_profile_data_model` exposes PII (`first_name`, `last_name`,
-  `email`, `cellphone`, `date_of_birth`, `address1`) without flags —
-  blocks clean sales/pharma outputs.
+Every workbook ships the same four sheets:
 
-### 4.5 Presentation problems
-- File naming inconsistent (`minbuscopdcurated`, `mtcalzhiemer`).
-- Long-cell layout not tuned for print.
-- `Extraction Type` is binary today; reference uses three-way
-  (Structured / Abstracted / Unstructured).
+| Sheet | Rows | Purpose |
+|---|---|---|
+| Summary | ~17 key/value | provider, disease, patient_count, table_count, column_count, date coverage, years_of_data, generated_at, git_sha, schema_snapshot_digest |
+| Tables | one per warehouse table | row_count, column_count, patients_in_table, purpose (from `packs/table_descriptions.yaml`) |
+| Columns | one per physical column | Category, Description, Data Type, Values, Distribution, Median (IQR), Completeness, % Patient, Extraction Type, PII, Notes |
+| Variables | one per clinical concept in the cohort's variable pack | Category, Variable, Description, Table(s), Column(s), Criteria, Values, Distribution, Median (IQR), Completeness, Implemented, % Patient, Extraction Type, Notes |
+
+All fields populate from the canonical `CohortModel` — nothing is
+hardcoded-empty any more.
+
+### 4.2 Styling
+
+- XLSX: styled navy/white header row, frozen top row + auto-filter
+  on the three data sheets (Summary stays plain as key/value), tuned
+  column widths per header name.
+- HTML: sticky `<thead>`, modern system-ui font stack, zebra
+  striping, hover highlights, summary card, print-friendly CSS.
+- PII flagged on the Columns sheet (and dropped from sales / pharma
+  audience outputs, per `packs/pii.yaml`).
+
+### 4.3 Audience filtering
+
+Three audiences, each with a different section-visibility rule
+(`AUDIENCE_VISIBILITY` in `build_dictionary.py`):
+
+| Audience | Summary | Tables | Columns | Variables |
+|---|---|---|---|---|
+| technical | ✓ | ✓ | ✓ | ✓ |
+| sales | ✓ | ✓ | — | ✓ |
+| pharma | ✓ | — | — | ✓ |
+
+Run with `--audience sales` or `--audience pharma` to switch; PII-
+flagged variables are dropped from the Variables sheet in both
+non-technical audiences.
+
+### 4.4 Data-quality filters baked into the generator
+
+- Surrogate keys (`person_id`, `*_occurrence_id`, `*_concept_id`)
+  are excluded from the continuous summary — their Median (IQR) /
+  Distribution cells stay empty instead of reporting
+  `9.22e+18 (IQR: 2.3e+18–6.9e+18)`.
+- Unstructured / free-text columns (`note_text`, `*_text`, `*_note`)
+  are aggregated as row counts only — no `GROUP BY` over free text.
+- `*_concept_name` columns sample 20 distinct values (vs. 5 for
+  ordinary categoricals) so reviewers see the long tail.
+- Empty tables collapse: one row per column with zero counts
+  instead of a scientific-notation per-column summary.
 
 ## 5. Current repo reality
 
