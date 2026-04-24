@@ -198,15 +198,17 @@ variables:
       condition_concept_name ILIKE '%aphakia%'
     extraction_type: Structured
 
+  # Kept on the shared retinal base — T2DM is cohort-defining for
+  # DR (all DR patients are diabetic by definition) and a meaningful
+  # comorbidity in AMD (shared vascular risk; some evidence DM
+  # accelerates AMD progression).
   - category: Diagnosis
     variable: Type 2 Diabetes Mellitus
     description: >
-      T2DM — cohort-defining for DR (all DR patients are by
-      definition diabetic) and a meaningful comorbidity in AMD
-      (vascular-disease shared risk; some evidence DM accelerates
-      AMD progression). Captured in retinal_common so both
-      ophthalmology cohorts surface it rather than re-declaring it
-      per disease.
+      Type 2 diabetes mellitus — underlying metabolic disease with
+      micro- and macrovascular sequelae that drive retinal
+      pathology. Central to diabetic retinopathy and a meaningful
+      comorbidity in AMD.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >

@@ -13,10 +13,11 @@ site_group: RVC
 status: active
 
 description: >
-  RVC patients with diabetic retinopathy — proliferative and non-
-  proliferative variants, with and without macular edema. Type 2
-  diabetes + hypertension dominate comorbidity; intravitreal
-  injections (80.9 % of all procedures) drive therapy utilisation.
+  RVC patients with diabetic retinopathy — proliferative and
+  non-proliferative variants, with and without macular edema.
+  Type 2 diabetes and hypertension are the dominant comorbidities;
+  intravitreal injection of an anti-VEGF agent is the primary
+  therapeutic intervention.
 
 notes:
   - Variables pack is `rvc_dr_curated` (per-cohort). Inherits the

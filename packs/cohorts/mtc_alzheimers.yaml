@@ -14,8 +14,9 @@ status: active
 
 description: >
   Patients in the MTC cohort with an Alzheimer's disease or related
-  dementia diagnosis. Broader superset of MTC AAT — includes patients
-  not on anti-amyloid therapy.
+  dementia diagnosis. Broad inclusion — captures patients across
+  cognitive-impairment severity, regardless of whether they are on
+  anti-amyloid therapy.
 
 notes:
   - Dictionary layout matches the reference century/Data dictionary.pdf.

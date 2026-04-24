@@ -14,11 +14,11 @@ site_group: Newtown
 status: active
 
 description: >
-  Newtown patients with MASH (fatty liver / steatohepatitis) — the
-  cohort-defining diagnosis covers 15.1 % of all conditions in the
-  raw dump. Hepatology cohort with strong upper-GI comorbidity
-  signal (epigastric pain, gastritis, H. pylori) and PPI-heavy
-  drug utilisation.
+  Newtown patients with MASH (metabolic dysfunction-associated
+  steatohepatitis) and its NAFLD / MASLD precursor states.
+  Hepatology cohort with co-existing upper-GI comorbidity
+  (epigastric pain, gastritis, H. pylori) and PPI-predominant
+  medication exposure.
 
 notes:
   - Variables pack is `newtown_mash` (per-cohort). Inherits the

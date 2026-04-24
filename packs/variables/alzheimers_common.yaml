@@ -2,10 +2,11 @@
 #
 # Intermediate layer, not a final pack: every Alzheimer's cohort has
 # its own ETL, so the final source of truth lives in a per-cohort
-# pack under `packs/variables/<cohort>.yaml` (today: mtc_alzheimers.yaml;
-# rmn_alzheimers.yaml is on the backlog) that `include: [alzheimers_common]`
-# and owns its own cohort-specific rows. This file carries only logic
-# that is genuinely identical across every Alzheimer's cohort we ship.
+# pack under `packs/variables/<cohort>.yaml` that
+# `include: [alzheimers_common]` and owns its own cohort-specific
+# rows. Current cohorts on this chain: mtc_alzheimers, rmn_alzheimers.
+# This file carries only logic that is genuinely identical across
+# every Alzheimer's cohort we ship.
 #
 # Inherits the shared ADRD common base and adds rows that are
 # meaningful for the general Alzheimer's / dementia cohort but not

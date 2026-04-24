@@ -14,9 +14,8 @@ status: active
 
 description: >
   Nimbus patients with a chronic obstructive pulmonary disease
-  diagnosis. Curated view layered over the Nimbus base warehouse;
-  parallel to nimbus_az_copd_cohort but kept provider-separate per the
-  §1.1 site-consolidation decision.
+  diagnosis, including emphysema and chronic-bronchitis variants.
+  Curated view layered over the Nimbus base warehouse.
 
 notes:
   - Technical dictionary generated from schema introspection.
