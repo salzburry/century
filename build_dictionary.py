@@ -1185,16 +1185,18 @@ def _autosize_and_wrap(writer) -> None:
                     max(12, max_len + 2), 60
                 )
 
-        # Styled header row.
-        _style_xlsx_header_row(ws)
-
-        # Freeze + auto-filter on data sheets only.
-        if ws.title in _DATA_SHEET_NAMES and ws.max_row >= 2:
-            ws.freeze_panes = "A2"
-            last_col_letter = ws.cell(
-                row=1, column=ws.max_column
-            ).column_letter
-            ws.auto_filter.ref = f"A1:{last_col_letter}{ws.max_row}"
+        # Data sheets get the full treatment: styled navy/white header,
+        # frozen top row, and an auto-filter. Summary is a key/value
+        # sheet and is left plain on purpose — a filterable / styled
+        # Summary header would overclaim that the sheet is a dataset.
+        if ws.title in _DATA_SHEET_NAMES:
+            _style_xlsx_header_row(ws)
+            if ws.max_row >= 2:
+                ws.freeze_panes = "A2"
+                last_col_letter = ws.cell(
+                    row=1, column=ws.max_column
+                ).column_letter
+                ws.auto_filter.ref = f"A1:{last_col_letter}{ws.max_row}"
 
 
 def write_html(model: CohortModel, out_path: Path,
@@ -1357,7 +1359,14 @@ def write_html(model: CohortModel, out_path: Path,
  @media print {{
    body {{ margin: 12mm; padding: 0; max-width: none; font-size: 11px; }}
    h2 {{ page-break-before: always; }}
-   h1 + div + dl.summary, h1 + dl.summary {{ page-break-after: always; }}
+   /* First h2 (Summary) shouldn't trigger a pre-page break — keep it
+      on page 1 with the title. And push the page break AFTER the
+      Summary card so the first data sheet starts on a fresh page.
+      Uses `dl.summary` directly because the DOM chain is
+      h1 → div → h2 → dl.summary and an adjacent-sibling selector
+      starting from h1 can't reach through the intervening h2. */
+   h2:first-of-type {{ page-break-before: auto; }}
+   dl.summary {{ page-break-after: always; }}
    table.dd thead th {{ position: static; }}
    table.dd thead {{ display: table-header-group; }}
    table.dd {{ border-radius: 0; }}
