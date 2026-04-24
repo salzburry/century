@@ -1,16 +1,26 @@
 # Shared ADRD (Alzheimer's Disease and Related Dementias) variable base.
 #
-# Used by both packs/variables/alzheimers.yaml and packs/variables/aat.yaml
-# via `include: [adrd_common]`. Covers everything a neurodegenerative-
-# disease cohort dictionary needs that is not disease-specific:
+# Used by packs/variables/alzheimers_common.yaml and
+# packs/variables/aat_common.yaml via `include: [adrd_common]`. The
+# disease-common packs are themselves intermediate — every cohort
+# pack (e.g. mtc_alzheimers.yaml, mtc_aat.yaml) layers on top of its
+# disease-common base, so the final include chain a cohort sees is:
+#
+#   <cohort>  →  <disease>_common  →  adrd_common
+#
+# Covers everything a neurodegenerative-disease cohort dictionary
+# needs that is not disease-specific:
 #
 #   Demographics, Vitals, Observations, Diagnosis, Biomarkers/Labs,
 #   Visits, Outcomes, Reports.
 #
-# Disease-specific packs add rows on top (Alzheimer's-era medications,
-# anti-amyloid therapy, ARIA-H/ARIA-E, etc.). Keep this file narrow —
-# anything that isn't equally meaningful across ADRD cohorts belongs
-# in the disease-level pack.
+# Disease-common packs add rows on top (Alzheimer's-era medications,
+# anti-amyloid therapy, ARIA-H/ARIA-E, etc.). Per-cohort packs add
+# cohort-specific rows on top of those (no MTC examples today; would
+# apply to a future RMN Alzheimer's curated abstraction). Keep this
+# file narrow — anything that isn't equally meaningful across every
+# ADRD cohort belongs in the disease-common pack, and anything that
+# exists in only one cohort's ETL belongs in the per-cohort pack.
 
 variables:
   # ----- Demographics -------------------------------------------------

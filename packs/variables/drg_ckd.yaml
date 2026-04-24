@@ -1,0 +1,21 @@
+# DRG CKD — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/drg_ckd.yaml.
+# Inherits every CKD-level row from ckd_common. Does NOT currently add
+# any cohort-specific rows.
+#
+# Populate this file when:
+#   - The DRG ETL starts emitting cohort-specific tables
+#   - A concept-name pattern diverges from ckd_common in this cohort
+#     only and a live build confirms it (e.g. DRG records
+#     "Urea/Creatinine [Ratio] in Urine" rather than the canonical
+#     UACR — if that's the only proxy DRG ships, a DRG-specific
+#     UACR-style row may belong here)
+#
+# Until then, this pack is a structural placeholder — every row comes
+# from the shared ckd_common chain.
+
+include:
+  - ckd_common
+
+variables: []

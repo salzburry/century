@@ -1,0 +1,26 @@
+# MTC AAT — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/mtc_aat.yaml.
+# Inherits every AAT-level row from aat_common (which in turn
+# includes adrd_common). Does NOT currently add any cohort-specific
+# rows — there is no MTC-AAT-only abstraction table or concept-name
+# divergence to override.
+#
+# Populate this file when:
+#   - The MTC AAT ETL starts emitting cohort-specific tables (e.g.
+#     a curated infusion-administration abstraction beyond the OMOP
+#     `infusion` table)
+#   - A concept-name pattern diverges from aat_common in this cohort
+#     only and a live build confirms it
+#
+# Until then, this pack is a structural placeholder — every row comes
+# from the shared aat_common / adrd_common chain. The placeholder
+# matters because the moment a second AAT cohort (e.g. another site
+# running an anti-amyloid trial) lands with its own ETL, we don't
+# want to discover MTC-only rows hidden in aat_common leaking into
+# that cohort's workbook.
+
+include:
+  - aat_common
+
+variables: []

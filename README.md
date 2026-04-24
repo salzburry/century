@@ -62,12 +62,12 @@ Source: `century/ask.pdf` + `century/Adobe Scan 19 Apr 2026.pdf`.
 | 5 | Nimbus | Asthma | `nimbus_asthma_curated` | High | `nimbusasthmacurated.pdf` | Packs committed; awaiting live build | |
 | 6 | Nimbus AZ | COPD | `nimbus_az_copd_cohort` | High | `nimbusazcopd.pdf` | Packs committed; awaiting live build | Abstracted variables (FEV1 etc.) in progress |
 | 7 | Nimbus AZ | Asthma | `nimbus_az_asthma_cohort` | High | `nimbusazasthma.pdf` | Packs committed; awaiting live build | |
-| 8 | Balboa | Renal | `balboa_ckd_cohort` | High | `balboackd.pdf` | Dump available | |
+| 8 | Balboa | Renal | `balboa_ckd_cohort` | High | `balboackd.pdf` | Packs committed; awaiting live build | |
 | 9 | MTC | Alzheimer's | `mtc_alzheimers_cohort` | High | `mtcalzhiemer.pdf` | Dump available | Filename typo (`alzhiemer`) |
 | 10 | MTC | AAT | `mtc_aat_cohort` | High | `mtcaat.pdf` | Dump available | Anti-amyloid therapies |
 | 11 | Newtown | MASH | `newtown_mash_cohort` | High | — | Missing dump | |
 | 12 | Newtown | IBD | `newtown_ibd_cohort` | Low | — | Missing dump | |
-| 13 | DRG | Renal | `drg_ckd_cohort` | High | `drgckd.pdf` | Dump available | |
+| 13 | DRG | Renal | `drg_ckd_cohort` | High | `drgckd.pdf` | Packs committed; awaiting live build | |
 | 14 | PRINE | Renal | TBD | — | — | Blocked | Schema not yet provisioned |
 | 15 | Rocky Mountain Neurology | Alzheimer's | `rmn_alzheimers_cohort` | — | — | Missing dump | |
 | 16 | Southland Neurologic Institute | TBD | TBD | — | — | Blocked | Disease and schema unconfirmed |
@@ -77,10 +77,11 @@ Source: `century/ask.pdf` + `century/Adobe Scan 19 Apr 2026.pdf`.
 ### 2.2 Backlog summary
 
 - 8 of 18 have a raw introspection dump in `Output/`.
-- 6 of those 8 also have committed `packs/cohorts/*.yaml` + variable
+- All 8 of those also have committed `packs/cohorts/*.yaml` + variable
   packs (MTC AAT, MTC Alzheimer's, Nimbus COPD, Nimbus Asthma,
-  Nimbus AZ COPD, Nimbus AZ Asthma). The four Nimbus cohorts are
-  awaiting their first live build + clinical Variables-sheet review.
+  Nimbus AZ COPD, Nimbus AZ Asthma, Balboa CKD, DRG CKD). The six
+  non-MTC cohorts are awaiting their first live build + clinical
+  Variables-sheet review.
 - 7 more are runnable once the cohort dump is generated.
 - 3 are blocked on upstream schema provisioning or unresolved metadata.
 
@@ -159,24 +160,39 @@ Explicit so the plan matches the codebase we have.
     `packs/cohorts/nimbus_asthma.yaml`,
     `packs/cohorts/nimbus_az_copd.yaml`,
     `packs/cohorts/nimbus_az_asthma.yaml`
-  - Variable packs are layered:
+  - `packs/cohorts/balboa_ckd.yaml`,
+    `packs/cohorts/drg_ckd.yaml`
+  - Variable packs are layered. Every cohort has its own ETL, so the
+    final source of truth is always a per-cohort pack — disease-common
+    bases exist for reuse, never as the cohort's variables_pack target:
     - shared bases that multiple cohorts include:
       `packs/variables/adrd_common.yaml`,
+      `packs/variables/aat_common.yaml` (includes `adrd_common`),
+      `packs/variables/alzheimers_common.yaml` (includes `adrd_common`),
       `packs/variables/respiratory_common.yaml`,
       `packs/variables/copd_common.yaml` (includes `respiratory_common`),
-      `packs/variables/asthma_common.yaml` (includes `respiratory_common`)
-    - per-cohort final packs — one per cohort because each cohort has
-      its own ETL and therefore its own source of truth:
-      `packs/variables/aat.yaml` (MTC AAT),
-      `packs/variables/alzheimers.yaml` (MTC Alzheimer's),
+      `packs/variables/asthma_common.yaml` (includes `respiratory_common`),
+      `packs/variables/ckd_common.yaml` (top of the renal chain — no
+      renal_common parent yet because CKD is the only renal disease
+      in scope; refactor to introduce one when AKI lands)
+    - per-cohort final packs — `cohort.variables_pack` always points
+      at one of these, never at a `*_common` base directly:
+      `packs/variables/mtc_aat.yaml` (includes `aat_common`,
+      placeholder, no cohort-specific overrides yet),
+      `packs/variables/mtc_alzheimers.yaml` (includes
+      `alzheimers_common`, placeholder, no overrides yet),
       `packs/variables/nimbus_copd.yaml` (includes `copd_common`, plus
       the Nimbus-curated `eosinophil_standardized` row),
       `packs/variables/nimbus_az_copd.yaml` (includes `copd_common`,
-      no cohort-specific overrides yet),
+      placeholder, no overrides yet),
       `packs/variables/nimbus_asthma.yaml` (includes `asthma_common`,
-      no cohort-specific overrides yet),
+      placeholder, no overrides yet),
       `packs/variables/nimbus_az_asthma.yaml` (includes `asthma_common`,
-      no cohort-specific overrides yet)
+      placeholder, no overrides yet),
+      `packs/variables/balboa_ckd.yaml` (includes `ckd_common`,
+      placeholder, no overrides yet),
+      `packs/variables/drg_ckd.yaml` (includes `ckd_common`,
+      placeholder, no overrides yet)
   - `packs/categories.yaml`, `packs/pii.yaml`,
     `packs/table_descriptions.yaml`, `packs/column_descriptions.yaml`
 - `scripts/validate_packs.py` + `VALIDATION_REPORT.md` — static
@@ -208,8 +224,13 @@ reviewing the generated `Output/<schema>_dictionary.xlsx` per cohort
   confirm exacerbation attribution, FEV1 / FVC / FEV1-FVC ratio
   abstraction state, Smoking Status / BMI source tables, and the
   ACT / CAT / mMRC / FeNO / Total IgE rows.
+- First live Variables-sheet review for Balboa CKD and DRG CKD —
+  confirm eGFR / UACR availability (DRG dump shows urea-creatinine
+  ratio in urine, not the canonical albumin-side UACR), SGLT2 / MRA /
+  ESA utilisation rates, and Dialysis Initiation / Kidney Transplant
+  abstraction state.
 - Per-disease variable packs beyond Alzheimer's / AAT / COPD /
-  Asthma (CKD, MASH, IBD, DR) — clinical curation work per the
+  Asthma / CKD (MASH, IBD, DR) — clinical curation work per the
   registry backlog in §2.1.
 - WeasyPrint PDF renderer (PR 7 in the shipping plan).
 - Schema-drift detection (PR 8).

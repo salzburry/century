@@ -1,0 +1,38 @@
+# Cohort pack: Balboa CKD
+#
+# Balboa patients with chronic kidney disease.
+# Schema name matches the raw dump in Output/balboackd.pdf.
+
+provider: Balboa
+disease: Renal
+display_name: Balboa CKD
+cohort_name: balboa_ckd_cohort
+schema_name: balboa_ckd_cohort
+variant: raw
+site_group: Balboa
+status: active
+
+description: >
+  Balboa patients with a chronic kidney disease diagnosis spanning
+  CKD stages 1-5, ESRD with renal-failure dependence on dialysis,
+  hypertensive renal disease, and diabetic-nephropathy variants.
+
+notes:
+  - Technical dictionary generated from schema introspection.
+  - Variables pack is `balboa_ckd` (per-cohort). Currently a
+    structural placeholder that inherits everything from the shared
+    `ckd_common` chain; cohort-specific rows land here once the
+    Balboa ETL ships abstracted tables (e.g. a curated eGFR or UACR
+    abstraction analogous to Nimbus COPD's `eosinophil_standardized`).
+  - Cohort dump confirms standard_profile_data_model and
+    dv_tokenized_profile_data tables are present; pii.yaml already
+    handles redaction for these in the sales / pharma audiences.
+  - Dialysis Initiation and Kidney Transplant rows in ckd_common are
+    abstracted condition-side proxies — confirm cohort-specific
+    algorithmic definitions before reporting incidence rates.
+
+# Optional table -> Category override. Empty -> use packs/categories.yaml.
+category_rules: {}
+
+# Variables pack (Page 4) — per-cohort final pack.
+variables_pack: balboa_ckd
