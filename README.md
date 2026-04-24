@@ -200,6 +200,14 @@ Explicit so the plan matches the codebase we have.
   ILIKE, missing criteria on clinically-specific rows, and column
   vs variable-name mismatches (e.g. `_concept_id` column under a row
   whose name doesn't mention "ID").
+- `century-dictionary-runtime.zip` — self-contained runtime bundle
+  at the repo root. ~90 KB, contains exactly what a server needs to
+  run the generator: the two Python entrypoints, the validator,
+  `packs/`, `requirements.txt`, `.env.example`, and a snapshot of
+  `VALIDATION_REPORT.md`. No tests, no reference PDFs, no historical
+  design docs. Extract, `pip install -r requirements.txt`, fill in
+  `.env` from `.env.example`, and `python3 build_dictionary.py
+  --cohort <slug>` runs.
 
 ### 5.2 What is NOT a clinical validation
 `VALIDATION_REPORT.md` is a structural lint, not a clinical
