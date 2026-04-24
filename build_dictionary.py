@@ -1088,21 +1088,113 @@ def write_xlsx(model: CohortModel, out_path: Path,
     print(f"Wrote {out_path}", file=sys.stderr)
 
 
+# --------------------------------------------------------------------- #
+# XLSX styling helpers. Pure presentation — no cell values change, so
+# the tests that read row-1 header text and sheet names keep matching.
+# --------------------------------------------------------------------- #
+
+
+# Tuned widths per header name. Narrow for short flag-style columns
+# (Implemented, % Patient, Extraction Type, PII) so they don't eat
+# horizontal space; wide for free-text columns (Description, Criteria,
+# Distribution, Notes) that carry the most reviewer content. Any
+# header not listed falls back to the old auto-size-with-cap rule.
+_COLUMN_WIDTH_OVERRIDES: dict[str, int] = {
+    # Narrow
+    "Implemented":      12,
+    "% Patient":        11,
+    "Completeness":     13,
+    "PII":               6,
+    "Extraction Type":  15,
+    "Data Type":        14,
+    "Rows":             10,
+    "Columns":          10,
+    "Patients":         10,
+    # Medium
+    "Category":         18,
+    "Table":            22,
+    "Table(s)":         22,
+    "Column":           24,
+    "Column(s)":        24,
+    "Variable":         30,
+    "Median (IQR)":     26,
+    # Wide
+    "Values":           40,
+    "Distribution":     50,
+    "Description":      55,
+    "Criteria":         55,
+    "Notes":            45,
+    "Purpose":          55,
+}
+
+# Data sheets get freeze panes + auto-filter; Summary does not (it's
+# key/value, not a filterable dataset).
+_DATA_SHEET_NAMES = ("Tables", "Columns", "Variables")
+
+
+def _style_xlsx_header_row(ws) -> None:
+    """Bold white header text on a navy fill, centered, slightly taller
+    row, thin border underneath. Keeps cell *values* untouched so every
+    test that reads row-1 text still matches."""
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    header_fill = PatternFill(fill_type="solid",
+                              start_color="1F3A5F", end_color="1F3A5F")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    header_align = Alignment(horizontal="center", vertical="center",
+                             wrap_text=True)
+    header_border = Border(bottom=Side(style="thin", color="B5BCC6"))
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+        cell.border = header_border
+    ws.row_dimensions[1].height = 28
+
+
 def _autosize_and_wrap(writer) -> None:
-    """Auto-size every column (cap width 60) and enable word-wrap."""
+    """Per-sheet polish:
+      - Tuned column widths (per-header overrides, else old auto-size).
+      - Styled header row (bold white on navy).
+      - Freeze top row + auto-filter on data sheets (Tables / Columns /
+        Variables). Summary is key / value and doesn't need either.
+      - Word-wrap on every body cell."""
     from openpyxl.styles import Alignment
+    body_align = Alignment(wrap_text=True, vertical="top")
+
     for ws in writer.book.worksheets:
+        # Column widths + wrap on body cells.
         for col_idx, col in enumerate(ws.columns, start=1):
+            header_value = ws.cell(row=1, column=col_idx).value
+            override = _COLUMN_WIDTH_OVERRIDES.get(
+                str(header_value) if header_value is not None else ""
+            )
             max_len = 0
             for cell in col:
-                cell.alignment = Alignment(wrap_text=True, vertical="top")
+                if cell.row > 1:
+                    cell.alignment = body_align
                 if cell.value is None:
                     continue
                 v = str(cell.value)
                 if len(v) > max_len:
                     max_len = len(v)
             letter = ws.cell(row=1, column=col_idx).column_letter
-            ws.column_dimensions[letter].width = min(max(12, max_len + 2), 60)
+            if override is not None:
+                ws.column_dimensions[letter].width = override
+            else:
+                ws.column_dimensions[letter].width = min(
+                    max(12, max_len + 2), 60
+                )
+
+        # Styled header row.
+        _style_xlsx_header_row(ws)
+
+        # Freeze + auto-filter on data sheets only.
+        if ws.title in _DATA_SHEET_NAMES and ws.max_row >= 2:
+            ws.freeze_panes = "A2"
+            last_col_letter = ws.cell(
+                row=1, column=ws.max_column
+            ).column_letter
+            ws.auto_filter.ref = f"A1:{last_col_letter}{ws.max_row}"
 
 
 def write_html(model: CohortModel, out_path: Path,
@@ -1191,23 +1283,84 @@ def write_html(model: CohortModel, out_path: Path,
 <html lang="en"><head><meta charset="utf-8">
 <title>Data Dictionary — {esc(model.display_name)}</title>
 <style>
- body {{ font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-         margin: 24px; color: #222; }}
- h1 {{ font-size: 1.5rem; margin-bottom: 2px; }}
- h2 {{ font-size: 1.15rem; margin-top: 32px; color: #444;
-       border-bottom: 2px solid #e5e7eb; padding-bottom: 4px; }}
- dl.summary {{ display: grid; grid-template-columns: max-content 1fr;
-               gap: 4px 16px; font-size: 0.9rem; }}
- dl.summary dt {{ font-weight: 600; color: #555; }}
- table.dd {{ border-collapse: collapse; font-size: 0.82rem;
-             width: 100%; margin-top: 8px; }}
- table.dd th, table.dd td {{ border: 1px solid #d0d4d9;
-              padding: 6px 9px; vertical-align: top; text-align: left; }}
- table.dd th {{ background: #f2f4f7; font-weight: 600; }}
- table.dd tr:nth-child(even) td {{ background: #fafbfc; }}
+ /* Tier 1 visual polish. Pure CSS — no DOM changes, so every test
+    asserting literal <h2>Section</h2> / <th>Column</th> substrings
+    still passes. */
+ :root {{
+   --fg:         #1f2937;
+   --fg-muted:   #64748b;
+   --fg-subtle:  #475569;
+   --bg:         #ffffff;
+   --bg-soft:    #f8fafc;
+   --bg-zebra:   #f1f5f9;
+   --border:     #e2e8f0;
+   --border-dk:  #cbd5e1;
+   --accent:     #1f3a5f;
+   --accent-fg:  #ffffff;
+ }}
+ body {{
+   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Inter,
+                "Helvetica Neue", Arial, sans-serif;
+   margin: 32px auto; max-width: 1400px; padding: 0 24px;
+   color: var(--fg); background: var(--bg);
+   font-size: 14px; line-height: 1.45;
+   -webkit-font-smoothing: antialiased;
+ }}
+ h1 {{ font-size: 1.65rem; margin: 0 0 4px; font-weight: 600;
+       letter-spacing: -0.01em; color: var(--fg); }}
+ h2 {{ font-size: 1.15rem; margin: 40px 0 12px; color: var(--fg);
+       border-bottom: 2px solid var(--border);
+       padding-bottom: 6px; font-weight: 600;
+       letter-spacing: -0.005em; }}
+ dl.summary {{
+   display: grid;
+   grid-template-columns: max-content 1fr;
+   gap: 6px 24px;
+   font-size: 0.9rem;
+   background: var(--bg-soft);
+   border: 1px solid var(--border);
+   border-radius: 8px;
+   padding: 16px 20px;
+   margin: 12px 0 8px;
+ }}
+ dl.summary dt {{ font-weight: 600; color: var(--fg-subtle); }}
+ dl.summary dd {{ margin: 0; color: var(--fg); }}
+ table.dd {{
+   border-collapse: separate;
+   border-spacing: 0;
+   font-size: 0.86rem;
+   width: 100%;
+   margin-top: 4px;
+   border: 1px solid var(--border);
+   border-radius: 8px;
+   overflow: hidden;
+ }}
+ table.dd th, table.dd td {{
+   border-bottom: 1px solid var(--border);
+   padding: 9px 12px;
+   vertical-align: top;
+   text-align: left;
+ }}
+ table.dd tbody tr:last-child td {{ border-bottom: none; }}
+ table.dd thead th {{
+   background: var(--accent);
+   color: var(--accent-fg);
+   font-weight: 600;
+   letter-spacing: 0.01em;
+   position: sticky;
+   top: 0;
+   z-index: 1;
+   box-shadow: 0 1px 0 0 var(--border-dk);
+ }}
+ table.dd tbody tr:nth-child(even) td {{ background: var(--bg-zebra); }}
+ table.dd tbody tr:hover td {{ background: #e2e8f0; }}
  @media print {{
+   body {{ margin: 12mm; padding: 0; max-width: none; font-size: 11px; }}
    h2 {{ page-break-before: always; }}
-   h1 + dl.summary {{ page-break-after: always; }}
+   h1 + div + dl.summary, h1 + dl.summary {{ page-break-after: always; }}
+   table.dd thead th {{ position: static; }}
+   table.dd thead {{ display: table-header-group; }}
+   table.dd {{ border-radius: 0; }}
  }}
 </style></head><body>
 <h1>Data Dictionary — {esc(model.display_name)}</h1>
