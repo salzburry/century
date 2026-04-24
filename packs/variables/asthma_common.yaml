@@ -1,8 +1,15 @@
-# Asthma variable pack.
+# Asthma — shared variable base.
+#
+# Intermediate layer, not a final pack: every asthma cohort has its
+# own ETL, so the final source of truth lives in a per-cohort pack
+# under `packs/variables/<cohort>.yaml` that `include: [asthma_common]`
+# and owns its own cohort-specific rows. This file carries only logic
+# that is genuinely identical across every asthma cohort we ship.
 #
 # Inherits the shared respiratory base (demographics, vitals, smoking
 # status, spirometry/PFT procedure, eosinophils, visits, reports) and
-# adds the asthma-specific rows:
+# adds the asthma-specific rows that are disease-level rather than
+# cohort-level:
 #
 #   - asthma diagnosis (severity / persistence variants)
 #   - exacerbation marker (abstracted — cohort definition varies)
@@ -13,10 +20,13 @@
 #   - ACT score (abstracted patient-reported outcome)
 #   - total IgE, FeNO (type-2 inflammation markers)
 #
+# Cohort-specific abstracted tables or severity-column overrides live
+# in the per-cohort final pack, not here.
+#
 # Deliberately does NOT include the COPD pack. COPD-specific
 # triple-therapy combos, roflumilast, and long-term supplemental
-# oxygen all live in copd.yaml because their indications differ in
-# asthma.
+# oxygen all live in copd_common.yaml because their indications
+# differ in asthma.
 
 include:
   - respiratory_common

@@ -1,0 +1,20 @@
+# Nimbus AZ Asthma — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/nimbus_az_asthma.yaml.
+# Inherits every asthma-level row from asthma_common (which in turn
+# includes respiratory_common). Does NOT currently add any cohort-
+# specific rows — no Nimbus-AZ-asthma-specific abstraction table or
+# concept-name divergence has been confirmed yet.
+#
+# Populate this file when:
+#   - The Nimbus AZ Asthma ETL starts emitting cohort-specific tables
+#   - A concept-name pattern diverges from asthma_common in this
+#     cohort only and a live build confirms it
+#
+# Until then, this pack is a structural placeholder — every row comes
+# from the shared asthma_common / respiratory_common chain.
+
+include:
+  - asthma_common
+
+variables: []

@@ -1,8 +1,15 @@
-# COPD (Chronic Obstructive Pulmonary Disease) variable pack.
+# COPD (Chronic Obstructive Pulmonary Disease) — shared variable base.
+#
+# Intermediate layer, not a final pack: every COPD cohort has its own
+# ETL, so the final source of truth lives in a per-cohort pack under
+# `packs/variables/<cohort>.yaml` that `include: [copd_common]` and
+# owns its own cohort-specific rows. This file carries only logic
+# that is genuinely identical across every COPD cohort we ship.
 #
 # Inherits the shared respiratory base (demographics, vitals, smoking
 # status, spirometry/PFT procedure, eosinophils, visits, reports) and
-# adds the COPD-specific rows:
+# adds the COPD-specific rows that are disease-level rather than
+# cohort-level:
 #
 #   - COPD diagnosis (incl. emphysema / chronic bronchitis variants)
 #   - exacerbation marker (abstracted — cohort definition varies)
@@ -12,9 +19,14 @@
 #   - FEV1 / FVC / FEV1-FVC ratio (abstracted — pending for Nimbus AZ)
 #   - CAT score (abstracted patient-reported outcome)
 #
+# Cohort-specific rows — for example Nimbus COPD's curated
+# `eosinophil_standardized` abstraction table — live in the per-cohort
+# final pack, not here, because the underlying table only exists in
+# one cohort's ETL.
+#
 # Deliberately does NOT include the asthma pack. Biologics, ICS/LABA
 # combinations intended for asthma, and FeNO / IgE all live in
-# asthma.yaml because their interpretation differs in COPD.
+# asthma_common.yaml because their interpretation differs in COPD.
 
 include:
   - respiratory_common
@@ -200,31 +212,9 @@ variables:
   # and accept Implemented=No until the chart-review pipeline lands.
   #
   # Blood eosinophils come from the shared respiratory_common row
-  # (measurement table). The Nimbus COPD curated cohort also ships a
-  # dedicated `eosinophil_standardized` abstraction table, mirrored as
-  # a second row below so Nimbus COPD surfaces its curated data while
-  # sites that record eosinophils as lab measurements still hit the
-  # respiratory_common row.
-  - category: Labs / Biomarkers
-    variable: Blood Eosinophils (Standardized, Nimbus curated)
-    description: >
-      Absolute blood eosinophil count from the Nimbus curated
-      abstraction pipeline. Parallel to the shared "Blood Eosinophils"
-      row — this one points at the dedicated `eosinophil_standardized`
-      table that the Nimbus COPD curated cohort ships instead of raw
-      measurement rows.
-    table: eosinophil_standardized
-    column: value_as_number
-    extraction_type: Structured
-    notes: >
-      Table is Nimbus-COPD-curated-only (confirmed in
-      Output/minbuscopdcurated.pdf). Nimbus AZ COPD will show
-      Implemented=No because its schema does not ship this
-      abstracted table; that's the expected shape, not a bug. Kept
-      alongside the measurement-table row rather than replacing it
-      so sites recording eosinophils as ordinary lab measurements
-      still surface a hit.
-
+  # (measurement table). Cohorts that ship a dedicated abstraction
+  # table (e.g. Nimbus COPD's `eosinophil_standardized`) add a parallel
+  # row in their per-cohort pack, not here.
   - category: Labs / Biomarkers
     variable: FEV1 (Forced Expiratory Volume in 1 second)
     description: >

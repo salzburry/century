@@ -159,10 +159,24 @@ Explicit so the plan matches the codebase we have.
     `packs/cohorts/nimbus_asthma.yaml`,
     `packs/cohorts/nimbus_az_copd.yaml`,
     `packs/cohorts/nimbus_az_asthma.yaml`
-  - `packs/variables/adrd_common.yaml` (shared ADRD base),
-    `packs/variables/alzheimers.yaml`, `packs/variables/aat.yaml`
-  - `packs/variables/respiratory_common.yaml` (shared respiratory
-    base), `packs/variables/copd.yaml`, `packs/variables/asthma.yaml`
+  - Variable packs are layered:
+    - shared bases that multiple cohorts include:
+      `packs/variables/adrd_common.yaml`,
+      `packs/variables/respiratory_common.yaml`,
+      `packs/variables/copd_common.yaml` (includes `respiratory_common`),
+      `packs/variables/asthma_common.yaml` (includes `respiratory_common`)
+    - per-cohort final packs — one per cohort because each cohort has
+      its own ETL and therefore its own source of truth:
+      `packs/variables/aat.yaml` (MTC AAT),
+      `packs/variables/alzheimers.yaml` (MTC Alzheimer's),
+      `packs/variables/nimbus_copd.yaml` (includes `copd_common`, plus
+      the Nimbus-curated `eosinophil_standardized` row),
+      `packs/variables/nimbus_az_copd.yaml` (includes `copd_common`,
+      no cohort-specific overrides yet),
+      `packs/variables/nimbus_asthma.yaml` (includes `asthma_common`,
+      no cohort-specific overrides yet),
+      `packs/variables/nimbus_az_asthma.yaml` (includes `asthma_common`,
+      no cohort-specific overrides yet)
   - `packs/categories.yaml`, `packs/pii.yaml`,
     `packs/table_descriptions.yaml`, `packs/column_descriptions.yaml`
 - `scripts/validate_packs.py` + `VALIDATION_REPORT.md` — static
