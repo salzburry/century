@@ -24,22 +24,39 @@ variables:
   # the same clinical signal, which the shared ckd_common row
   # already covers. This row is DRG-only so it doesn't leak into
   # Balboa's workbook with DRG-specific wording.
+  #
+  # Criteria is anchored on status-style fragments (current /
+  # former / never + tobacco/smoker, or "smoking status") so that
+  # tobacco-counselling, tobacco-screening, and tobacco-cessation
+  # procedures don't get pulled into a row that's labelled as
+  # status. The "Current tobacco non-user" PDF concept matches
+  # via `%tobacco%user%` (covers both "user" and "non-user").
   - category: Observations
     variable: Smoking Status (Procedure-coded)
     description: >
-      Smoking status captured in `procedure_occurrence` via the SNOMED
-      "Current tobacco non-user ..." / "Current tobacco user ..." style
-      concepts. DRG ships this as a procedure (5.6% of all procedure
-      rows, confirmed in Output/drgckd.pdf) rather than an observation.
+      Smoking status captured in `procedure_occurrence` via SNOMED
+      "Current tobacco user / non-user", "Former tobacco user", or
+      explicit "Smoking status" status concepts. Distinct from
+      tobacco-cessation, counselling, or screening procedures,
+      which carry the words tobacco / smoking but are intervention
+      records rather than status records.
     table: procedure_occurrence
     column: procedure_concept_name
     criteria: >
-      procedure_concept_name ILIKE '%tobacco%' OR
-      procedure_concept_name ILIKE '%smoking%' OR
-      procedure_concept_name ILIKE '%cigarette%'
+      procedure_concept_name ILIKE '%current tobacco%' OR
+      procedure_concept_name ILIKE '%former tobacco%' OR
+      procedure_concept_name ILIKE '%never%tobacco%' OR
+      procedure_concept_name ILIKE '%tobacco%user%' OR
+      procedure_concept_name ILIKE '%tobacco%non-user%' OR
+      procedure_concept_name ILIKE '%current%smoker%' OR
+      procedure_concept_name ILIKE '%former%smoker%' OR
+      procedure_concept_name ILIKE '%never%smoker%' OR
+      procedure_concept_name ILIKE '%smoking status%'
     extraction_type: Structured
     notes: >
       Parallel to the observation-side "Smoking Status" row from
-      ckd_common. Combined cohort-level counts for DRG require
-      de-duplicating by person across the two rows because some
-      sites may populate both.
+      ckd_common. Combined cohort-level counts require de-duplicating
+      by person across the two rows because some sites may populate
+      both. Cessation / counselling procedures (e.g. CPT 99406-99407,
+      "Smoking and tobacco use cessation counseling") are deliberately
+      excluded — they are intervention records, not status records.

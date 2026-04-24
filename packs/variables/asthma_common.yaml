@@ -46,7 +46,7 @@ variables:
       condition_concept_name ILIKE '%reactive airway disease%' OR
       condition_concept_name ILIKE '%status asthmaticus%'
     extraction_type: Structured
-    notes: Cohort-defining diagnosis for Nimbus Asthma and Nimbus AZ Asthma.
+    notes: Cohort-defining diagnosis for any asthma cohort.
 
   # ----- Medications - reliever -------------------------------------
   - category: Medications
@@ -244,8 +244,9 @@ variables:
       measurement_concept_name ILIKE '%forced expir%1 second%'
     extraction_type: Abstracted
     notes: >
-      Per README §2.1, abstraction is in progress for the Nimbus AZ
-      cohorts. Expect Implemented=No until the pipeline lands.
+      Abstracted from PFT reports rather than a structured lab feed
+      at most sites. Expect Implemented=No until the per-cohort
+      abstraction pipeline lands.
 
   - category: Labs / Biomarkers
     variable: FVC (Forced Vital Capacity)
