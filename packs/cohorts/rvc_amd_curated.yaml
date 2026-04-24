@@ -1,0 +1,35 @@
+# Cohort pack: RVC AMD
+#
+# RVC (Retina Vitreous) patients with age-related macular
+# degeneration. Raw dump at Output/rvc amd.pdf drove the
+# amd_common + retinal_common packs.
+
+provider: RVC
+disease: Age-Related Macular Degeneration
+display_name: RVC AMD
+cohort_name: rvc_amd_curated
+schema_name: rvc_amd_curated
+variant: raw
+site_group: RVC
+status: active
+
+description: >
+  RVC patients with age-related macular degeneration — wet
+  (exudative, with choroidal neovascularization) and dry (non-
+  exudative, atrophic) variants. Intraocular-lens / post-cataract
+  state is the top condition at 27.6 % — the cohort skews heavily
+  toward elderly patients with prior cataract surgery.
+
+notes:
+  - Variables pack is `rvc_amd_curated` (per-cohort). Inherits the
+    shared retinal_common → amd_common chain; adds no cohort-specific
+    overrides.
+  - Wet-AMD anti-VEGF therapy surfaces via the Intravitreal Injection
+    procedure row (retinal_common), not drug_exposure. The AREDS2-
+    style supplement cluster (vitamin D + calcium + omega-3 + fish
+    oil) dominates drug_exposure for this cohort — captured by the
+    "AREDS2 Supplementation" row in amd_common.
+
+category_rules: {}
+
+variables_pack: rvc_amd_curated

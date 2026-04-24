@@ -1,0 +1,16 @@
+# Newtown MASH — final variables pack.
+#
+# Cohort-specific source of truth for packs/cohorts/newtown_mash.yaml.
+# Inherits every row from mash_common. No cohort-specific overrides
+# yet — all top-5 concepts in the Newtown MASH raw dump
+# (Output/newtown mash.pdf) are already covered by mash_common.
+#
+# Populate this file if Newtown starts shipping a cohort-specific
+# abstraction (e.g. Fibrosis-4, ELF score, Fibroscan reading tables),
+# or if the concept-name patterns diverge from the mash_common
+# defaults at this site only.
+
+include:
+  - mash_common
+
+variables: []

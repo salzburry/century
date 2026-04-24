@@ -1,0 +1,35 @@
+# Cohort pack: Newtown MASH
+#
+# Newtown patients with metabolic dysfunction-associated steatohepatitis
+# (formerly NASH) or its NAFLD / MASLD precursor states. Raw dump
+# under Output/newtown mash.pdf drove the mash_common pack contents.
+
+provider: Newtown
+disease: MASH
+display_name: Newtown MASH
+cohort_name: newtown_mash_cohort
+schema_name: newtown_mash_cohort
+variant: raw
+site_group: Newtown
+status: active
+
+description: >
+  Newtown patients with MASH (fatty liver / steatohepatitis) — the
+  cohort-defining diagnosis covers 15.1 % of all conditions in the
+  raw dump. Hepatology cohort with strong upper-GI comorbidity
+  signal (epigastric pain, gastritis, H. pylori) and PPI-heavy
+  drug utilisation.
+
+notes:
+  - Variables pack is `newtown_mash` (per-cohort). Inherits the
+    shared `mash_common` base; currently adds no cohort-specific
+    overrides — all top concepts in the raw dump are already
+    matched by mash_common.
+  - MASH-specific therapies (resmetirom / Rezdiffra, GLP-1 RAs,
+    pioglitazone, vitamin E) are NOT yet in the pack because none
+    appeared in the top drug concepts at Newtown. Add when the
+    site starts prescribing them.
+
+category_rules: {}
+
+variables_pack: newtown_mash

@@ -1,0 +1,296 @@
+# Retinal / Ophthalmology — shared variable base.
+#
+# Plays the respiratory_common / adrd_common role for retinal disease
+# cohorts. Two diseases currently layer on top: dr_common.yaml
+# (diabetic retinopathy) and amd_common.yaml (age-related macular
+# degeneration). Each disease-common pack in turn feeds a per-cohort
+# final pack (rvc_dr_curated.yaml, rvc_amd_curated.yaml).
+#
+# Cross-disease rows that live here because DR and AMD both ship
+# them in the raw dumps (Output/rvc dr.pdf, Output/rvc amd.pdf):
+#   - Foveal thickness (observation)
+#   - Macular grid, total volume by OCT (observation)
+#   - Average retinal thickness (observation)
+#   - Intravitreal injection (procedure)
+#   - Intraocular-lens / post-cataract state (condition)
+#   - Hypertension (condition — both dumps show Essential primary
+#     hypertension as a top-2 condition)
+#
+# Tables intentionally NOT used (confirmed missing from the RVC DR
+# and RVC AMD dumps):
+#   - payer_plan_period              → no Payer Type row
+#   - visit_detail, infusion, note_nlp
+
+variables:
+  # ----- Demographics -------------------------------------------------
+  - category: Demographics
+    variable: Ethnicity
+    description: The patient's self-identified ethnicity, distinguishing Hispanic or Latino origin.
+    table: person
+    column: ethnicity_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Race
+    description: The patient's self-identified racial category.
+    table: person
+    column: race_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Sex
+    description: The patient's biological sex at birth.
+    table: person
+    column: gender_concept_name
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Birth Year
+    description: Year the patient was born. Used for age calculation.
+    table: person
+    column: year_of_birth
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: ZIP code (3-digit prefix)
+    description: >
+      First three digits of the patient ZIP code — HIPAA Safe Harbor
+      "large geographic area" generalisation.
+    table: location
+    column: zip
+    expression: LEFT("zip"::text, 3)
+    extraction_type: Structured
+    notes: Emitted only for the technical audience; redacted for sales and pharma.
+
+  - category: Demographics
+    variable: Language
+    description: Primary language of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%language%'
+    extraction_type: Structured
+
+  - category: Demographics
+    variable: Marital Status
+    description: Marital status of the patient.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%marital status%'
+    extraction_type: Structured
+
+  # ----- Vitals -------------------------------------------------------
+  - category: Vitals
+    variable: Blood Pressure
+    description: Sitting blood pressure values taken at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%blood pressure%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Heart Rate
+    description: Patient heart rate / pulse taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%heart rate%' OR observation_concept_name ILIKE '%pulse%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Body Weight
+    description: Patient weight taken at the office visit.
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: Patient Height
+    description: Patient height recorded at the office visit.
+    table: observation
+    column: value_as_string
+    criteria: observation_concept_name ILIKE '%height%'
+    extraction_type: Structured
+
+  - category: Vitals
+    variable: BMI (Body Mass Index)
+    description: Body mass index — tracked because metabolic comorbidity drives DR progression and AMD risk.
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%body mass index%' OR
+      observation_concept_name ILIKE '%BMI%'
+    extraction_type: Structured
+
+  # ----- Observations -------------------------------------------------
+  - category: Observations
+    variable: Allergies
+    description: Observation of patient allergies and adverse reactions — relevant to dye / contrast screens before fluorescein angiography.
+    table: observation
+    column: value_as_concept_name
+    criteria: observation_concept_name ILIKE '%allerg%'
+    extraction_type: Structured
+
+  - category: Observations
+    variable: Smoking Status
+    description: Current / former / never smoker status. Smoking is an independent AMD risk factor and accelerates DR progression.
+    table: observation
+    column: value_as_concept_name
+    criteria: >
+      observation_concept_name ILIKE '%smoking%' OR
+      observation_concept_name ILIKE '%tobacco%' OR
+      observation_concept_name ILIKE '%cigarette%'
+    extraction_type: Structured
+
+  # ----- Diagnosis ----------------------------------------------------
+  - category: Diagnosis
+    variable: Diagnosis
+    description: Medical diagnoses and conditions recorded for the patient.
+    table: condition_occurrence
+    column: condition_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Type
+    description: Source from which the diagnosis was captured.
+    table: condition_occurrence
+    column: condition_type_concept_name
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Diagnosis Start Date
+    description: Date the condition was first recorded.
+    table: condition_occurrence
+    column: condition_start_date
+    extraction_type: Structured
+
+  # ----- Diagnosis — cross-disease retinal comorbidities ------------
+  # Both RVC DR and RVC AMD dumps show Essential (primary) hypertension
+  # as a top-2 condition (21-22% of all condition rows), and "Presence
+  # of intraocular lens" as another top-3 (19-27%). Captured here so
+  # the disease-specific packs don't each re-declare them.
+  - category: Diagnosis
+    variable: Hypertension
+    description: >
+      Essential / primary hypertension. Dominant comorbidity in both
+      DR and AMD cohorts (~21-22 % of all conditions); a major driver
+      of retinal vascular disease beyond the primary diabetic or
+      age-related pathology.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%essential%hypertension%' OR
+      condition_concept_name ILIKE '%primary%hypertension%' OR
+      condition_concept_name ILIKE '%benign hypertension%' OR
+      condition_concept_name ILIKE '%hypertensive disorder%'
+    extraction_type: Structured
+
+  - category: Diagnosis
+    variable: Intraocular Lens / Post-Cataract State
+    description: >
+      Presence-of-intraocular-lens diagnosis — captures post-cataract-
+      surgery status. Important ophthalmology comorbidity: many
+      DR/AMD patients have had cataract extraction, and pseudophakia
+      affects OCT interpretation and intraocular-injection planning.
+    table: condition_occurrence
+    column: condition_concept_name
+    criteria: >
+      condition_concept_name ILIKE '%intraocular lens%' OR
+      condition_concept_name ILIKE '%pseudophakia%' OR
+      condition_concept_name ILIKE '%aphakia%'
+    extraction_type: Structured
+
+  # ----- Labs / Biomarkers — OCT retinal thickness measurements ----
+  # OCT-based thickness measurements show up in both DR and AMD
+  # observation tables with very high prevalence (Foveal thickness
+  # 36.9 % of all observations in RVC DR). Put them under Labs /
+  # Biomarkers since reviewers treat them as objective measurements,
+  # not subjective observations.
+  - category: Labs / Biomarkers
+    variable: Foveal Thickness (OCT)
+    description: >
+      Foveal retinal thickness by optical coherence tomography.
+      Central monitoring measurement for macular edema (DR) and
+      macular atrophy / neovascularization response (AMD).
+    table: observation
+    column: value_as_number
+    criteria: observation_concept_name ILIKE '%foveal thickness%'
+    extraction_type: Structured
+
+  - category: Labs / Biomarkers
+    variable: Macular Grid Total Volume (OCT)
+    description: >
+      Total macular volume by OCT — aggregate measurement across
+      the macular grid. Used alongside foveal thickness to quantify
+      overall macular edema / atrophy.
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%macular grid%' OR
+      observation_concept_name ILIKE '%macular%total volume%' OR
+      observation_concept_name ILIKE '%total volume%OCT%'
+    extraction_type: Structured
+
+  - category: Labs / Biomarkers
+    variable: Average Retinal Thickness (OCT)
+    description: Average retinal thickness by OCT — tracked longitudinally to monitor edema response.
+    table: observation
+    column: value_as_number
+    criteria: >
+      observation_concept_name ILIKE '%average thickness%' OR
+      observation_concept_name ILIKE '%average retinal thickness%'
+    extraction_type: Structured
+
+  # ----- Visits -------------------------------------------------------
+  - category: Visits
+    variable: Visit Type
+    description: Type of healthcare visit or encounter.
+    table: visit_occurrence
+    column: visit_concept_name
+    extraction_type: Structured
+
+  - category: Visits
+    variable: Visit Date
+    description: Start date of each visit.
+    table: visit_occurrence
+    column: visit_start_date
+    extraction_type: Structured
+
+  # ----- Procedures — ophthalmology interventions -------------------
+  # Intravitreal injection is the workhorse procedure for both DR
+  # (anti-VEGF for DME) and AMD (anti-VEGF for wet AMD). Both dumps
+  # show it as the top procedure concept.
+  - category: Procedures
+    variable: Intravitreal Injection
+    description: >
+      Intravitreal injection of a pharmacologic agent — the primary
+      therapy for both diabetic macular edema and exudative AMD.
+      Agent identity (aflibercept / ranibizumab / bevacizumab / etc.)
+      lives in the per-cohort Medications rows when captured.
+    table: procedure_occurrence
+    column: procedure_concept_name
+    criteria: >
+      procedure_concept_name ILIKE '%intravitreal injection%' OR
+      procedure_concept_name ILIKE '%intravitreal%pharmacolog%'
+    extraction_type: Structured
+
+  - category: Procedures
+    variable: Retinal Photocoagulation / Laser
+    description: >
+      Retinal laser photocoagulation — panretinal (PDR) or focal
+      (DME). Less common today than anti-VEGF but still on the
+      retinal-procedure list.
+    table: procedure_occurrence
+    column: procedure_concept_name
+    criteria: >
+      procedure_concept_name ILIKE '%photocoagulation%' OR
+      procedure_concept_name ILIKE '%panretinal%' OR
+      procedure_concept_name ILIKE '%retinal laser%'
+    extraction_type: Structured
+
+  # ----- Reports ------------------------------------------------------
+  - category: Reports
+    variable: Clinical Note
+    description: Free text of the office-visit clinical note.
+    table: note
+    column: note_text
+    extraction_type: Unstructured
