@@ -46,7 +46,7 @@ variables:
       condition_concept_name ILIKE '%reactive airway disease%' OR
       condition_concept_name ILIKE '%status asthmaticus%'
     extraction_type: Structured
-    notes: Cohort-defining diagnosis for any asthma cohort.
+    notes: Indication-defining diagnosis for asthma populations.
 
   # ----- Medications - reliever -------------------------------------
   - category: Medications
@@ -187,9 +187,9 @@ variables:
       drug_concept_name ILIKE '%dexamethasone%'
     extraction_type: Structured
     notes: >
-      Row captures all systemic steroid exposures; asthma-specific
-      exacerbation attribution requires a temporal join with the
-      Asthma Exacerbation diagnosis row.
+      Captures all systemic steroid exposures. Attributing a course
+      to an asthma exacerbation requires a temporal cross-reference
+      with the Asthma Exacerbation diagnosis row.
 
   # ----- Labs / Biomarkers — T2 inflammation + PFT ------------------
   # Eosinophils live in respiratory_common. IgE and FeNO are asthma-

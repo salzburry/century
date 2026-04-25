@@ -61,7 +61,8 @@ variables:
     column: zip
     expression: LEFT("zip"::text, 3)
     extraction_type: Structured
-    notes: Emitted only for the technical audience; redacted for sales and pharma.
+    # Internal: PII-filtered for sales / pharma audiences.
+    notes: Restricted demographic field; available only to authorised technical reviewers.
 
   - category: Demographics
     variable: Language
@@ -186,7 +187,7 @@ variables:
       condition_concept_name ILIKE '%IBD%' OR
       condition_concept_name ILIKE '%regional enteritis%'
     extraction_type: Structured
-    notes: Cohort-defining diagnosis. `%regional enteritis%` is a legacy SNOMED synonym for Crohn's disease.
+    notes: Indication-defining diagnosis for inflammatory bowel disease populations. "Regional enteritis" is a legacy SNOMED synonym for Crohn's disease.
 
   - category: Diagnosis
     variable: GI Symptoms (Diarrhea / Rectal Bleeding / Epigastric Pain)

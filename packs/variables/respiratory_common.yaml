@@ -70,9 +70,8 @@ variables:
     column: zip
     expression: LEFT("zip"::text, 3)
     extraction_type: Structured
-    notes: >
-      Emitted only in the technical audience; redacted by the PII
-      filter for sales and pharma.
+    # Internal: PII-filtered for sales / pharma audiences.
+    notes: Restricted demographic field; available only to authorised technical reviewers.
 
   # NOTE: Payer Type is intentionally NOT included here. None of the
   # respiratory cohorts (Nimbus COPD / Asthma, Nimbus AZ COPD / Asthma)
@@ -197,9 +196,10 @@ variables:
   - category: Observations
     variable: Smoking Status
     description: >
-      Current / former / never smoker status. Cohort-defining for COPD
-      and a key asthma control modifier; captured as an observation
-      concept or tobacco-use flag.
+      Current, former, or never smoker status recorded for the
+      patient. A central risk factor in COPD and a key control
+      modifier in asthma; captured as an observation concept or a
+      tobacco-use flag.
     table: observation
     column: value_as_concept_name
     criteria: >

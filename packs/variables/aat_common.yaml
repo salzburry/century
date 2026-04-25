@@ -48,7 +48,7 @@ variables:
        drug_concept_name ILIKE '%aducanumab%' OR
        drug_concept_name ILIKE '%Aduhelm%')
     extraction_type: Structured
-    notes: Cohort-defining therapies for any AAT cohort.
+    notes: Indication-defining therapy for anti-amyloid populations. Brand and generic names matched together because warehouses are inconsistent.
 
   - category: Medications
     variable: Anti-amyloid Therapy (Administration)
@@ -71,13 +71,10 @@ variables:
   - category: Infusions
     variable: Infusion Drug (Concept ID)
     description: >
-      OMOP concept id of the drug administered by infusion. Truth-in-
-      labeling: the infusion table in this warehouse carries only
-      `drug_concept_id`, not a drug_concept_name. Swap this row for
-      a concept_name-backed `expression:` lookup (e.g.,
-      `expression: (SELECT concept_name FROM public.concept WHERE
-      concept_id = infusion.drug_concept_id)`) once the vocabulary
-      join target is known.
+      OMOP concept identifier of the drug administered by infusion.
+      Rendered as the numeric concept id because the infusion table
+      currently carries only `drug_concept_id`. Resolve to a drug
+      name by looking up the concept id in the OMOP vocabulary.
     table: infusion
     column: drug_concept_id
     extraction_type: Structured

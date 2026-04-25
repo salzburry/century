@@ -60,7 +60,8 @@ variables:
     column: zip
     expression: LEFT("zip"::text, 3)
     extraction_type: Structured
-    notes: Emitted only for the technical audience; redacted for sales and pharma.
+    # Internal: PII-filtered for sales / pharma audiences.
+    notes: Restricted demographic field; available only to authorised technical reviewers.
 
   - category: Demographics
     variable: Language
@@ -284,9 +285,10 @@ variables:
     variable: Intravitreal Injection
     description: >
       Intravitreal injection of a pharmacologic agent — the primary
-      therapy for both diabetic macular edema and exudative AMD.
-      Agent identity (aflibercept / ranibizumab / bevacizumab / etc.)
-      lives in the per-cohort Medications rows when captured.
+      therapy used in diabetic macular edema and exudative
+      age-related macular degeneration. Agent identity (aflibercept,
+      ranibizumab, bevacizumab) is captured separately under
+      Medications when available.
     table: procedure_occurrence
     column: procedure_concept_name
     criteria: >
