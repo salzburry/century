@@ -219,6 +219,29 @@ _PROSE_DENYLIST: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bextraction_type\b"), "generator key 'extraction_type'"),
     (re.compile(r"\bvalue_as_concept_name\b"),
      "generator column 'value_as_concept_name'"),
+
+    # Prose-quality patterns. Catch the two failure modes the most
+    # recent review surfaced — article + vowel mismatches and the
+    # mechanical "matches the X family / matches a X drug" templates.
+    # All warnings; labels make the fix obvious.
+    #
+    # Article-vowel rule excludes `u` and `h` deliberately: pronunciation
+    # depends on the next sound, not the spelling. "a unit" / "a urea" /
+    # "a useful" / "a university" are correct because the /j/-glide
+    # sounds like a consonant; "an hour" / "an honor" are correct because
+    # the h is silent. Catching only a/e/i/o flags the real mistakes
+    # ("a Anti-amyloid", "a Erythropoiesis", "a Oxygen", "a Inhaled")
+    # without false-positiving on legitimate /j/-prefix or silent-h words.
+    (re.compile(r"\ba\s+[AEIOaeio]"),
+     "article-vowel mismatch ('a' before a/e/i/o-initial word — "
+     "usually should be 'an')"),
+    (re.compile(r"\bmatches\s+the\s+.+?\s+family\b", re.IGNORECASE),
+     "generic template: 'matches the X family' (rewrite as a clinical "
+     "definition; see packs/STYLE.md)"),
+    (re.compile(r"\bmatches\s+an?\s+\w+.*\s+(drug|entry|report)\b",
+                re.IGNORECASE),
+     "auto-translated SQL phrasing ('matches a X drug / entry / report'); "
+     "rewrite as a clinical definition"),
 ]
 
 

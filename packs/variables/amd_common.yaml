@@ -40,7 +40,7 @@ variables:
       condition_concept_name ILIKE '%macular degeneration%' OR
       condition_concept_name ILIKE '%AMD%' OR
       condition_concept_name ILIKE '%ARMD%'
-    inclusion_criteria: Records where the diagnosis concept matches the Age-Related Macular Degeneration family.
+    inclusion_criteria: Records of patients with a recorded diagnosis of Age-Related Macular Degeneration.
     extraction_type: Structured
     notes: Indication-defining diagnosis for age-related macular degeneration populations.
 
@@ -58,7 +58,7 @@ variables:
       condition_concept_name ILIKE '%wet%macular degeneration%' OR
       condition_concept_name ILIKE '%macular degeneration%choroidal neovascular%' OR
       condition_concept_name ILIKE '%neovascular AMD%'
-    inclusion_criteria: Records where the diagnosis concept matches the Exudative (Wet) AMD with Choroidal Neovascularization family.
+    inclusion_criteria: Records of patients with a recorded diagnosis of Exudative (Wet) AMD with Choroidal Neovascularization.
     extraction_type: Structured
 
   - category: Diagnosis
@@ -75,7 +75,7 @@ variables:
       condition_concept_name ILIKE '%dry%macular degeneration%' OR
       condition_concept_name ILIKE '%atrophic%macular degeneration%' OR
       condition_concept_name ILIKE '%geographic atrophy%'
-    inclusion_criteria: Records where the diagnosis concept matches the Non-exudative (Dry) AMD family.
+    inclusion_criteria: Records of patients with a recorded diagnosis of Non-exudative (Dry) AMD.
     extraction_type: Structured
 
   - category: Diagnosis
@@ -89,7 +89,7 @@ variables:
     criteria: >
       condition_concept_name ILIKE '%vitreous degeneration%' OR
       condition_concept_name ILIKE '%posterior vitreous detachment%'
-    inclusion_criteria: Records where the diagnosis concept matches the Vitreous Degeneration family.
+    inclusion_criteria: Records of patients with a recorded diagnosis of Vitreous Degeneration.
     extraction_type: Structured
 
   # ----- Medications — AREDS2 formulation + comorbidity markers ----
@@ -118,7 +118,7 @@ variables:
       drug_concept_name ILIKE '%lutein%' OR
       drug_concept_name ILIKE '%zeaxanthin%' OR
       drug_concept_name ILIKE '%zinc%' AND drug_concept_name ILIKE '%copper%'
-    inclusion_criteria: Records where the medication ingredient matches a AREDS2 Supplementation (Vitamin D / Calcium / Omega-3) drug.
+    inclusion_criteria: Records of patients receiving AREDS2 Supplementation (Vitamin D / Calcium / Omega-3).
     extraction_type: Structured
     notes: >
       Row is deliberately broad — captures the over-the-counter
