@@ -52,7 +52,7 @@ variables:
       procedure_concept_name ILIKE '%former%smoker%' OR
       procedure_concept_name ILIKE '%never%smoker%' OR
       procedure_concept_name ILIKE '%smoking status%'
-    inclusion_criteria: Records where the procedure concept matches a Smoking Status (Procedure-coded) entry.
+    inclusion_criteria: Records of Smoking Status (Procedure-coded) procedures performed for the patient.
     extraction_type: Structured
     notes: >
       Parallel to the observation-side Smoking Status row. Combined
