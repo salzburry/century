@@ -144,6 +144,7 @@ variables:
       observation_concept_name ILIKE '%oxygen saturation%' OR
       observation_concept_name ILIKE '%peripheral oxygen%' OR
       observation_concept_name ILIKE '%SpO2%'
+    inclusion_criteria: Records where the observation captures a Oxygen Saturation (SpO2) value.
     extraction_type: Structured
 
   - category: Vitals
@@ -152,6 +153,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    inclusion_criteria: Records where the observation captures a Body Weight value.
     extraction_type: Structured
 
   - category: Vitals
@@ -178,6 +180,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%body mass index%' OR
       observation_concept_name ILIKE '%BMI%'
+    inclusion_criteria: Records where the observation captures a BMI (Body Mass Index) value.
     extraction_type: Structured
     notes: >
       TODO (clinical review): some sites record BMI in the measurement
@@ -206,6 +209,7 @@ variables:
       observation_concept_name ILIKE '%smoking%' OR
       observation_concept_name ILIKE '%tobacco use%' OR
       observation_concept_name ILIKE '%cigarette%'
+    inclusion_criteria: Records where the observation concept matches Smoking Status.
     extraction_type: Structured
     notes: >
       TODO (clinical review): some warehouses map smoking status onto
@@ -259,6 +263,7 @@ variables:
        measurement_concept_name ILIKE '%absolute%' OR
        measurement_concept_name ILIKE '%percent%' OR
        measurement_concept_name ILIKE '%#%')
+    inclusion_criteria: Records where the measurement is for Blood Eosinophils.
     extraction_type: Structured
     notes: >
       Criteria requires both "eosinophil" and a blood/CBC/differential
@@ -303,6 +308,7 @@ variables:
       procedure_concept_name ILIKE '%diffusing capacity%' OR
       procedure_concept_name ILIKE '%lung volume%' OR
       procedure_concept_name ILIKE '%bronchodilator responsiveness%'
+    inclusion_criteria: Records where the procedure concept matches a Spirometry / Pulmonary Function Test (Procedure) entry.
     extraction_type: Structured
 
   - category: Procedures
@@ -314,6 +320,7 @@ variables:
       procedure_concept_name ILIKE '%pulse oximetry%' OR
       procedure_concept_name ILIKE '%oximetry%' OR
       procedure_concept_name ILIKE '%blood oxygen level%'
+    inclusion_criteria: Records where the procedure concept matches a Pulse Oximetry (Procedure) entry.
     extraction_type: Structured
 
   # ----- Reports ------------------------------------------------------
@@ -338,6 +345,7 @@ variables:
       document_type_concept_name ILIKE '%pulmonary%' OR
       document_type_concept_name ILIKE '%spirometry%' OR
       document_type_concept_name ILIKE '%PFT%'
+    inclusion_criteria: Records where the document type matches a Document (Chest imaging / PFT report) report.
     extraction_type: Unstructured
     notes: >
       Criteria restricted to chest-/pulmonary-/spirometry-/PFT-named

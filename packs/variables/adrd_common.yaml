@@ -132,6 +132,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%O2 saturation%' OR observation_concept_name ILIKE '%oxygen saturation%'
+    inclusion_criteria: Records where the observation captures a Oxygen Saturation value.
     extraction_type: Structured
 
   - category: Vitals
@@ -140,6 +141,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    inclusion_criteria: Records where the observation captures a Body Weight value.
     extraction_type: Structured
 
   - category: Vitals
@@ -216,6 +218,7 @@ variables:
       condition_concept_name ILIKE '%cognitive function%' OR
       condition_concept_name ILIKE '%cognitive decline%' OR
       condition_concept_name ILIKE '%cognitive impairment%'
+    inclusion_criteria: Records where the diagnosis concept matches the Alzheimer's / Cognitive Impairment Diagnosis family.
     extraction_type: Structured
     # Internal: broad on purpose — many related SNOMED strings sit
     # under this umbrella. To split Alzheimer's vs MCI vs dementia-
@@ -234,6 +237,7 @@ variables:
     table: measurement
     column: value_as_concept_name
     criteria: measurement_concept_name ILIKE '%APOE%' OR measurement_concept_name ILIKE '%apolipoprotein%'
+    inclusion_criteria: Records where the measurement is for APOE Genotype.
     extraction_type: Structured
     notes: Key inclusion/exclusion variable for anti-amyloid therapy eligibility.
 
@@ -259,6 +263,7 @@ variables:
       measurement_concept_name ILIKE '%Aβ42%' OR
       measurement_concept_name ILIKE '%Aβ 42%' OR
       measurement_concept_name ILIKE '%β-amyloid 42%'
+    inclusion_criteria: Records where the measurement is for Amyloid-beta 42 (A-beta 42).
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -280,6 +285,7 @@ variables:
       measurement_concept_name ILIKE '%Aβ40%' OR
       measurement_concept_name ILIKE '%Aβ 40%' OR
       measurement_concept_name ILIKE '%β-amyloid 40%'
+    inclusion_criteria: Records where the measurement is for Amyloid-beta 40 (A-beta 40).
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -288,6 +294,7 @@ variables:
     table: measurement
     column: value_as_number
     criteria: measurement_concept_name ILIKE '%GFAP%' OR measurement_concept_name ILIKE '%fibrillary acidic%' OR measurement_concept_name ILIKE '%glial fibrillary%'
+    inclusion_criteria: Records where the measurement is for GFAP.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -296,6 +303,7 @@ variables:
     table: measurement
     column: value_as_number
     criteria: measurement_concept_name ILIKE '%pTau-181%' OR measurement_concept_name ILIKE '%p-Tau 181%' OR measurement_concept_name ILIKE '%phosphorylated tau%181%'
+    inclusion_criteria: Records where the measurement is for p-Tau-181.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -304,6 +312,7 @@ variables:
     table: measurement
     column: value_as_number
     criteria: measurement_concept_name ILIKE '%pTau-217%' OR measurement_concept_name ILIKE '%p-Tau 217%' OR measurement_concept_name ILIKE '%phosphorylated tau%217%'
+    inclusion_criteria: Records where the measurement is for p-Tau-217.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -312,6 +321,7 @@ variables:
     table: measurement
     column: value_as_number
     criteria: measurement_concept_name ILIKE '%neurofilament%' OR measurement_concept_name ILIKE '%NfL%'
+    inclusion_criteria: Records where the measurement is for Neurofilament Light Chain (NfL).
     extraction_type: Structured
 
   # ----- Visits -------------------------------------------------------
@@ -336,6 +346,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%MoCA%' OR observation_concept_name ILIKE '%Montreal Cognitive%'
+    inclusion_criteria: Records where the abstracted concept captures MoCA for the patient.
     extraction_type: Abstracted
     notes: Estimates based on NLP of clinical text with manual validation.
 
@@ -345,6 +356,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%MMSE%' OR observation_concept_name ILIKE '%Mini-Mental%'
+    inclusion_criteria: Records where the abstracted concept captures MMSE for the patient.
     extraction_type: Abstracted
 
   - category: Outcomes
@@ -353,6 +365,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%FAQ%' OR observation_concept_name ILIKE '%Functional Activities%'
+    inclusion_criteria: Records where the abstracted concept captures FAQ for the patient.
     extraction_type: Abstracted
 
   - category: Outcomes
@@ -361,6 +374,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%CDR%' OR observation_concept_name ILIKE '%Clinical Dementia Rating%'
+    inclusion_criteria: Records where the abstracted concept captures CDR for the patient.
     extraction_type: Abstracted
 
   - category: Outcomes
@@ -369,6 +383,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%ADL%' OR observation_concept_name ILIKE '%activities of daily living%'
+    inclusion_criteria: Records where the observation concept matches ADL.
     extraction_type: Structured
 
   - category: Outcomes
@@ -377,6 +392,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%Dementia Severity Rating%' OR observation_concept_name ILIKE '%DSRS%'
+    inclusion_criteria: Records where the abstracted concept captures Dementia Severity Rating Scale for the patient.
     extraction_type: Abstracted
 
   - category: Outcomes
@@ -385,6 +401,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%ADAS-Cog%' OR observation_concept_name ILIKE '%ADAS Cog%'
+    inclusion_criteria: Records where the abstracted concept captures ADAS-Cog for the patient.
     extraction_type: Abstracted
 
   # ----- Reports ------------------------------------------------------
@@ -410,6 +427,7 @@ variables:
       document_type_concept_name ILIKE '%imaging%' OR
       document_type_concept_name ILIKE '%CT%' OR
       document_type_concept_name ILIKE '%neuroimaging%'
+    inclusion_criteria: Records where the document type matches a Document (MRI / PET / EEG) report.
     extraction_type: Unstructured
 
   - category: Reports
@@ -418,4 +436,5 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%PET%scan%result%' OR observation_concept_name ILIKE '%amyloid PET%'
+    inclusion_criteria: Records where the abstracted concept captures PET Scan Result for the patient.
     extraction_type: Abstracted

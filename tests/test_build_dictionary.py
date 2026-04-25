@@ -2617,6 +2617,96 @@ class TestFlatironStyleMetadata(unittest.TestCase):
         # Raw Criteria column suppressed for pharma.
         self.assertNotIn("<th>Criteria</th>", html)
 
+    def test_load_table_descriptions_preserves_unknown_keys(self):
+        # Regression for review feedback: the loader docstring
+        # promises unknown keys are preserved so future YAML additions
+        # don't need a code change. Verify a custom key round-trips.
+        import yaml as _yaml
+        from build_dictionary import PACKS_DIR
+        path = PACKS_DIR / "table_descriptions.yaml"
+        original = path.read_text(encoding="utf-8")
+        try:
+            data = _yaml.safe_load(original) or {}
+            data.setdefault("tables", {}).setdefault("person", {})["future_key"] = "round-trip"
+            path.write_text(_yaml.safe_dump(data), encoding="utf-8")
+            loaded = load_table_descriptions()
+        finally:
+            path.write_text(original, encoding="utf-8")
+        self.assertEqual(
+            loaded["person"].get("future_key"), "round-trip",
+            "load_table_descriptions must preserve unknown keys per "
+            "its documented contract.",
+        )
+
+    def test_compound_criteria_renders_non_blank_inclusion_criteria(self):
+        # Phase 2 / 3 regression: derive_inclusion_criteria() returns
+        # empty for compound (AND / OR) SQL by design — so any pack
+        # row with compound criteria MUST carry an explicit
+        # inclusion_criteria. The test exercises a real compound row
+        # through resolve_variables and asserts the rendered VariableRow
+        # has non-empty inclusion_criteria. Without this assertion, a
+        # blank prose column ships to sales / pharma audiences (which
+        # is exactly the regression that triggered this test).
+        compound_row = {
+            "category": "Diagnosis",
+            "variable": "Asthma Diagnosis",
+            "table": "condition_occurrence",
+            "column": "condition_concept_name",
+            "criteria": (
+                "condition_concept_name ILIKE '%asthma%' OR "
+                "condition_concept_name ILIKE '%reactive airway disease%'"
+            ),
+            "inclusion_criteria":
+                "Records where the diagnosis concept matches the Asthma family.",
+            "extraction_type": "Structured",
+        }
+        # Use a connection stub that returns zero counts so the
+        # resolver short-circuits the SQL execution path; we only care
+        # that the prose round-trips through to the model.
+        cur = _Cursor([("COUNT", (0,))])
+        conn = _Conn([("COUNT", (0,))])
+        rows = resolve_variables(
+            conn, "test_schema", [compound_row], total_patients=100,
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(
+            rows[0].inclusion_criteria.strip(),
+            "Compound-criteria row must have non-empty rendered "
+            "inclusion_criteria — sales / pharma see this column "
+            "instead of the raw SQL Criteria.",
+        )
+
+    def test_every_shipped_pack_row_with_compound_criteria_has_prose(self):
+        # Walks every packs/variables/*.yaml shipped in the repo and
+        # asserts the contract: any row with AND / OR in `criteria:`
+        # also has a non-empty `inclusion_criteria:`. Mirrors the
+        # validator rule, but lives in the test suite so a regression
+        # surfaces in CI without needing the validator step.
+        import re as _re
+        import yaml as _yaml
+        from build_dictionary import PACKS_DIR as _PACKS
+        compound = _re.compile(r"\s+(AND|OR)\s+", _re.IGNORECASE)
+        gaps: list[str] = []
+        for path in sorted((_PACKS.parent / "variables").glob("*.yaml")):
+            data = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            for row in data.get("variables") or []:
+                if not isinstance(row, dict):
+                    continue
+                crit = row.get("criteria") or ""
+                if not compound.search(crit):
+                    continue
+                if not (row.get("inclusion_criteria") or "").strip():
+                    gaps.append(
+                        f"{path.name}: {row.get('category','?')}/"
+                        f"{row.get('variable','?')}"
+                    )
+        self.assertEqual(
+            gaps, [],
+            f"{len(gaps)} compound-criteria rows missing inclusion_criteria. "
+            f"Run `python scripts/seed_inclusion_criteria.py` to backfill, "
+            f"then commit. First 5: {gaps[:5]}",
+        )
+
 
 def _trivial_model() -> CohortModel:
     """Minimal CohortModel exercising the new TableRow / ColumnRow /

@@ -39,6 +39,7 @@ variables:
       condition_concept_name ILIKE '%retinopathy%diabet%' OR
       condition_concept_name ILIKE '%diabetic macular edema%' OR
       condition_concept_name ILIKE '%DME%'
+    inclusion_criteria: Records where the diagnosis concept matches the Diabetic Retinopathy family.
     extraction_type: Structured
     notes: Indication-defining diagnosis for diabetic retinopathy populations. Intentionally does not match non-diabetic retinopathy variants.
 
@@ -57,6 +58,7 @@ variables:
       condition_concept_name ILIKE '%non-proliferative diabetic retinopathy%' OR
       condition_concept_name ILIKE '%NPDR%' OR
       condition_concept_name ILIKE '%PDR%'
+    inclusion_criteria: Records where the diagnosis concept matches the DR Staging (PDR vs NPDR) family.
     extraction_type: Structured
     notes: >
       Overlaps with the Diabetic Retinopathy row above on purpose —
@@ -75,6 +77,7 @@ variables:
     criteria: >
       condition_concept_name ILIKE '%cataract%' AND
       condition_concept_name NOT ILIKE '%no cataract%'
+    inclusion_criteria: Records where the diagnosis concept matches the Cataract family.
     extraction_type: Structured
 
   # ----- Medications — diabetes control ------------------------------
@@ -115,6 +118,7 @@ variables:
       drug_concept_name ILIKE '%Humalog%' OR
       drug_concept_name ILIKE '%Novolog%' OR
       drug_concept_name ILIKE '%Tresiba%'
+    inclusion_criteria: Records where the medication ingredient matches a Insulin drug.
     extraction_type: Structured
 
   - category: Medications
@@ -134,6 +138,7 @@ variables:
       drug_concept_name ILIKE '%Jardiance%' OR
       drug_concept_name ILIKE '%Farxiga%' OR
       drug_concept_name ILIKE '%Invokana%'
+    inclusion_criteria: Records where the medication ingredient matches a SGLT2 Inhibitor drug.
     extraction_type: Structured
     notes: >
       Expect Implemented=No at sites whose data predates broad
@@ -158,6 +163,7 @@ variables:
       drug_concept_name ILIKE '%Mounjaro%' OR
       drug_concept_name ILIKE '%Trulicity%' OR
       drug_concept_name ILIKE '%Victoza%'
+    inclusion_criteria: Records where the medication ingredient matches a GLP-1 Receptor Agonist drug.
     extraction_type: Structured
     notes: >
       Expect Implemented=No on older data. Worth tracking because

@@ -95,6 +95,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%heart rate%' OR observation_concept_name ILIKE '%pulse%'
+    inclusion_criteria: Records where the observation captures a Heart Rate value.
     extraction_type: Structured
 
   - category: Vitals
@@ -103,6 +104,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    inclusion_criteria: Records where the observation captures a Body Weight value.
     extraction_type: Structured
 
   - category: Vitals
@@ -121,6 +123,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%body mass index%' OR
       observation_concept_name ILIKE '%BMI%'
+    inclusion_criteria: Records where the observation captures a BMI (Body Mass Index) value.
     extraction_type: Structured
 
   # ----- Observations -------------------------------------------------
@@ -144,6 +147,7 @@ variables:
       observation_concept_name ILIKE '%smoking%' OR
       observation_concept_name ILIKE '%tobacco%' OR
       observation_concept_name ILIKE '%cigarette%'
+    inclusion_criteria: Records where the observation concept matches Smoking Status.
     extraction_type: Structured
 
   # ----- Diagnosis ----------------------------------------------------
@@ -186,6 +190,7 @@ variables:
       condition_concept_name ILIKE '%inflammatory bowel disease%' OR
       condition_concept_name ILIKE '%IBD%' OR
       condition_concept_name ILIKE '%regional enteritis%'
+    inclusion_criteria: Records where the diagnosis concept matches the IBD Diagnosis family.
     extraction_type: Structured
     notes: Indication-defining diagnosis for inflammatory bowel disease populations. "Regional enteritis" is a legacy SNOMED synonym for Crohn's disease.
 
@@ -205,6 +210,7 @@ variables:
       condition_concept_name ILIKE '%rectal hemorrhage%' OR
       condition_concept_name ILIKE '%epigastric pain%' OR
       condition_concept_name ILIKE '%abdominal pain%'
+    inclusion_criteria: Records where the diagnosis concept matches the GI Symptoms (Diarrhea / Rectal Bleeding / Epigastric Pain) family.
     extraction_type: Structured
 
   # ----- Medications — IBD-specific therapy -------------------------
@@ -227,6 +233,7 @@ variables:
       drug_concept_name ILIKE '%Pentasa%' OR
       drug_concept_name ILIKE '%Lialda%' OR
       drug_concept_name ILIKE '%Delzicol%'
+    inclusion_criteria: Records where the medication ingredient matches a 5-ASA (Aminosalicylate) drug.
     extraction_type: Structured
 
   - category: Medications
@@ -246,6 +253,7 @@ variables:
       drug_concept_name ILIKE '%Entocort%' OR
       drug_concept_name ILIKE '%Uceris%' OR
       drug_concept_name ILIKE '%Anusol%'
+    inclusion_criteria: Records where the medication ingredient matches a Corticosteroid (Topical / Systemic / Budesonide) drug.
     extraction_type: Structured
 
   - category: Medications
@@ -258,6 +266,7 @@ variables:
       drug_concept_name ILIKE '%omeprazole%' OR
       drug_concept_name ILIKE '%esomeprazole%' OR
       drug_concept_name ILIKE '%lansoprazole%'
+    inclusion_criteria: Records where the medication ingredient matches a Proton Pump Inhibitor (PPI) drug.
     extraction_type: Structured
 
   - category: Medications
@@ -275,6 +284,7 @@ variables:
       drug_concept_name ILIKE '%Creon%' OR
       drug_concept_name ILIKE '%Zenpep%' OR
       drug_concept_name ILIKE '%Pancreaze%'
+    inclusion_criteria: Records where the medication ingredient matches a Pancreatic Enzyme Replacement (Pancrelipase) drug.
     extraction_type: Structured
 
   - category: Medications
@@ -309,6 +319,7 @@ variables:
       drug_concept_name ILIKE '%Remicade%' OR
       drug_concept_name ILIKE '%Stelara%' OR
       drug_concept_name ILIKE '%Entyvio%'
+    inclusion_criteria: Records where the abstracted concept captures IBD Biologic / Immunomodulator (Abstracted) for the patient.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review) — standard-of-care for moderate-to-
