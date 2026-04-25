@@ -220,6 +220,26 @@ _PROSE_DENYLIST: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bvalue_as_concept_name\b"),
      "generator column 'value_as_concept_name'"),
 
+    # QA / editing rationale leaking into customer notes. These read
+    # like internal review chatter rather than clinical caveats and
+    # should move to YAML comments instead.
+    (re.compile(r"\bbanned\s+wildcard", re.IGNORECASE),
+     "QA language: 'banned wildcard' (move to YAML comment)"),
+    (re.compile(r"\bcriteria\s+restricted", re.IGNORECASE),
+     "QA language: 'criteria restricted' (move to YAML comment)"),
+    (re.compile(r"\bearlier\s+draft", re.IGNORECASE),
+     "QA language: 'earlier draft' (move to YAML comment)"),
+    (re.compile(r"\bImplemented\s*=\s*(Yes|No)", re.IGNORECASE),
+     "generator field 'Implemented=Yes/No' in customer copy"),
+    (re.compile(r"\bdeliberately\b", re.IGNORECASE),
+     "QA language: 'deliberately' (move rationale to YAML comment)"),
+    (re.compile(r"\bTODO\b"),
+     "QA language: 'TODO' (move to YAML comment)"),
+    (re.compile(r"\bAND-qualifier\b", re.IGNORECASE),
+     "QA language: 'AND-qualifier' (move SQL rationale to YAML comment)"),
+    (re.compile(r"\bdouble-?count\w*", re.IGNORECASE),
+     "QA language: 'double count' (rephrase as a clinical caveat)"),
+
     # Prose-quality patterns. Catch the two failure modes the most
     # recent review surfaced — article + vowel mismatches and the
     # mechanical "matches the X family / matches a X drug" templates.

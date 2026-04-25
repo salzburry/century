@@ -321,10 +321,7 @@ variables:
       drug_concept_name ILIKE '%Entyvio%'
     inclusion_criteria: Records are included for each IBD-targeted biologic or immunomodulator exposure abstracted for the patient — anti-TNF (infliximab/Remicade, adalimumab/Humira, golimumab, certolizumab), anti-integrin (vedolizumab/Entyvio, natalizumab), anti-IL-12/23 (ustekinumab/Stelara, risankizumab, mirikizumab), JAK inhibitors (tofacitinib, upadacitinib), S1P modulators (ozanimod, etrasimod), or traditional immunomodulators (azathioprine, 6-mercaptopurine, methotrexate).
     extraction_type: Abstracted
-    notes: >
-      TODO (clinical review) — standard-of-care for moderate-to-
-      severe IBD. Expect Implemented=No on sites dominated by mild
-      disease; worth tracking as a severity proxy regardless.
+    notes: Standard-of-care for moderate-to-severe IBD. Lower utilisation is expected in cohorts dominated by mild disease; useful as a severity proxy regardless.
 
   # ----- Visits -------------------------------------------------------
   - category: Visits

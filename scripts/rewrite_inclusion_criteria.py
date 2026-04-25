@@ -251,10 +251,11 @@ MAPPINGS: dict[tuple[str, str], str] = {
         "formoterol (Symbicort), fluticasone/salmeterol (Advair), "
         "fluticasone/vilanterol (Breo), or mometasone/formoterol "
         "(Dulera).",
-    ("drug_exposure", "Leukotriene Receptor Antagonist (LTRA)"):
-        "Records are included for each leukotriene-receptor-antagonist "
-        "exposure (montelukast/Singulair, zafirlukast, zileuton) recorded "
-        "for the patient.",
+    ("drug_exposure", "Leukotriene Modifier (LTRA / 5-Lipoxygenase Inhibitor)"):
+        "Records are included for each leukotriene-modifier exposure "
+        "recorded for the patient — leukotriene-receptor antagonists "
+        "montelukast (Singulair) and zafirlukast (Accolate), and the "
+        "5-lipoxygenase inhibitor zileuton (Zyflo).",
     ("drug_exposure", "Long-acting Muscarinic Antagonist (LAMA — Add-on)"):
         "Records are included for each tiotropium (Spiriva Respimat) "
         "exposure recorded for the patient — add-on controller therapy "
@@ -562,11 +563,15 @@ MAPPINGS: dict[tuple[str, str], str] = {
         "Records are included for each diagnosis of vitreous "
         "degeneration or posterior vitreous detachment recorded for the "
         "patient.",
-    ("drug_exposure", "AREDS2 Supplementation (Vitamin D / Calcium / Omega-3)"):
-        "Records are included for each AREDS2-formulation supplement "
-        "exposure recorded for the patient — vitamin D, calcium, "
-        "omega-3 fatty acids (fish oil), lutein, zeaxanthin, and "
-        "zinc–copper antioxidant pairings.",
+    ("drug_exposure", "OTC Supplements (Vitamin D / Calcium / Omega-3 / AREDS2 Antioxidants)"):
+        "Records are included for each over-the-counter supplement "
+        "exposure recorded for the patient — vitamin D, calcium, fish "
+        "oil, and omega-3 fatty acids (general supplementation), "
+        "together with the AREDS2 antioxidant ingredients lutein, "
+        "zeaxanthin, and zinc–copper. Vitamin C, vitamin E, vitamin D, "
+        "calcium, and omega-3 are not part of NEI's AREDS2 formula; "
+        "the row reports the broader OTC footprint, not AREDS2 "
+        "adherence specifically.",
     ("drug_exposure", "GLP-1 Receptor Agonist"):
         "Records are included for each GLP-1 receptor agonist exposure "
         "recorded for the patient — semaglutide (Ozempic, Wegovy), "
@@ -610,10 +615,29 @@ def _find_block_end(lines: list[str], start_idx: int, row_indent: str) -> int:
     return i
 
 
+# Per-file overrides for keys that mean different things in different
+# packs. The same `(table, variable)` tuple can appear in two different
+# `_common` packs with clinically distinct interpretations — for
+# example, FEV1/FVC ratio is a COPD diagnostic threshold (< 0.70 per
+# GOLD) but in asthma it's the bronchodilator-reversibility marker.
+# Lookup order: per-file override → global MAPPINGS.
+OVERRIDES: dict[str, dict[tuple[str, str], str]] = {
+    "asthma_common.yaml": {
+        ("measurement", "FEV1 / FVC Ratio"):
+            "Records are included for each FEV1/FVC ratio measurement "
+            "abstracted from a pulmonary-function report for the "
+            "patient — pre- and post-bronchodilator values used to "
+            "confirm airflow obstruction and assess bronchodilator "
+            "reversibility, the diagnostic criterion for asthma.",
+    },
+}
+
+
 def _process_file(path: Path) -> int:
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text) or {}
     rows = data.get("variables") or []
+    file_overrides = OVERRIDES.get(path.name, {})
 
     plan: dict[tuple[str, str], str] = {}
     for row in rows:
@@ -623,7 +647,9 @@ def _process_file(path: Path) -> int:
             (row.get("table") or "").strip(),
             (row.get("variable") or row.get("column") or "").strip(),
         )
-        if key in MAPPINGS:
+        if key in file_overrides:
+            plan[key] = file_overrides[key]
+        elif key in MAPPINGS:
             plan[key] = MAPPINGS[key]
 
     if not plan:

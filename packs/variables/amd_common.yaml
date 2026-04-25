@@ -97,16 +97,23 @@ variables:
   # injection; that shows up as a PROCEDURE (captured by the
   # Intravitreal Injection row in retinal_common), not in
   # drug_exposure. drug_exposure in this cohort is dominated by
-  # cardiovascular-prevention and AREDS2-formulation over-the-
-  # counter supplements (vitamin D / calcium / omega-3).
+  # Mixes the over-the-counter supplements typically seen in older
+  # AMD patients with the AREDS2 antioxidant ingredients. Vitamin D,
+  # calcium, and omega-3 are NOT in NEI's AREDS2 formula (which is
+  # vitamin C, vitamin E, zinc, copper, lutein, and zeaxanthin) — they
+  # are general bone-health and cardiovascular-prevention supplements
+  # common in this population. Row reports the broad OTC footprint
+  # and flags the AREDS2 subset inline; tighten to AREDS2-only by
+  # narrowing the criteria when a cohort needs adherence attribution.
   - category: Medications
-    variable: AREDS2 Supplementation (Vitamin D / Calcium / Omega-3)
+    variable: OTC Supplements (Vitamin D / Calcium / Omega-3 / AREDS2 Antioxidants)
     description: >
-      The AREDS2 formulation — vitamin D, calcium, omega-3 fatty
-      acids (fish oil), plus the original AREDS antioxidants
-      (vitamins C / E, zinc, copper, lutein, zeaxanthin) — is the
-      standard non-pharmacologic intervention to slow AMD
-      progression in intermediate disease.
+      Over-the-counter supplements common in older AMD patients —
+      vitamin D, calcium, and omega-3 fatty acids (fish oil) for
+      general bone-health and cardiovascular prevention, plus the
+      AREDS2 antioxidant ingredients (lutein, zeaxanthin, and
+      zinc–copper pairings) used to slow AMD progression in
+      intermediate disease.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -118,14 +125,9 @@ variables:
       drug_concept_name ILIKE '%lutein%' OR
       drug_concept_name ILIKE '%zeaxanthin%' OR
       drug_concept_name ILIKE '%zinc%' AND drug_concept_name ILIKE '%copper%'
-    inclusion_criteria: Records are included for each AREDS2-formulation supplement exposure recorded for the patient — vitamin D, calcium, omega-3 fatty acids (fish oil), lutein, zeaxanthin, and zinc–copper antioxidant pairings.
+    inclusion_criteria: Records are included for each over-the-counter supplement exposure recorded for the patient — vitamin D, calcium, fish oil, and omega-3 fatty acids (general supplementation), together with the AREDS2 antioxidant ingredients lutein, zeaxanthin, and zinc–copper. Vitamin C, vitamin E, vitamin D, calcium, and omega-3 are not part of NEI's AREDS2 formula; the row reports the broader OTC footprint, not AREDS2 adherence specifically.
     extraction_type: Structured
-    notes: >
-      Row is deliberately broad — captures the over-the-counter
-      supplement footprint a wet/dry-AMD cohort typically shows.
-      Vitamin D + calcium + omega-3 are common ingredients in
-      non-AMD formulations too; do not treat the row alone as
-      evidence of AREDS2 adherence.
+    notes: Vitamin D, calcium, and omega-3 are common in non-AMD formulations too. Do not use this row alone as evidence of AREDS2 adherence.
 
   - category: Medications
     variable: Aspirin (Antiplatelet)
