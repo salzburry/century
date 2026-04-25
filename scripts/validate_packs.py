@@ -18,6 +18,10 @@ What this catches:
   - Catch-all variable rows that have a named clinical concept but
     no `criteria:` (would silently summarise every non-null row —
     the "Other Laboratory Measurements" shape the reviewer flagged).
+  - Customer-visible prose (description / notes) that leaks pack
+    mechanics, cohort short names, or SQL fragments. See
+    packs/STYLE.md for the full denylist. Currently warnings; will
+    promote to errors under --strict once the editorial pass lands.
 
 What it does NOT catch:
   - Whether a criteria actually finds data in a live warehouse
@@ -164,6 +168,71 @@ _ID_COLUMN_RE = re.compile(r"(?:^|_)(concept_id|id)$", re.IGNORECASE)
 _ID_NAME_RE = re.compile(r"\b(id|concept\s*id|identifier)\b", re.IGNORECASE)
 
 
+# Customer-visible prose denylist. See packs/STYLE.md.
+#
+# Each entry is (compiled_regex, human_readable_label). Labels appear
+# in the validation report so authors know which rule fired.
+#
+# Word-boundary anchored where the term might also appear as a
+# substring of an unrelated word ("MTC" lights up inside many strings;
+# pinning it with \b avoids false positives on, e.g., "MTC Practice
+# Network" if that ever appears in legitimate copy).
+_PROSE_DENYLIST: list[tuple[re.Pattern[str], str]] = [
+    # Pack file references — internal-only vocabulary.
+    (re.compile(r"\b(adrd|aat|alzheimers|respiratory|copd|asthma|ckd|"
+                r"retinal|dr|amd|mash|ibd)_common\b", re.IGNORECASE),
+     "pack-file reference"),
+
+    # Cohort short-name leakage. Standalone uppercase tokens used as
+    # tags ("MTC AAT", "RMN Alzheimer's"). Customer copy should name
+    # the disease, not our internal cohort slug.
+    (re.compile(r"\b(MTC|RMN)\b"),
+     "cohort short-name (MTC / RMN)"),
+
+    # Pack-mechanics phrases.
+    (re.compile(r"\bcohort[- ]defining\b", re.IGNORECASE),
+     "pack mechanics: 'cohort-defining'"),
+    (re.compile(r"\bcaptured\s+in\b", re.IGNORECASE),
+     "pack mechanics: 'captured in'"),
+    (re.compile(r"\binherit(s|ed|ing)?\s+(from|by)\b", re.IGNORECASE),
+     "pack mechanics: 'inherits from / inherited by'"),
+    (re.compile(r"\bowned\s+here\b", re.IGNORECASE),
+     "pack mechanics: 'owned here'"),
+    (re.compile(r"\bredacted\s+by\b", re.IGNORECASE),
+     "pack mechanics: 'redacted by'"),
+    (re.compile(r"\b(technical|sales|pharma)\s+audience\b", re.IGNORECASE),
+     "audience tag in customer copy"),
+    (re.compile(r"\bfor\s+both\b", re.IGNORECASE),
+     "pack mechanics: 'for both' (cohort-cross-reference)"),
+    (re.compile(r"\bsurface\s+it\b", re.IGNORECASE),
+     "pack mechanics: 'surface it'"),
+
+    # SQL fragments. Spaces around FROM/JOIN avoid false positives on
+    # English "from" / "join". ILIKE/SELECT are unambiguous.
+    (re.compile(r"\bILIKE\b"), "SQL fragment: ILIKE"),
+    (re.compile(r"\bSELECT\b"), "SQL fragment: SELECT"),
+    (re.compile(r"\sJOIN\s", re.IGNORECASE), "SQL fragment: JOIN"),
+    (re.compile(r"\sFROM\s+\w+_\w+", re.IGNORECASE),
+     "SQL fragment: FROM <table>"),
+
+    # Generator vocabulary leaking into prose.
+    (re.compile(r"\bextraction_type\b"), "generator key 'extraction_type'"),
+    (re.compile(r"\bvalue_as_concept_name\b"),
+     "generator column 'value_as_concept_name'"),
+]
+
+
+def _check_prose_quality(text: str) -> list[str]:
+    """Return human-readable warnings for each denylist hit in `text`."""
+    if not text:
+        return []
+    warnings: list[str] = []
+    for pat, label in _PROSE_DENYLIST:
+        if pat.search(text):
+            warnings.append(label)
+    return warnings
+
+
 def _check_id_column_name_mismatch(v: dict[str, Any]) -> str | None:
     """Catch the Infusion-Drug-style mistake — variable named as a
     business-facing concept (`Drug`, `Diagnosis`) but the column is
@@ -276,6 +345,17 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
             report.findings.append(Finding(
                 "warning", slug, f"{cat}/{var}: {id_mismatch}",
             ))
+
+        # Prose quality: description / notes against the STYLE.md denylist.
+        # Currently warnings; will promote to errors once the editorial
+        # pass lands (see packs/STYLE.md).
+        for prose_field in ("description", "notes"):
+            text = v.get(prose_field) or ""
+            for label in _check_prose_quality(text):
+                report.findings.append(Finding(
+                    "warning", slug,
+                    f"{cat}/{var}: {prose_field} hits style denylist — {label}",
+                ))
 
     return report
 

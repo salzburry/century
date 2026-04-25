@@ -40,7 +40,7 @@ variables:
       condition_concept_name ILIKE '%diabetic macular edema%' OR
       condition_concept_name ILIKE '%DME%'
     extraction_type: Structured
-    notes: Cohort-defining diagnosis. Intentionally does NOT match non-diabetic retinopathy variants.
+    notes: Indication-defining diagnosis for diabetic retinopathy populations. Intentionally does not match non-diabetic retinopathy variants.
 
   - category: Diagnosis
     variable: DR Staging (PDR vs NPDR)

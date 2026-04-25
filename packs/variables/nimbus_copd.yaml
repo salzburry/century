@@ -35,16 +35,17 @@ variables:
   - category: Labs / Biomarkers
     variable: Blood Eosinophils (Standardized, Nimbus curated)
     description: >
-      Absolute blood eosinophil count from the Nimbus curated
-      abstraction pipeline. Parallel to the shared "Blood Eosinophils"
-      row — this one points at the Nimbus-COPD-curated-only
-      `eosinophil_standardized` abstraction table.
+      Absolute blood eosinophil count from a curated abstraction
+      table. Parallel to the standard Blood Eosinophils row, which
+      pulls from the OMOP measurement table; this row reads from
+      the curated `eosinophil_standardized` table when the cohort's
+      ETL ships it.
     table: eosinophil_standardized
     column: value_as_number
     extraction_type: Structured
-    notes: >
-      Table ships only in the nimbus_copd_curated schema. If a future
-      Nimbus cohort adopts the same abstraction, copy this row into
-      that cohort's per-cohort variable pack rather than promoting it
-      to copd_common — the table name is specific to the Nimbus
-      curated ETL, not a COPD-wide convention.
+    # Internal: table ships only in the nimbus_copd_curated schema.
+    # If a future cohort adopts the same abstraction, copy this row
+    # into that cohort's per-cohort variable pack rather than
+    # promoting it to copd_common — the table name is specific to
+    # this curated ETL, not a COPD-wide convention.
+    notes: Sourced from a curated abstraction table; available only in cohorts where that table is shipped.

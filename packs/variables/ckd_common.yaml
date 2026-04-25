@@ -247,9 +247,9 @@ variables:
       condition_concept_name ILIKE '%diabetes%kidney%'
     extraction_type: Structured
     notes: >
-      Cohort-defining diagnosis for any CKD cohort. Acute kidney
-      injury is captured separately below — it is a different acuity
-      but co-exists in many CKD patients.
+      Indication-defining diagnosis for chronic kidney disease
+      populations. Acute kidney injury is tracked separately below —
+      a different acuity, but the two often co-exist.
 
   - category: Diagnosis
     variable: Acute Kidney Injury

@@ -34,12 +34,12 @@ variables:
   - category: Observations
     variable: Smoking Status (Procedure-coded)
     description: >
-      Smoking status captured in `procedure_occurrence` via SNOMED
+      Smoking status recorded as a SNOMED procedure concept —
       "Current tobacco user / non-user", "Former tobacco user", or
-      explicit "Smoking status" status concepts. Distinct from
-      tobacco-cessation, counselling, or screening procedures,
-      which carry the words tobacco / smoking but are intervention
-      records rather than status records.
+      an explicit "Smoking status" code. Distinct from tobacco-
+      cessation, counselling, or screening procedures, which carry
+      the words tobacco or smoking but record an intervention rather
+      than a patient status.
     table: procedure_occurrence
     column: procedure_concept_name
     criteria: >
@@ -54,9 +54,9 @@ variables:
       procedure_concept_name ILIKE '%smoking status%'
     extraction_type: Structured
     notes: >
-      Parallel to the observation-side "Smoking Status" row from
-      ckd_common. Combined cohort-level counts require de-duplicating
-      by person across the two rows because some sites may populate
-      both. Cessation / counselling procedures (e.g. CPT 99406-99407,
-      "Smoking and tobacco use cessation counseling") are deliberately
-      excluded — they are intervention records, not status records.
+      Parallel to the observation-side Smoking Status row. Combined
+      cohort-level counts require de-duplicating by person across
+      the two rows because some sites may populate both. Cessation
+      and counselling procedures (e.g. CPT 99406-99407, "Smoking
+      and tobacco use cessation counseling") are deliberately
+      excluded — they record an intervention, not a patient status.

@@ -63,9 +63,11 @@ variables:
     column: zip
     expression: LEFT("zip"::text, 3)
     extraction_type: Structured
-    notes: >
-      Emitted only in the technical audience; redacted by the PII
-      filter for sales and pharma.
+    # Internal: PII-filtered for sales / pharma audiences. The 3-digit
+    # prefix is the HIPAA Safe Harbor "large geographic area"
+    # generalisation — small enough on its own to be safe, but treated
+    # as restricted because it is still address-derived.
+    notes: Restricted demographic field; available only to authorised technical reviewers.
 
   # NOTE: Payer Type is intentionally NOT included here. MTC warehouses
   # ship `payer_plan_period` and want the row; RMN Alzheimer's does
@@ -198,11 +200,10 @@ variables:
   - category: Diagnosis
     variable: Alzheimer's / Cognitive Impairment Diagnosis
     description: >
-      Alzheimer's disease and the cognitive-impairment concept
-      family — Alzheimer's disease (all onset variants), mild
-      cognitive impairment (MCI), amnesia, memory impairment,
-      other dementias, and cognitive-function symptom concepts.
-      The cohort-defining diagnosis family for ADRD populations.
+      Alzheimer's disease, mild cognitive impairment (MCI), amnesia,
+      memory impairment, dementia, and related cognitive-function
+      diagnoses recorded for the patient. Covers all Alzheimer's
+      onset variants and the broader dementia family.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >
@@ -216,11 +217,11 @@ variables:
       condition_concept_name ILIKE '%cognitive decline%' OR
       condition_concept_name ILIKE '%cognitive impairment%'
     extraction_type: Structured
-    notes: >
-      Broad on purpose — the ADRD-defining concept family uses many
-      related SNOMED strings. If a reviewer needs to split
-      Alzheimer's-only vs MCI vs dementia-other, add a narrower row
-      in a per-cohort pack rather than tightening this umbrella.
+    # Internal: broad on purpose — many related SNOMED strings sit
+    # under this umbrella. To split Alzheimer's vs MCI vs dementia-
+    # other, add a narrower row in a per-cohort pack rather than
+    # tightening this one.
+    notes: Umbrella diagnosis. Combine with biomarker rows (amyloid-beta, p-Tau) for clinically confirmed Alzheimer's subsets.
 
   # ----- Labs / Biomarkers -------------------------------------------
   # Category label matches packs/categories.yaml exactly ("Labs /

@@ -41,7 +41,7 @@ variables:
       condition_concept_name ILIKE '%AMD%' OR
       condition_concept_name ILIKE '%ARMD%'
     extraction_type: Structured
-    notes: Cohort-defining diagnosis.
+    notes: Indication-defining diagnosis for age-related macular degeneration populations.
 
   - category: Diagnosis
     variable: Exudative (Wet) AMD with Choroidal Neovascularization

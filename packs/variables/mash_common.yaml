@@ -63,7 +63,8 @@ variables:
     column: zip
     expression: LEFT("zip"::text, 3)
     extraction_type: Structured
-    notes: Emitted only for the technical audience; redacted for sales and pharma.
+    # Internal: PII-filtered for sales / pharma audiences.
+    notes: Restricted demographic field; available only to authorised technical reviewers.
 
   - category: Demographics
     variable: Language
@@ -174,9 +175,10 @@ variables:
     variable: MASH / NAFLD / Fatty Liver
     description: >
       Metabolic dysfunction-associated steatohepatitis (MASH,
-      formerly NASH) and the broader NAFLD / MASLD family. Also
-      catches the "Fatty (change of) liver" SNOMED concept,
-      commonly the primary cohort-defining diagnosis.
+      formerly NASH) and the broader non-alcoholic fatty liver
+      disease (NAFLD / MASLD) family. Also captures the "Fatty
+      (change of) liver" SNOMED concept commonly recorded as the
+      primary hepatology diagnosis.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >
@@ -190,7 +192,7 @@ variables:
       condition_concept_name ILIKE '%MASLD%' OR
       condition_concept_name ILIKE '%metabolic%steatotic liver%'
     extraction_type: Structured
-    notes: Cohort-defining diagnosis.
+    notes: Indication-defining diagnosis for hepatology populations.
 
   - category: Diagnosis
     variable: Cirrhosis / Advanced Liver Fibrosis

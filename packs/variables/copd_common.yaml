@@ -51,7 +51,7 @@ variables:
       condition_concept_name ILIKE '%chronic bronchitis%' OR
       condition_concept_name ILIKE '%chronic obstructive airway%'
     extraction_type: Structured
-    notes: Cohort-defining diagnosis for any COPD cohort.
+    notes: Indication-defining diagnosis for chronic obstructive pulmonary disease populations.
 
   # ----- Medications — inhaled bronchodilators / anti-inflammatories -
   # Rows split by pharmacologic class so the Variables sheet shows
@@ -173,9 +173,9 @@ variables:
       drug_concept_name ILIKE '%dexamethasone%'
     extraction_type: Structured
     notes: >
-      Row captures all systemic steroid exposures; COPD-specific
-      exacerbation attribution requires a temporal join with the
-      COPD Exacerbation diagnosis row.
+      Captures all systemic steroid exposures. Attributing a course
+      to a COPD exacerbation requires a temporal cross-reference with
+      the COPD Exacerbation diagnosis row.
 
   - category: Medications
     variable: Phosphodiesterase-4 Inhibitor (Roflumilast)
