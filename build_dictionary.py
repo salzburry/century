@@ -1250,10 +1250,9 @@ def _fmt_pct(value: float | None) -> str:
 def write_xlsx(model: CohortModel, out_path: Path,
                audience: str = "technical") -> None:
     try:
-        import pandas as pd  # noqa: F401
+        import pandas as pd
     except ImportError as exc:
         raise SystemExit("pandas is not installed: pip install pandas openpyxl") from exc
-    import pandas as pd
 
     summary_rows = [
         {"metric": "cohort",         "value": model.cohort},
@@ -1738,7 +1737,6 @@ def main(argv: list[str] | None = None) -> int:
         model = build_model(args.cohort, conn=None, dry_run=True)
     else:
         psycopg = _require_psycopg()
-        pack = load_cohort_pack(args.cohort)
 
         class _NS:
             host = None; port = None; database = None
