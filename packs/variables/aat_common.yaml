@@ -74,9 +74,9 @@ variables:
     variable: Infusion Drug (Concept ID)
     description: >
       OMOP concept identifier of the drug administered by infusion.
-      Rendered as the numeric concept id because the infusion table
-      currently carries only `drug_concept_id`. Resolve to a drug
-      name by looking up the concept id in the OMOP vocabulary.
+      Rendered as a numeric concept id because the cohort's infusion
+      table currently carries only the drug-concept identifier; the
+      drug name resolves through the OMOP vocabulary.
     table: infusion
     column: drug_concept_id
     extraction_type: Structured
@@ -98,9 +98,7 @@ variables:
     table: infusion
     column: drug_exposure_end_date
     extraction_type: Structured
-    notes: >
-      Often null in current schemas; `Implemented: No` flag will
-      surface this gap until the end-date field is populated.
+    notes: Often null in current schemas; the implementation flag will surface the gap until the end-date field is populated.
 
   # ----- Observations (AAT-specific ARIA split) ---------------------
   - category: Observations
@@ -111,6 +109,7 @@ variables:
     # `%ARIA-H%` (not `ARIA-H%`) so we match source labels like
     # "MRI finding - ARIA-H" or "Amyloid-related imaging abnormality ARIA-H".
     criteria: observation_concept_name ILIKE '%ARIA-H%'
+    inclusion_criteria: Records are included for each amyloid-related-imaging-abnormality microhemorrhage (ARIA-H) observation recorded for the patient — a safety-surveillance event for anti-amyloid therapy.
     extraction_type: Structured
     notes: Safety surveillance for anti-amyloid therapy.
 
@@ -120,6 +119,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%ARIA-E%'
+    inclusion_criteria: Records are included for each amyloid-related-imaging-abnormality edema (ARIA-E) observation recorded for the patient — a safety-surveillance event for anti-amyloid therapy.
     extraction_type: Structured
     notes: Safety surveillance for anti-amyloid therapy.
 
@@ -127,14 +127,15 @@ variables:
   - category: Procedures
     variable: Infusion Procedure Codes (candidate AAT attribution)
     description: >
-      Procedure codes that *may* represent an anti-amyloid infusion.
-      Includes explicit AAT drug-name matches (lecanemab / donanemab
-      / aducanumab) AND generic HCPCS administration codes
-      (Chemotherapy administration, intravenous infusion) because
-      many administration procedures don't carry the drug name in
-      procedure_concept_name. **Counts are candidates, not confirmed
-      anti-amyloid procedures** — confirm attribution by joining to
-      `Anti-amyloid Therapy (Administration)` on person + date.
+      Procedure codes that may represent an anti-amyloid infusion.
+      Captures explicit AAT drug-name matches (lecanemab, donanemab,
+      aducanumab) together with generic HCPCS administration codes
+      (chemotherapy administration, intravenous infusion) because
+      many administration procedures do not carry the drug name in
+      the procedure concept. Counts are candidates, not confirmed
+      anti-amyloid procedures — confirm attribution by cross-
+      referencing the Anti-amyloid Therapy (Administration) row on
+      patient and date.
     table: procedure_occurrence
     column: procedure_concept_name
     criteria: >

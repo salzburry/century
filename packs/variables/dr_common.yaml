@@ -96,6 +96,7 @@ variables:
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_concept_name ILIKE '%metformin%'
+    inclusion_criteria: Records are included for each metformin exposure recorded for the patient — first-line type-2 diabetes therapy.
     extraction_type: Structured
 
   - category: Medications
@@ -174,4 +175,5 @@ variables:
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_concept_name ILIKE '%aspirin%'
+    inclusion_criteria: Records are included for each aspirin exposure recorded for the patient — low-dose antiplatelet therapy used for cardiovascular-event prevention.
     extraction_type: Structured

@@ -488,6 +488,73 @@ MAPPINGS: dict[tuple[str, str], str] = {
         "(ozanimod, etrasimod), or traditional immunomodulators "
         "(azathioprine, 6-mercaptopurine, methotrexate).",
 
+    # --- single-clause rows (formerly auto-translated) -----------------
+    # Demographic + vital + observation rows whose criteria is a
+    # single ILIKE — used to render mechanical "concept matches"
+    # prose. Now hand-curated.
+    ("observation", "Language"):
+        "Records are included for each primary-language observation "
+        "recorded for the patient.",
+    ("observation", "Marital Status"):
+        "Records are included for each marital-status observation "
+        "recorded for the patient.",
+    ("observation", "Sexual Orientation"):
+        "Records are included for each sexual-orientation observation "
+        "recorded for the patient.",
+    ("observation", "Blood Pressure"):
+        "Records are included for each blood-pressure reading recorded "
+        "for the patient at an office visit, stored as an observation "
+        "value string.",
+    ("observation", "Blood Pressure (Combined)"):
+        "Records are included for each combined-format blood-pressure "
+        "reading (e.g. \"120/80\") stored as an observation value "
+        "string for the patient. Numeric systolic and diastolic "
+        "readings appear under the Blood Pressure (Systolic / "
+        "Diastolic, numeric) row instead.",
+    ("observation", "Temperature"):
+        "Records are included for each body-temperature measurement "
+        "recorded for the patient at an office visit.",
+    ("observation", "Patient Height"):
+        "Records are included for each patient-height measurement "
+        "recorded for the patient at an office visit.",
+    ("observation", "Respiratory Rate"):
+        "Records are included for each respiratory-rate measurement "
+        "recorded for the patient at an office visit.",
+    ("observation", "Allergies"):
+        "Records are included for each patient-allergy observation "
+        "recorded for the patient.",
+    ("observation", "ARIA-H (microhemorrhage)"):
+        "Records are included for each amyloid-related-imaging-"
+        "abnormality microhemorrhage (ARIA-H) observation recorded for "
+        "the patient — a safety-surveillance event for anti-amyloid "
+        "therapy.",
+    ("observation", "ARIA-E (edema)"):
+        "Records are included for each amyloid-related-imaging-"
+        "abnormality edema (ARIA-E) observation recorded for the "
+        "patient — a safety-surveillance event for anti-amyloid "
+        "therapy.",
+    ("observation", "ARIA"):
+        "Records are included for each amyloid-related-imaging-"
+        "abnormality (ARIA) observation recorded for the patient. "
+        "AAT-specific cohorts split this into ARIA-H (microhemorrhage) "
+        "and ARIA-E (edema) rows.",
+    ("observation", "Foveal Thickness (OCT)"):
+        "Records are included for each foveal-thickness optical-"
+        "coherence-tomography (OCT) measurement recorded for the "
+        "patient — central monitoring measurement for macular edema "
+        "and macular atrophy or neovascularization response.",
+    ("drug_exposure", "Aspirin (Antiplatelet)"):
+        "Records are included for each aspirin exposure recorded for "
+        "the patient — low-dose antiplatelet therapy used for "
+        "cardiovascular-event prevention.",
+    ("drug_exposure", "Metformin"):
+        "Records are included for each metformin exposure recorded for "
+        "the patient — first-line type-2 diabetes therapy.",
+    ("drug_exposure", "Sodium Bicarbonate (Acidosis Correction)"):
+        "Records are included for each oral sodium-bicarbonate "
+        "exposure recorded for the patient — used to correct metabolic "
+        "acidosis in advanced CKD.",
+
     # --- drg_ckd.yaml ----------------------------------------------------
     ("procedure_occurrence", "Smoking Status (Procedure-coded)"):
         "Records are included for each smoking-status SNOMED procedure "
@@ -563,14 +630,14 @@ MAPPINGS: dict[tuple[str, str], str] = {
         "Records are included for each diagnosis of vitreous "
         "degeneration or posterior vitreous detachment recorded for the "
         "patient.",
-    ("drug_exposure", "OTC Supplements (Vitamin D / Calcium / Omega-3 / AREDS2 Antioxidants)"):
+    ("drug_exposure", "OTC Supplements (AREDS2 Antioxidants + General Vitamin / Mineral)"):
         "Records are included for each over-the-counter supplement "
-        "exposure recorded for the patient — vitamin D, calcium, fish "
-        "oil, and omega-3 fatty acids (general supplementation), "
-        "together with the AREDS2 antioxidant ingredients lutein, "
-        "zeaxanthin, and zinc–copper. Vitamin C, vitamin E, vitamin D, "
-        "calcium, and omega-3 are not part of NEI's AREDS2 formula; "
-        "the row reports the broader OTC footprint, not AREDS2 "
+        "exposure recorded for the patient — the NEI AREDS2 "
+        "antioxidants (vitamin C, vitamin E, zinc, copper, lutein, "
+        "zeaxanthin) plus the broader vitamin D, calcium, and omega-3 "
+        "supplements common in this population. Vitamin D, calcium, "
+        "and omega-3 are not part of NEI's AREDS2 formula; the row "
+        "reports the combined supplement footprint, not AREDS2 "
         "adherence specifically.",
     ("drug_exposure", "GLP-1 Receptor Agonist"):
         "Records are included for each GLP-1 receptor agonist exposure "
@@ -626,9 +693,11 @@ OVERRIDES: dict[str, dict[tuple[str, str], str]] = {
         ("measurement", "FEV1 / FVC Ratio"):
             "Records are included for each FEV1/FVC ratio measurement "
             "abstracted from a pulmonary-function report for the "
-            "patient — pre- and post-bronchodilator values used to "
-            "confirm airflow obstruction and assess bronchodilator "
-            "reversibility, the diagnostic criterion for asthma.",
+            "patient. Supports the GINA assessment of variable "
+            "expiratory airflow limitation and bronchodilator "
+            "responsiveness when interpreted alongside pre- and post-"
+            "bronchodilator spirometry and the patient's symptom "
+            "history.",
     },
 }
 

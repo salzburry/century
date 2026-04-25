@@ -70,6 +70,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%language%'
+    inclusion_criteria: Records are included for each primary-language observation recorded for the patient.
     extraction_type: Structured
 
   - category: Demographics
@@ -78,6 +79,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%marital status%'
+    inclusion_criteria: Records are included for each marital-status observation recorded for the patient.
     extraction_type: Structured
 
   # ----- Vitals -------------------------------------------------------
@@ -87,6 +89,7 @@ variables:
     table: observation
     column: value_as_string
     criteria: observation_concept_name ILIKE '%blood pressure%'
+    inclusion_criteria: Records are included for each blood-pressure reading recorded for the patient at an office visit, stored as an observation value string.
     extraction_type: Structured
 
   - category: Vitals
@@ -113,6 +116,7 @@ variables:
     table: observation
     column: value_as_string
     criteria: observation_concept_name ILIKE '%height%'
+    inclusion_criteria: Records are included for each patient-height measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -133,6 +137,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%allerg%'
+    inclusion_criteria: Records are included for each patient-allergy observation recorded for the patient.
     extraction_type: Structured
 
   - category: Observations
