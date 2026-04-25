@@ -67,12 +67,13 @@ variables:
       Emitted only in the technical audience; redacted by the PII
       filter for sales and pharma.
 
-  - category: Demographics
-    variable: Payer Type
-    description: Insurance or payer responsible for coverage.
-    table: payer_plan_period
-    column: payer_concept_name
-    extraction_type: Structured
+  # NOTE: Payer Type is intentionally NOT included here. MTC warehouses
+  # ship `payer_plan_period` and want the row; RMN Alzheimer's does
+  # not, so inheriting the row from this shared base would throw
+  # "relation does not exist" warnings on every RMN build. The MTC
+  # per-cohort packs (mtc_aat.yaml, mtc_alzheimers.yaml) own the row
+  # directly; a future ADRD cohort that ships payer data can pick it
+  # up the same way.
 
   - category: Demographics
     variable: Language

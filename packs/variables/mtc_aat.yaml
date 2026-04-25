@@ -2,25 +2,28 @@
 #
 # Cohort-specific source of truth for packs/cohorts/mtc_aat.yaml.
 # Inherits every AAT-level row from aat_common (which in turn
-# includes adrd_common). Does NOT currently add any cohort-specific
-# rows — there is no MTC-AAT-only abstraction table or concept-name
-# divergence to override.
+# includes adrd_common). Adds the one MTC-specific Demographics row
+# (Payer Type) that the shared ADRD base can't carry because other
+# ADRD cohorts (RMN Alzheimer's) don't ship the payer_plan_period
+# table.
 #
-# Populate this file when:
+# Populate further when:
 #   - The MTC AAT ETL starts emitting cohort-specific tables (e.g.
 #     a curated infusion-administration abstraction beyond the OMOP
 #     `infusion` table)
 #   - A concept-name pattern diverges from aat_common in this cohort
 #     only and a live build confirms it
-#
-# Until then, this pack is a structural placeholder — every row comes
-# from the shared aat_common / adrd_common chain. The placeholder
-# matters because the moment a second AAT cohort (e.g. another site
-# running an anti-amyloid trial) lands with its own ETL, we don't
-# want to discover MTC-only rows hidden in aat_common leaking into
-# that cohort's workbook.
 
 include:
   - aat_common
 
-variables: []
+variables:
+  # MTC warehouses carry payer_plan_period; other ADRD cohorts don't.
+  # Owned here (and in mtc_alzheimers.yaml) instead of adrd_common so
+  # RMN Alzheimer's doesn't try to query a non-existent table.
+  - category: Demographics
+    variable: Payer Type
+    description: Insurance or payer responsible for coverage.
+    table: payer_plan_period
+    column: payer_concept_name
+    extraction_type: Structured

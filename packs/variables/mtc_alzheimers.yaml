@@ -2,22 +2,27 @@
 #
 # Cohort-specific source of truth for packs/cohorts/mtc_alzheimers.yaml.
 # Inherits every Alzheimer's-level row from alzheimers_common (which
-# in turn includes adrd_common). Does NOT currently add any cohort-
-# specific rows.
+# in turn includes adrd_common). Adds the MTC-specific Payer Type row
+# that the shared ADRD base can't carry because RMN Alzheimer's
+# doesn't ship the payer_plan_period table.
 #
-# Populate this file when:
+# Populate further when:
 #   - The MTC Alzheimer's ETL starts emitting cohort-specific tables
 #     (curated cognitive-battery abstraction, etc.)
 #   - A concept-name pattern diverges from alzheimers_common in this
 #     cohort only and a live build confirms it
-#   - A second Alzheimer's cohort (rmn_alzheimers per README §2.1)
-#     lands and we discover MTC-only abstractions baked into
-#     alzheimers_common that need to move down here
-#
-# Until then, this pack is a structural placeholder — every row comes
-# from the shared alzheimers_common / adrd_common chain.
 
 include:
   - alzheimers_common
 
-variables: []
+variables:
+  # MTC warehouses carry payer_plan_period; RMN Alzheimer's does not.
+  # Owned here (and in mtc_aat.yaml) instead of adrd_common so RMN
+  # builds don't throw "relation does not exist" warnings on every
+  # Variables-sheet generation.
+  - category: Demographics
+    variable: Payer Type
+    description: Insurance or payer responsible for coverage.
+    table: payer_plan_period
+    column: payer_concept_name
+    extraction_type: Structured
