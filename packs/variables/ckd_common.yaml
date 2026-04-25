@@ -118,7 +118,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%systolic blood pressure%' OR
       observation_concept_name ILIKE '%diastolic blood pressure%'
-    inclusion_criteria: Records of Blood Pressure (Systolic / Diastolic, numeric) measurements for the patient.
+    inclusion_criteria: Records are included for each systolic or diastolic blood-pressure measurement stored as a numeric observation for the patient. Combined-format readings (e.g. "120/80") appear under the Blood Pressure (Combined) row instead.
     extraction_type: Structured
     notes: >
       Criteria is deliberately scoped to systolic / diastolic so
@@ -140,7 +140,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%heart rate%' OR observation_concept_name ILIKE '%pulse%'
-    inclusion_criteria: Records of Heart Rate measurements for the patient.
+    inclusion_criteria: Records are included for each heart-rate or pulse measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -149,7 +149,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
-    inclusion_criteria: Records of Body Weight measurements for the patient.
+    inclusion_criteria: Records are included for each body-weight measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -171,7 +171,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%body mass index%' OR
       observation_concept_name ILIKE '%BMI%'
-    inclusion_criteria: Records of BMI (Body Mass Index) measurements for the patient.
+    inclusion_criteria: Records are included for each body-mass-index (BMI) measurement recorded for the patient.
     extraction_type: Structured
 
   # ----- Observations -------------------------------------------------
@@ -201,7 +201,7 @@ variables:
       observation_concept_name ILIKE '%smoking%' OR
       observation_concept_name ILIKE '%tobacco%' OR
       observation_concept_name ILIKE '%cigarette%'
-    inclusion_criteria: Records of Smoking Status captured as a structured observation.
+    inclusion_criteria: Records are included for each smoking-status observation (current, former, or never smoker; tobacco use; cigarette use) recorded for the patient.
     extraction_type: Structured
     notes: >
       Captures smoking status when it lives in the OMOP `observation`
@@ -250,7 +250,7 @@ variables:
       condition_concept_name ILIKE '%hypertensive renal disease%' OR
       condition_concept_name ILIKE '%diabetic nephropathy%' OR
       condition_concept_name ILIKE '%diabetes%kidney%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of CKD.
+    inclusion_criteria: Records are included for each diagnosis of chronic kidney disease, end-stage renal disease (ESRD), dependence on renal dialysis, hypertensive renal disease, or diabetic nephropathy recorded for the patient.
     extraction_type: Structured
     notes: >
       Indication-defining diagnosis for chronic kidney disease
@@ -271,7 +271,7 @@ variables:
       condition_concept_name ILIKE '%acute renal failure%' OR
       condition_concept_name ILIKE '%acute kidney injury%' OR
       condition_concept_name ILIKE '%AKI%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Acute Kidney Injury.
+    inclusion_criteria: Records are included for each diagnosis of acute kidney injury or acute renal failure (AKI) recorded for the patient.
     extraction_type: Structured
 
   # Comorbidity / staging-marker condition rows. Provenance:
@@ -290,7 +290,7 @@ variables:
       condition_concept_name ILIKE '%proteinuria%' OR
       condition_concept_name ILIKE '%albuminuria%' OR
       condition_concept_name ILIKE '%microalbuminuria%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Proteinuria / Albuminuria.
+    inclusion_criteria: Records are included for each diagnosis of proteinuria, albuminuria, or microalbuminuria recorded for the patient — the A-stage driver of CKD G/A staging.
     extraction_type: Structured
 
   - category: Diagnosis
@@ -307,7 +307,7 @@ variables:
       condition_concept_name ILIKE '%primary%hypertension%' OR
       condition_concept_name ILIKE '%hypertensive disorder%' OR
       condition_concept_name ILIKE '%benign hypertension%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Hypertension.
+    inclusion_criteria: Records are included for each diagnosis of essential or primary hypertension, hypertensive disorder, or benign hypertension recorded for the patient. Hypertensive renal disease is captured under the CKD Diagnosis row to avoid double counting.
     extraction_type: Structured
     notes: >
       Narrowed to essential / primary / hypertensive-disorder
@@ -325,7 +325,7 @@ variables:
     criteria: >
       condition_concept_name ILIKE '%vitamin D deficiency%' OR
       condition_concept_name ILIKE '%25-hydroxyvitamin D deficiency%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Vitamin D Deficiency.
+    inclusion_criteria: Records are included for each diagnosis of vitamin D deficiency (including 25-hydroxyvitamin D deficiency) recorded for the patient.
     extraction_type: Structured
 
   # ----- Labs / Biomarkers - CKD core -------------------------------
@@ -344,7 +344,7 @@ variables:
       (measurement_concept_name ILIKE '%serum%' OR
        measurement_concept_name ILIKE '%plasma%' OR
        measurement_concept_name ILIKE '%blood%')
-    inclusion_criteria: Records of Serum Creatinine measurements for the patient.
+    inclusion_criteria: Records are included for each serum, plasma, or blood creatinine measurement recorded for the patient. Urine-creatinine measurements are excluded.
     extraction_type: Structured
     notes: >
       AND-qualifier on "serum/plasma/blood" prevents urine-creatinine
@@ -363,7 +363,7 @@ variables:
       measurement_concept_name ILIKE '%eGFR%' OR
       measurement_concept_name ILIKE '%GFR%estimated%' OR
       measurement_concept_name ILIKE '%estimated GFR%'
-    inclusion_criteria: Records where an abstracted Estimated GFR (eGFR) event is captured for the patient.
+    inclusion_criteria: Records are included for each estimated glomerular filtration rate (eGFR) value abstracted for the patient — derived from serum creatinine, age, and sex; drives CKD G1–G5 staging.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): some sites store eGFR only as a derived
@@ -382,7 +382,7 @@ variables:
     criteria: >
       measurement_concept_name ILIKE '%urea nitrogen%' OR
       measurement_concept_name ILIKE '%BUN%'
-    inclusion_criteria: Records of BUN (Urea Nitrogen) measurements for the patient.
+    inclusion_criteria: Records are included for each blood-urea-nitrogen (BUN) measurement recorded for the patient.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -398,7 +398,7 @@ variables:
        measurement_concept_name ILIKE '%microalbumin%creatinine%' OR
        measurement_concept_name ILIKE '%UACR%') AND
       measurement_concept_name ILIKE '%urine%'
-    inclusion_criteria: Records of Urine Albumin / Creatinine Ratio (UACR) measurements for the patient.
+    inclusion_criteria: Records are included for each urine albumin/creatinine ratio (UACR) measurement recorded for the patient — gold-standard albuminuria marker driving CKD A1–A3 staging.
     extraction_type: Structured
     notes: >
       TODO (clinical review): some cohorts ship a urea/creatinine
@@ -418,7 +418,7 @@ variables:
       measurement_concept_name ILIKE '%hemoglobin%' AND
       (measurement_concept_name ILIKE '%blood%' OR
        measurement_concept_name ILIKE '%mass/volume%')
-    inclusion_criteria: Records of Hemoglobin measurements for the patient.
+    inclusion_criteria: Records are included for each blood hemoglobin measurement recorded for the patient. Glycated hemoglobin (HbA1c) is captured separately.
     extraction_type: Structured
     notes: >
       AND-qualifier prevents glycated-hemoglobin (HbA1c) and other
@@ -437,7 +437,7 @@ variables:
       (measurement_concept_name ILIKE '%serum%' OR
        measurement_concept_name ILIKE '%plasma%' OR
        measurement_concept_name ILIKE '%blood%')
-    inclusion_criteria: Records of Serum Potassium measurements for the patient.
+    inclusion_criteria: Records are included for each serum, plasma, or blood potassium measurement recorded for the patient.
     extraction_type: Structured
 
   # Provenance for the electrolyte panel below:
@@ -456,7 +456,7 @@ variables:
       (measurement_concept_name ILIKE '%serum%' OR
        measurement_concept_name ILIKE '%plasma%' OR
        measurement_concept_name ILIKE '%blood%')
-    inclusion_criteria: Records of Serum Calcium measurements for the patient.
+    inclusion_criteria: Records are included for each serum, plasma, or blood calcium measurement recorded for the patient. Urine calcium and calcium-channel-blocker drug mentions are excluded.
     extraction_type: Structured
     notes: >
       AND-qualifier on "serum / plasma / blood" so urine-calcium
@@ -477,7 +477,7 @@ variables:
       (measurement_concept_name ILIKE '%serum%' OR
        measurement_concept_name ILIKE '%plasma%' OR
        measurement_concept_name ILIKE '%blood%')
-    inclusion_criteria: Records of Serum Sodium measurements for the patient.
+    inclusion_criteria: Records are included for each serum, plasma, or blood sodium measurement recorded for the patient. Urine sodium and sodium-bicarbonate drug mentions are excluded.
     extraction_type: Structured
     notes: >
       AND-qualifier keeps urine sodium and "sodium bicarbonate"
@@ -497,7 +497,7 @@ variables:
       measurement_concept_name ILIKE '%HbA1c%' OR
       measurement_concept_name ILIKE '%glycated hemoglobin%' OR
       measurement_concept_name ILIKE '%A1c%'
-    inclusion_criteria: Records of HbA1c (Hemoglobin A1c) measurements for the patient.
+    inclusion_criteria: Records are included for each glycated-hemoglobin (HbA1c, A1c) measurement recorded for the patient.
     extraction_type: Structured
     notes: >
       TODO (clinical review): standard-of-care for diabetic CKD but
@@ -533,7 +533,7 @@ variables:
       procedure_concept_name ILIKE '%hemodialysis%' OR
       procedure_concept_name ILIKE '%peritoneal dialysis%' OR
       procedure_concept_name ILIKE '%dialysis%'
-    inclusion_criteria: Records of Dialysis (Hemodialysis or Peritoneal) procedures performed for the patient.
+    inclusion_criteria: Records are included for each dialysis session — hemodialysis or peritoneal — recorded for the patient.
     extraction_type: Structured
     notes: >
       Includes both modalities under one row; separate them in a
@@ -552,7 +552,7 @@ variables:
       procedure_concept_name ILIKE '%AV graft%' OR
       procedure_concept_name ILIKE '%dialysis catheter%' OR
       procedure_concept_name ILIKE '%hemodialysis access%'
-    inclusion_criteria: Records of Dialysis Vascular Access procedures performed for the patient.
+    inclusion_criteria: Records are included for each dialysis vascular-access procedure recorded for the patient — AV fistula creation, AV graft placement, or dialysis catheter insertion.
     extraction_type: Structured
 
   - category: Procedures
@@ -564,7 +564,7 @@ variables:
       procedure_concept_name ILIKE '%kidney biopsy%' OR
       procedure_concept_name ILIKE '%renal biopsy%' OR
       procedure_concept_name ILIKE '%biopsy%kidney%'
-    inclusion_criteria: Records of Kidney Biopsy procedures performed for the patient.
+    inclusion_criteria: Records are included for each renal or kidney biopsy procedure recorded for the patient.
     extraction_type: Structured
 
   # Provenance: Balboa #3 procedure (13.3%) — "End-stage renal
@@ -584,7 +584,7 @@ variables:
       procedure_concept_name ILIKE '%end stage renal disease%services%' OR
       procedure_concept_name ILIKE '%ESRD%services%' OR
       procedure_concept_name ILIKE '%ESRD%related%'
-    inclusion_criteria: Records of End-Stage Renal Disease (ESRD) Monthly Services procedures performed for the patient.
+    inclusion_criteria: Records are included for each CPT 9095X-9096X monthly ESRD-related E&M service billed for the patient. These are billing records rather than dialysis-session procedures.
     extraction_type: Structured
 
   # ----- Medications - CKD pharmacotherapy --------------------------
@@ -613,7 +613,7 @@ variables:
       drug_concept_name ILIKE '%irbesartan%' OR
       drug_concept_name ILIKE '%candesartan%' OR
       drug_concept_name ILIKE '%telmisartan%'
-    inclusion_criteria: Records of patients receiving RAAS Blockade (ACE Inhibitor / ARB).
+    inclusion_criteria: Records are included for each prescription or administration of an ACE inhibitor (lisinopril, enalapril, ramipril, benazepril, captopril) or angiotensin-receptor blocker (losartan, valsartan, olmesartan, irbesartan, candesartan, telmisartan) recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -632,7 +632,7 @@ variables:
       drug_concept_name ILIKE '%Jardiance%' OR
       drug_concept_name ILIKE '%Farxiga%' OR
       drug_concept_name ILIKE '%Invokana%'
-    inclusion_criteria: Records of patients receiving SGLT2 Inhibitor.
+    inclusion_criteria: Records are included for each SGLT2-inhibitor exposure (empagliflozin/Jardiance, dapagliflozin/Farxiga, canagliflozin/Invokana, ertugliflozin) recorded for the patient.
     extraction_type: Structured
     notes: >
       TODO (clinical review): modern standard-of-care add-on for
@@ -653,7 +653,7 @@ variables:
       drug_concept_name ILIKE '%finerenone%' OR
       drug_concept_name ILIKE '%Kerendia%' OR
       drug_concept_name ILIKE '%Aldactone%'
-    inclusion_criteria: Records of patients receiving Mineralocorticoid Receptor Antagonist (MRA).
+    inclusion_criteria: Records are included for each mineralocorticoid-receptor-antagonist exposure recorded for the patient — steroidal MRAs (spironolactone/Aldactone, eplerenone) and the non-steroidal MRA finerenone (Kerendia).
     extraction_type: Structured
     notes: >
       TODO (clinical review): not directly confirmed in the dumps.
@@ -675,7 +675,7 @@ variables:
       drug_concept_name ILIKE '%torasemide%' OR
       drug_concept_name ILIKE '%ethacrynic%' OR
       drug_concept_name ILIKE '%Lasix%'
-    inclusion_criteria: Records of patients receiving Loop Diuretic.
+    inclusion_criteria: Records are included for each loop-diuretic exposure (furosemide/Lasix, bumetanide, torsemide, ethacrynic acid) recorded for the patient.
     extraction_type: Structured
 
   # Provenance: amlodipine is the #3-4 most-frequent drug in BOTH
@@ -701,7 +701,7 @@ variables:
       drug_concept_name ILIKE '%verapamil%' OR
       drug_concept_name ILIKE '%Norvasc%' OR
       drug_concept_name ILIKE '%Procardia%'
-    inclusion_criteria: Records of patients receiving Calcium Channel Blocker.
+    inclusion_criteria: Records are included for each calcium-channel-blocker exposure recorded for the patient — dihydropyridines (amlodipine/Norvasc, nifedipine/Procardia, felodipine, nicardipine, isradipine) and non-dihydropyridines (diltiazem, verapamil).
     extraction_type: Structured
     notes: >
       CCBs are not CKD-specific but are foundational for HTN
@@ -728,7 +728,7 @@ variables:
       drug_concept_name ILIKE '%pitavastatin%' OR
       drug_concept_name ILIKE '%lovastatin%' OR
       drug_concept_name ILIKE '%fluvastatin%'
-    inclusion_criteria: Records of patients receiving Statin (HMG-CoA Reductase Inhibitor).
+    inclusion_criteria: Records are included for each statin exposure (atorvastatin, rosuvastatin, simvastatin, pravastatin, pitavastatin, lovastatin, fluvastatin) recorded for the patient.
     extraction_type: Structured
     notes: >
       TODO (clinical review): not directly confirmed in the dumps but
@@ -759,6 +759,7 @@ variables:
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_concept_name ILIKE '%sodium bicarbonate%'
+    inclusion_criteria: Records are included for each oral-sodium-bicarbonate exposure recorded for the patient — used to correct metabolic acidosis in advanced CKD.
     extraction_type: Structured
 
   - category: Medications
@@ -778,7 +779,7 @@ variables:
       drug_concept_name ILIKE '%Renvela%' OR
       drug_concept_name ILIKE '%Renagel%' OR
       drug_concept_name ILIKE '%PhosLo%'
-    inclusion_criteria: Records of patients receiving Phosphate Binder.
+    inclusion_criteria: Records are included for each phosphate-binder exposure (sevelamer/Renvela/Renagel, calcium acetate/PhosLo, lanthanum, sucroferric oxyhydroxide, ferric citrate) recorded for the patient.
     extraction_type: Structured
     notes: TODO (clinical review) — utilisation typically appears in dialysis-eligible patients only.
 
@@ -798,7 +799,7 @@ variables:
       drug_concept_name ILIKE '%Veltassa%' OR
       drug_concept_name ILIKE '%Lokelma%' OR
       drug_concept_name ILIKE '%Kayexalate%'
-    inclusion_criteria: Records of patients receiving Potassium Binder.
+    inclusion_criteria: Records are included for each potassium-binder exposure (patiromer/Veltassa, sodium zirconium cyclosilicate/Lokelma, sodium polystyrene sulfonate/Kayexalate) recorded for the patient.
     extraction_type: Structured
     notes: TODO (clinical review) — newer agents (patiromer, Lokelma) may not appear in older cohorts.
 
@@ -818,7 +819,7 @@ variables:
       drug_concept_name ILIKE '%Procrit%' OR
       drug_concept_name ILIKE '%Aranesp%' OR
       drug_concept_name ILIKE '%Mircera%'
-    inclusion_criteria: Records of patients receiving Erythropoiesis-Stimulating Agent (ESA).
+    inclusion_criteria: Records are included for each erythropoiesis-stimulating-agent exposure recorded for the patient — epoetin alfa (Epogen, Procrit), darbepoetin alfa (Aranesp), or methoxy polyethylene glycol-epoetin beta (Mircera).
     extraction_type: Structured
     notes: TODO (clinical review) — utilisation typically appears in dialysis or pre-dialysis CKD patients.
 
@@ -843,7 +844,7 @@ variables:
     criteria: >
       condition_concept_name ILIKE '%dependence on renal dialysis%' OR
       condition_concept_name ILIKE '%end stage renal disease%'
-    inclusion_criteria: Records where an abstracted Dialysis Initiation (Abstracted) event is captured for the patient.
+    inclusion_criteria: Records are included for each first-dialysis transition event abstracted for the patient — captured via a dependence-on-dialysis or end-stage-renal-disease condition row. Full algorithmic definition requires joining the first dialysis procedure with the first ESRD condition per patient.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): condition-side proxy only. A full
@@ -864,7 +865,7 @@ variables:
       condition_concept_name ILIKE '%renal transplant%' OR
       condition_concept_name ILIKE '%post-transplant%kidney%' OR
       condition_concept_name ILIKE '%transplanted kidney%'
-    inclusion_criteria: Records where an abstracted Kidney Transplant (Abstracted) event is captured for the patient.
+    inclusion_criteria: Records are included for each kidney-transplant event abstracted for the patient — kidney transplant, renal transplant, post-transplant kidney, or transplanted-kidney concepts.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): some sites record transplant only on

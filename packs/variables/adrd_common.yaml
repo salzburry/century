@@ -124,6 +124,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%heart rate%'
+    inclusion_criteria: Records are included for each heart-rate or pulse measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -132,7 +133,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%O2 saturation%' OR observation_concept_name ILIKE '%oxygen saturation%'
-    inclusion_criteria: Records of Oxygen Saturation measurements for the patient.
+    inclusion_criteria: Records are included for each peripheral oxygen saturation (O2 saturation, SpO2) measurement recorded for the patient.
     extraction_type: Structured
 
   - category: Vitals
@@ -141,7 +142,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
-    inclusion_criteria: Records of Body Weight measurements for the patient.
+    inclusion_criteria: Records are included for each body-weight measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -218,7 +219,7 @@ variables:
       condition_concept_name ILIKE '%cognitive function%' OR
       condition_concept_name ILIKE '%cognitive decline%' OR
       condition_concept_name ILIKE '%cognitive impairment%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Alzheimer's / Cognitive Impairment.
+    inclusion_criteria: Records are included for each diagnosis of Alzheimer's disease, mild cognitive impairment (MCI), amnesia, memory impairment, or dementia recorded for the patient, including all onset variants and related cognitive-function diagnoses.
     extraction_type: Structured
     # Internal: broad on purpose — many related SNOMED strings sit
     # under this umbrella. To split Alzheimer's vs MCI vs dementia-
@@ -237,7 +238,7 @@ variables:
     table: measurement
     column: value_as_concept_name
     criteria: measurement_concept_name ILIKE '%APOE%' OR measurement_concept_name ILIKE '%apolipoprotein%'
-    inclusion_criteria: Records of APOE Genotype measurements for the patient.
+    inclusion_criteria: Records are included for each APOE genotyping result (apolipoprotein E allele status) recorded for the patient.
     extraction_type: Structured
     notes: Key inclusion/exclusion variable for anti-amyloid therapy eligibility.
 
@@ -263,7 +264,7 @@ variables:
       measurement_concept_name ILIKE '%Aβ42%' OR
       measurement_concept_name ILIKE '%Aβ 42%' OR
       measurement_concept_name ILIKE '%β-amyloid 42%'
-    inclusion_criteria: Records of Amyloid-beta 42 (A-beta 42) measurements for the patient.
+    inclusion_criteria: Records are included for each amyloid-beta 42 (Aβ42) measurement in plasma or cerebrospinal fluid recorded for the patient.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -285,7 +286,7 @@ variables:
       measurement_concept_name ILIKE '%Aβ40%' OR
       measurement_concept_name ILIKE '%Aβ 40%' OR
       measurement_concept_name ILIKE '%β-amyloid 40%'
-    inclusion_criteria: Records of Amyloid-beta 40 (A-beta 40) measurements for the patient.
+    inclusion_criteria: Records are included for each amyloid-beta 40 (Aβ40) measurement recorded for the patient — used alongside Aβ42 to compute the Aβ42/Aβ40 ratio.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -294,7 +295,7 @@ variables:
     table: measurement
     column: value_as_number
     criteria: measurement_concept_name ILIKE '%GFAP%' OR measurement_concept_name ILIKE '%fibrillary acidic%' OR measurement_concept_name ILIKE '%glial fibrillary%'
-    inclusion_criteria: Records of GFAP measurements for the patient.
+    inclusion_criteria: Records are included for each glial fibrillary acidic protein (GFAP) measurement recorded for the patient — an astrocyte-activation and neuroinflammation marker.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -303,7 +304,7 @@ variables:
     table: measurement
     column: value_as_number
     criteria: measurement_concept_name ILIKE '%pTau-181%' OR measurement_concept_name ILIKE '%p-Tau 181%' OR measurement_concept_name ILIKE '%phosphorylated tau%181%'
-    inclusion_criteria: Records of p-Tau-181 measurements for the patient.
+    inclusion_criteria: Records are included for each phosphorylated-tau-181 (p-Tau-181) measurement recorded for the patient — an Alzheimer's-disease biomarker.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -312,7 +313,7 @@ variables:
     table: measurement
     column: value_as_number
     criteria: measurement_concept_name ILIKE '%pTau-217%' OR measurement_concept_name ILIKE '%p-Tau 217%' OR measurement_concept_name ILIKE '%phosphorylated tau%217%'
-    inclusion_criteria: Records of p-Tau-217 measurements for the patient.
+    inclusion_criteria: Records are included for each phosphorylated-tau-217 (p-Tau-217) measurement recorded for the patient — an Alzheimer's-disease biomarker.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -321,7 +322,7 @@ variables:
     table: measurement
     column: value_as_number
     criteria: measurement_concept_name ILIKE '%neurofilament%' OR measurement_concept_name ILIKE '%NfL%'
-    inclusion_criteria: Records of Neurofilament Light Chain (NfL) measurements for the patient.
+    inclusion_criteria: Records are included for each neurofilament light chain (NfL) measurement recorded for the patient — an axonal-injury and neurodegeneration marker.
     extraction_type: Structured
 
   # ----- Visits -------------------------------------------------------
@@ -346,7 +347,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%MoCA%' OR observation_concept_name ILIKE '%Montreal Cognitive%'
-    inclusion_criteria: Records where an abstracted MoCA event is captured for the patient.
+    inclusion_criteria: Records are included for each Montreal Cognitive Assessment (MoCA) score abstracted from the patient's clinical notes.
     extraction_type: Abstracted
     notes: Estimates based on NLP of clinical text with manual validation.
 
@@ -356,7 +357,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%MMSE%' OR observation_concept_name ILIKE '%Mini-Mental%'
-    inclusion_criteria: Records where an abstracted MMSE event is captured for the patient.
+    inclusion_criteria: Records are included for each Mini-Mental State Examination (MMSE) score abstracted from the patient's clinical notes.
     extraction_type: Abstracted
 
   - category: Outcomes
@@ -365,7 +366,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%FAQ%' OR observation_concept_name ILIKE '%Functional Activities%'
-    inclusion_criteria: Records where an abstracted FAQ event is captured for the patient.
+    inclusion_criteria: Records are included for each Functional Activities Questionnaire (FAQ) score abstracted from the patient's clinical notes.
     extraction_type: Abstracted
 
   - category: Outcomes
@@ -374,7 +375,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%CDR%' OR observation_concept_name ILIKE '%Clinical Dementia Rating%'
-    inclusion_criteria: Records where an abstracted CDR event is captured for the patient.
+    inclusion_criteria: Records are included for each Clinical Dementia Rating (CDR) score abstracted from the patient's clinical notes.
     extraction_type: Abstracted
 
   - category: Outcomes
@@ -383,7 +384,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%ADL%' OR observation_concept_name ILIKE '%activities of daily living%'
-    inclusion_criteria: Records of ADL captured as a structured observation.
+    inclusion_criteria: Records are included for each activities-of-daily-living assessment recorded for the patient.
     extraction_type: Structured
 
   - category: Outcomes
@@ -392,7 +393,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%Dementia Severity Rating%' OR observation_concept_name ILIKE '%DSRS%'
-    inclusion_criteria: Records where an abstracted Dementia Severity Rating Scale event is captured for the patient.
+    inclusion_criteria: Records are included for each Dementia Severity Rating Scale (DSRS) score abstracted from the patient's clinical notes.
     extraction_type: Abstracted
 
   - category: Outcomes
@@ -401,7 +402,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%ADAS-Cog%' OR observation_concept_name ILIKE '%ADAS Cog%'
-    inclusion_criteria: Records where an abstracted ADAS-Cog event is captured for the patient.
+    inclusion_criteria: Records are included for each ADAS-Cog (Alzheimer's Disease Assessment Scale, Cognitive subscale) score abstracted from the patient's clinical notes.
     extraction_type: Abstracted
 
   # ----- Reports ------------------------------------------------------
@@ -427,7 +428,7 @@ variables:
       document_type_concept_name ILIKE '%imaging%' OR
       document_type_concept_name ILIKE '%CT%' OR
       document_type_concept_name ILIKE '%neuroimaging%'
-    inclusion_criteria: Records of Document (MRI / PET / EEG) documents attached to the patient encounter.
+    inclusion_criteria: Records are included for each MRI, PET, EEG, CT, or other neuroimaging document attached to the patient encounter.
     extraction_type: Unstructured
 
   - category: Reports
@@ -436,5 +437,5 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%PET%scan%result%' OR observation_concept_name ILIKE '%amyloid PET%'
-    inclusion_criteria: Records where an abstracted PET Scan Result event is captured for the patient.
+    inclusion_criteria: Records are included for each amyloid-PET or other PET-scan result abstracted from the patient's clinical notes.
     extraction_type: Abstracted

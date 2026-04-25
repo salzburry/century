@@ -50,7 +50,7 @@ variables:
       condition_concept_name ILIKE '%emphysema%' OR
       condition_concept_name ILIKE '%chronic bronchitis%' OR
       condition_concept_name ILIKE '%chronic obstructive airway%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of COPD.
+    inclusion_criteria: Records are included for each diagnosis of chronic obstructive pulmonary disease, emphysema, chronic bronchitis, or chronic obstructive airway disease recorded for the patient.
     extraction_type: Structured
     notes: Indication-defining diagnosis for chronic obstructive pulmonary disease populations.
 
@@ -81,7 +81,7 @@ variables:
       drug_concept_name ILIKE '%Proventil%' OR
       drug_concept_name ILIKE '%Atrovent%' OR
       drug_concept_name ILIKE '%Combivent%'
-    inclusion_criteria: Records of patients receiving Short-acting Bronchodilator (SABA / SAMA).
+    inclusion_criteria: Records are included for each prescription or administration of a short-acting beta-agonist (albuterol, levalbuterol) or short-acting muscarinic antagonist (ipratropium) recorded for the patient — including branded inhalers (ProAir, Ventolin, Proventil, Atrovent, Combivent).
     extraction_type: Structured
 
   - category: Medications
@@ -99,7 +99,7 @@ variables:
       drug_concept_name ILIKE '%indacaterol%' OR
       drug_concept_name ILIKE '%vilanterol%' OR
       drug_concept_name ILIKE '%arformoterol%'
-    inclusion_criteria: Records of patients receiving Long-acting Beta-agonist (LABA).
+    inclusion_criteria: Records are included for each long-acting beta-agonist exposure (salmeterol, formoterol, olodaterol, indacaterol, vilanterol, arformoterol) recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -119,7 +119,7 @@ variables:
       drug_concept_name ILIKE '%Spiriva%' OR
       drug_concept_name ILIKE '%Incruse%' OR
       drug_concept_name ILIKE '%Tudorza%'
-    inclusion_criteria: Records of patients receiving Long-acting Muscarinic Antagonist (LAMA).
+    inclusion_criteria: Records are included for each long-acting muscarinic-antagonist exposure (tiotropium, umeclidinium, aclidinium, revefenacin, or inhaled glycopyrrolate) recorded for the patient. Oral and injectable glycopyrrolate (used for secretion management, not COPD) are excluded.
     extraction_type: Structured
     notes: >
       Glycopyrrolate row is scoped to inhaled formulations — the
@@ -140,7 +140,7 @@ variables:
       drug_concept_name ILIKE '%beclomethasone%' OR
       drug_concept_name ILIKE '%mometasone%' OR
       drug_concept_name ILIKE '%ciclesonide%'
-    inclusion_criteria: Records of patients receiving Inhaled Corticosteroid (ICS).
+    inclusion_criteria: Records are included for each inhaled-corticosteroid exposure (fluticasone, budesonide, beclomethasone, mometasone, ciclesonide) recorded for the patient — covers mono-ICS and ICS appearing inside combination products.
     extraction_type: Structured
 
   - category: Medications
@@ -161,7 +161,7 @@ variables:
       (drug_concept_name ILIKE '%budesonide%' AND
        drug_concept_name ILIKE '%glycopyrrolate%' AND
        drug_concept_name ILIKE '%formoterol%')
-    inclusion_criteria: Records of patients receiving COPD Triple Therapy (ICS + LABA + LAMA).
+    inclusion_criteria: Records are included for each single-inhaler triple-therapy exposure — fluticasone/umeclidinium/vilanterol (Trelegy) or budesonide/glycopyrrolate/formoterol (Breztri) — recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -177,7 +177,7 @@ variables:
       drug_concept_name ILIKE '%prednisolone%' OR
       drug_concept_name ILIKE '%methylprednisolone%' OR
       drug_concept_name ILIKE '%dexamethasone%'
-    inclusion_criteria: Records of patients receiving Systemic Corticosteroid (Oral / IV).
+    inclusion_criteria: Records are included for each systemic-corticosteroid exposure (prednisone, prednisolone, methylprednisolone, dexamethasone) recorded for the patient. Attributing a course to an asthma exacerbation requires a temporal cross-reference with the Asthma Exacerbation diagnosis row.
     extraction_type: Structured
     notes: >
       Captures all systemic steroid exposures. Attributing a course
@@ -190,7 +190,7 @@ variables:
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_concept_name ILIKE '%roflumilast%' OR drug_concept_name ILIKE '%Daliresp%'
-    inclusion_criteria: Records of patients receiving Phosphodiesterase-4 Inhibitor (Roflumilast).
+    inclusion_criteria: Records are included for each roflumilast (Daliresp) exposure recorded for the patient — an oral PDE4 inhibitor used as add-on therapy for severe chronic-bronchitis-predominant COPD.
     extraction_type: Structured
 
   # ----- Procedures — oxygen and NIV --------------------------------
@@ -207,7 +207,7 @@ variables:
       procedure_concept_name ILIKE '%home oxygen%' OR
       procedure_concept_name ILIKE '%oxygen administration%' OR
       procedure_concept_name ILIKE '%long-term oxygen%'
-    inclusion_criteria: Records of Supplemental Oxygen Therapy procedures performed for the patient.
+    inclusion_criteria: Records are included for each supplemental-oxygen procedure billed for the patient — long-term oxygen therapy, home oxygen, or in-clinic oxygen administration.
     extraction_type: Structured
     notes: >
       TODO (clinical review): DME claims often carry oxygen via HCPCS
@@ -236,7 +236,7 @@ variables:
       measurement_concept_name ILIKE '%FEV 1%' OR
       measurement_concept_name ILIKE '%forced expiratory volume%1%' OR
       measurement_concept_name ILIKE '%forced expir%1 second%'
-    inclusion_criteria: Records where an abstracted FEV1 (Forced Expiratory Volume in 1 second) event is captured for the patient.
+    inclusion_criteria: Records are included for each FEV1 (forced expiratory volume in one second) measurement abstracted from a pulmonary-function report for the patient.
     extraction_type: Abstracted
     notes: >
       Abstracted from PFT reports rather than a structured lab feed
@@ -251,7 +251,7 @@ variables:
     criteria: >
       measurement_concept_name ILIKE '%FVC%' OR
       measurement_concept_name ILIKE '%forced vital capacity%'
-    inclusion_criteria: Records where an abstracted FVC (Forced Vital Capacity) event is captured for the patient.
+    inclusion_criteria: Records are included for each FVC (forced vital capacity) measurement abstracted from a pulmonary-function report for the patient.
     extraction_type: Abstracted
 
   - category: Labs / Biomarkers
@@ -265,7 +265,7 @@ variables:
       measurement_concept_name ILIKE '%FEV1%FVC%' OR
       measurement_concept_name ILIKE '%FEV1/FVC%' OR
       measurement_concept_name ILIKE '%FEV 1%FVC%'
-    inclusion_criteria: Records where an abstracted FEV1 / FVC Ratio event is captured for the patient.
+    inclusion_criteria: Records are included for each post-bronchodilator FEV1/FVC ratio abstracted from a pulmonary-function report for the patient — ratio < 0.70 confirms COPD per GOLD criteria.
     extraction_type: Abstracted
 
   # ----- Outcomes - exacerbations and patient-reported outcomes -----
@@ -284,7 +284,7 @@ variables:
         condition_concept_name ILIKE '%bronchitis%' OR
         condition_concept_name ILIKE '%COPD%' OR
         condition_concept_name ILIKE '%emphysema%'))
-    inclusion_criteria: Records where an abstracted COPD Exacerbation (Abstracted) event is captured for the patient.
+    inclusion_criteria: Records are included for each acute COPD-exacerbation event captured by a condition-side acute-exacerbation diagnosis on an obstructive, bronchitis, COPD, or emphysema concept for the patient.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): confirm the exacerbation definition for
@@ -303,7 +303,7 @@ variables:
       observation_concept_name ILIKE '%COPD Assessment Test%' OR
       observation_concept_name ILIKE '%CAT score%' OR
       observation_concept_name ILIKE '%CAT total%'
-    inclusion_criteria: Records where an abstracted CAT Score (COPD Assessment Test) event is captured for the patient.
+    inclusion_criteria: Records are included for each COPD Assessment Test (CAT) score abstracted from the patient's clinical notes — CAT ≥ 10 typically triggers therapy escalation.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): CAT is often captured as a scanned
@@ -321,6 +321,6 @@ variables:
       observation_concept_name ILIKE '%mMRC%' OR
       observation_concept_name ILIKE '%Modified Medical Research Council%' OR
       observation_concept_name ILIKE '%MRC dyspnea%'
-    inclusion_criteria: Records where an abstracted mMRC Dyspnea Scale event is captured for the patient.
+    inclusion_criteria: Records are included for each modified Medical Research Council (mMRC) dyspnea-scale score abstracted from the patient's clinical notes — paired with CAT for GOLD A/B/E grouping.
     extraction_type: Abstracted
     notes: TODO (clinical review) — mMRC typically lives in clinical notes rather than structured observations.

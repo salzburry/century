@@ -51,7 +51,7 @@ variables:
        drug_concept_name ILIKE '%memantine%' OR
        drug_concept_name ILIKE '%Namenda%' OR
        drug_concept_name ILIKE '%Namzaric%')
-    inclusion_criteria: Records of patients receiving Symptomatic ADRD Therapy (Prescription).
+    inclusion_criteria: Records are included for each prescription of a cholinesterase inhibitor (donepezil, rivastigmine, galantamine), the NMDA antagonist memantine, or a ChEI–memantine combination (e.g. Namzaric) recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -72,7 +72,7 @@ variables:
        drug_concept_name ILIKE '%memantine%' OR
        drug_concept_name ILIKE '%Namenda%' OR
        drug_concept_name ILIKE '%Namzaric%')
-    inclusion_criteria: Records of patients receiving Symptomatic ADRD Therapy (Administration).
+    inclusion_criteria: Records are included for each administration of a cholinesterase inhibitor (donepezil, rivastigmine, galantamine), the NMDA antagonist memantine, or a ChEI–memantine combination (e.g. Namzaric) recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -93,7 +93,7 @@ variables:
       drug_concept_name ILIKE '%Razadyne%' OR
       drug_concept_name ILIKE '%Namenda%' OR
       drug_concept_name ILIKE '%Namzaric%'
-    inclusion_criteria: Records of patients receiving Symptomatic ADRD Therapy (Route).
+    inclusion_criteria: Records documenting the route of administration (oral, transdermal, etc.) for symptomatic ADRD therapy exposures.
     extraction_type: Structured
 
   # ----- Outcomes ----------------------------------------------------

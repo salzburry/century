@@ -47,7 +47,7 @@ variables:
        drug_concept_name ILIKE '%Kisunla%' OR
        drug_concept_name ILIKE '%aducanumab%' OR
        drug_concept_name ILIKE '%Aduhelm%')
-    inclusion_criteria: Records of patients receiving Anti-amyloid Therapy (Prescription).
+    inclusion_criteria: Records are included for each prescription of an anti-amyloid monoclonal antibody — lecanemab (Leqembi), donanemab (Kisunla), or aducanumab (Aduhelm) — recorded for the patient.
     extraction_type: Structured
     notes: Indication-defining therapy for anti-amyloid populations. Brand and generic names matched together because warehouses are inconsistent.
 
@@ -67,7 +67,7 @@ variables:
        drug_concept_name ILIKE '%Kisunla%' OR
        drug_concept_name ILIKE '%aducanumab%' OR
        drug_concept_name ILIKE '%Aduhelm%')
-    inclusion_criteria: Records of patients receiving Anti-amyloid Therapy (Administration).
+    inclusion_criteria: Records are included for each administration of an anti-amyloid monoclonal antibody — lecanemab (Leqembi), donanemab (Kisunla), or aducanumab (Aduhelm) — recorded for the patient.
     extraction_type: Structured
 
   - category: Infusions
@@ -143,7 +143,7 @@ variables:
       procedure_concept_name ILIKE '%aducanumab%' OR
       procedure_concept_name ILIKE '%Chemotherapy administration%' OR
       procedure_concept_name ILIKE '%intravenous infusion%'
-    inclusion_criteria: Records of Infusion Procedure Codes (candidate AAT attribution) procedures performed for the patient.
+    inclusion_criteria: Records are included for each infusion procedure that may represent anti-amyloid therapy — explicit AAT drug-name matches (lecanemab, donanemab, aducanumab) plus generic HCPCS infusion-administration codes. Confirm anti-amyloid attribution by cross-referencing the Anti-amyloid Therapy (Administration) row on patient and date.
     extraction_type: Structured
     notes: >
       Row is deliberately broad — the HCPCS administration lines will

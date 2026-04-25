@@ -52,7 +52,7 @@ variables:
       procedure_concept_name ILIKE '%former%smoker%' OR
       procedure_concept_name ILIKE '%never%smoker%' OR
       procedure_concept_name ILIKE '%smoking status%'
-    inclusion_criteria: Records of Smoking Status (Procedure-coded) procedures performed for the patient.
+    inclusion_criteria: Records are included for each smoking-status SNOMED procedure recorded for the patient — current/former/never tobacco user, current/former/never smoker, or explicit smoking-status concepts. Cessation and counselling procedures (CPT 99406-99407) are excluded.
     extraction_type: Structured
     notes: >
       Parallel to the observation-side Smoking Status row. Combined

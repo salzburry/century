@@ -40,19 +40,46 @@ def _is_compound(criteria: str | None) -> bool:
     return bool(criteria) and bool(OR_AND_RE.search(criteria))
 
 
-# Strip trailing helper words from a variable name so the rendered
-# prose doesn't repeat itself ("CKD Diagnosis" + "diagnosis of …" →
-# "diagnosis of CKD"). Conservative — only drops the literal trailing
-# word, not anything internal to the variable name.
+# Strip trailing helper words / parenthetical suffixes from a variable
+# name so the rendered prose doesn't double up the source-table hint
+# ("Spirometry / PFT (Procedure)" + "procedures performed for…" →
+# "Spirometry / PFT procedures performed for…"). Conservative — only
+# drops a single trailing parenthetical or a known suffix word, never
+# a parenthetical embedded in the middle of the name.
 _TRAILING_NOISE = ("Diagnosis",)
+_TRAILING_PARENS_NOISE = re.compile(
+    r"\s*\((?:Procedure|Document|Report|Therapy|Test)\)\s*$",
+    re.IGNORECASE,
+)
 
 
 def _clean_variable(var: str) -> str:
     var = var.strip()
+    var = _TRAILING_PARENS_NOISE.sub("", var).strip()
     for noise in _TRAILING_NOISE:
         if var.endswith(" " + noise):
             return var[: -len(noise)].rstrip()
     return var
+
+
+# `Document (X)` → `X` so the document template doesn't render
+# "Document (MRI / PET / EEG) documents". A trailing "report" or
+# "documents" word inside the parens is dropped so the rendered
+# template doesn't double up either ("PFT report" + "reports filed
+# for the patient" → "PFT reports filed for the patient"). Falls back
+# to the cleaned variable when no parenthetical content is present.
+_PAREN_CONTENT_RE = re.compile(r"\(([^)]+)\)")
+_DOC_TRAILING_RE = re.compile(
+    r"\s+(?:reports?|documents?)\b\s*$", re.IGNORECASE,
+)
+
+
+def _document_subject(var: str) -> str:
+    m = _PAREN_CONTENT_RE.search(var)
+    if m:
+        inner = m.group(1).strip()
+        return _DOC_TRAILING_RE.sub("", inner).strip()
+    return _clean_variable(var)
 
 
 def _condition_template(var: str) -> str:
@@ -60,41 +87,42 @@ def _condition_template(var: str) -> str:
 
 
 def _drug_template(var: str) -> str:
-    return f"Records of patients receiving {var}."
+    return f"Records of patients receiving {_clean_variable(var)}."
 
 
 def _measurement_template(var: str) -> str:
-    return f"Records of {var} measurements for the patient."
+    return f"Records of {_clean_variable(var)} measurements for the patient."
 
 
 def _procedure_template(var: str) -> str:
-    return f"Records of {var} procedures performed for the patient."
+    return f"Records of {_clean_variable(var)} procedures performed for the patient."
 
 
 def _document_template(var: str) -> str:
-    return f"Records of {var} documents attached to the patient encounter."
+    return f"Records of {_document_subject(var)} reports filed for the patient."
 
 
 def _infusion_template(var: str) -> str:
-    return f"Records of {var} infusion episodes for the patient."
+    return f"Records of {_clean_variable(var)} infusion episodes for the patient."
 
 
 def _note_template(var: str) -> str:
-    return f"Records where the clinical note describes {var}."
+    return f"Records where the clinical note describes {_clean_variable(var)}."
 
 
 def _abstracted_template(var: str) -> str:
-    return f"Records where an abstracted {var} event is captured for the patient."
+    return f"Records where an abstracted {_clean_variable(var)} event is captured for the patient."
 
 
 def _observation_template(column: str, var: str) -> str:
+    cleaned = _clean_variable(var)
     if column == "value_as_concept_name":
-        return f"Records of {var} captured as a structured observation."
+        return f"Records of {cleaned} captured as a structured observation."
     if column == "value_as_number":
-        return f"Records of {var} measurements for the patient."
+        return f"Records of {cleaned} measurements for the patient."
     if column == "value_as_string":
-        return f"Records of {var} captured as observation text."
-    return f"Records of {var} observations for the patient."
+        return f"Records of {cleaned} captured as observation text."
+    return f"Records of {cleaned} observations for the patient."
 
 
 def _template_for(row: dict) -> str:
@@ -128,7 +156,16 @@ def _template_for(row: dict) -> str:
 # `--rewrite` is set, any inclusion_criteria matching one of these is
 # treated as overwritable; everything else (hand-written prose) is
 # preserved.
+#
+# Two generations of templates listed here:
+#   1. Original "matches the X / matches a Y" SQL-translation shapes
+#      (the regression that triggered the rewrite).
+#   2. Current "Records of … for the patient" shapes — listed so a
+#      future template tweak can re-seed cleanly without losing
+#      hand-written prose. Hand-written rows are recognised by NOT
+#      matching any of these.
 _LEGACY_PATTERNS: list[re.Pattern[str]] = [
+    # Generation 1 — SQL translation.
     re.compile(r"^Records where the diagnosis concept matches the .+ family\.$"),
     re.compile(r"^Records where the medication ingredient matches an? .+ drug\.$"),
     re.compile(r"^Records where the measurement is for .+\.$"),
@@ -140,6 +177,21 @@ _LEGACY_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^Records of .+ infusions for the patient\.$"),
     re.compile(r"^Records where the note text describes .+\.$"),
     re.compile(r"^Records where the abstracted concept captures .+ for the patient\.$"),
+    # Generation 2 — current "Records of …" shapes.
+    re.compile(r"^Records of patients with a recorded diagnosis of .+\.$"),
+    re.compile(r"^Records of patients receiving .+\.$"),
+    re.compile(r"^Records of .+ measurements for the patient\.$"),
+    re.compile(r"^Records of .+ procedures performed for the patient\.$"),
+    re.compile(r"^Records of .+ documents attached to the patient encounter\.$"),
+    re.compile(r"^Records of .+ reports filed for the patient\.$"),
+    re.compile(r"^Records of .+ infusion episodes for the patient\.$"),
+    re.compile(r"^Records of .+ captured as a structured observation\.$"),
+    re.compile(r"^Records of .+ captured as observation text\.$"),
+    re.compile(r"^Records of .+ observations for the patient\.$"),
+    re.compile(r"^Records where the clinical note describes .+\.$"),
+    re.compile(
+        r"^Records where an abstracted .+ event is captured for the patient\.$"
+    ),
 ]
 
 
