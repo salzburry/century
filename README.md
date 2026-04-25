@@ -130,14 +130,26 @@ cohort:
 
 ### 4.1 Workbook shape
 
-Every workbook ships the same four sheets:
+Every workbook ships the same four sheets. Layout follows the
+Flatiron-style data-dictionary convention — clinical Description and
+Inclusion Criteria lead each table; observed-data signals follow.
 
-| Sheet | Rows | Purpose |
+| Sheet | Rows | Columns |
 |---|---|---|
 | Summary | ~17 key/value | provider, disease, patient_count, table_count, column_count, date coverage, years_of_data, generated_at, git_sha, schema_snapshot_digest |
-| Tables | one per warehouse table | row_count, column_count, patients_in_table, purpose (from `packs/table_descriptions.yaml`) |
-| Columns | one per physical column | Category, Description, Data Type, Values, Distribution, Median (IQR), Completeness, % Patient, Extraction Type, PII, Notes |
-| Variables | one per clinical concept in the cohort's variable pack | Category, Variable, Description, Table(s), Column(s), Criteria, Values, Distribution, Median (IQR), Completeness, Implemented, % Patient, Extraction Type, Notes |
+| Tables | one per warehouse table | Table, Category, Description, Inclusion Criteria, Data Source, Source Table, Rows, Columns, Patients |
+| Columns | one per physical column | Category, Table, Column, Description, Field Type, Nullable, Example, Coding Schema, Values, Distribution, Median (IQR), Completeness, % Patient, Data Source, PII, Notes |
+| Variables | one per clinical concept in the cohort's variable pack | Category, Variable, Description, Inclusion Criteria, Table(s), Column(s), [Criteria — technical only], Field Type, Example, Coding Schema, Values, Distribution, Median (IQR), Completeness, Implemented, % Patient, Data Source, Notes |
+
+`Data Source` uses the Flatiron typology — Normalized / Derived /
+Abstracted / NLP / Enhanced — derived from each row's
+`extraction_type` plus an allowlist of curated tables in
+`build_dictionary.derive_data_source`. Pack rows can override per-row
+with an explicit `data_source:` key.
+
+`Inclusion Criteria` (prose) renders for every audience; the raw SQL
+`Criteria` column is technical-only. See `packs/STYLE.md` for the
+prose-quality bar each customer-visible string must meet.
 
 All fields populate from the canonical `CohortModel` — nothing is
 hardcoded-empty any more.

@@ -1,88 +1,139 @@
-# Table -> purpose descriptions for Page 2 (Tables sheet).
-# OMOP Common Data Model v5.4 terminology; cohort-specific tables
-# (cohort_patients, infusion, standard_profile_data_model,
-# dv_tokenized_profile_data) described locally.
+# Table-level metadata for Page 2 (Tables sheet).
+#
+# Each entry carries Flatiron-style fields — `description` (clinical
+# prose only — no lineage), `inclusion_criteria` (which rows make it
+# in, in business prose), `data_source` (Normalized / Derived /
+# Abstracted / NLP / Enhanced), and `source_table` (the upstream
+# OMOP / curated table this maps to).
+#
+# Backward compatibility: a bare-string entry still works (it
+# becomes the `description` and the other fields default to empty).
 
 tables:
-  cohort_patients: >
-    Roster of person_ids that qualify for the cohort. Single source
-    of truth for cohort membership; every other table is effectively
-    joined through this set.
+  cohort_patients:
+    description: Roster of patients who qualify for the cohort.
+    inclusion_criteria: >
+      One record per patient enrolled in the cohort. Acts as the
+      single source of truth for cohort membership.
+    data_source: Derived
+    source_table: Cohort-local
 
-  person: >
-    One row per unique patient. Demographics: birth year, sex, race,
-    ethnicity, location. OMOP PERSON table.
+  person:
+    description: One record per unique patient. Carries demographics — birth year, sex, race, ethnicity, location.
+    inclusion_criteria: One record is included for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP PERSON
 
-  location: >
-    Patient address / ZIP / region lookup referenced from person.
-    OMOP LOCATION table.
+  location:
+    description: Patient address, ZIP code, and region lookup referenced from the person record.
+    inclusion_criteria: One record is included for each location referenced by a patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP LOCATION
 
-  payer_plan_period: >
-    Insurance coverage windows per patient. OMOP
-    PAYER_PLAN_PERIOD table.
+  payer_plan_period:
+    description: Insurance and payer coverage windows for the patient.
+    inclusion_criteria: One record is included for each coverage window recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP PAYER_PLAN_PERIOD
 
-  condition_occurrence: >
-    Medical diagnoses recorded for the patient (ICD / SNOMED mapped
-    to OMOP concepts). OMOP CONDITION_OCCURRENCE table.
+  condition_occurrence:
+    description: Medical diagnoses recorded for the patient (ICD or SNOMED concepts).
+    inclusion_criteria: One record is included for each diagnosis recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP CONDITION_OCCURRENCE
 
-  drug_exposure: >
-    Medications prescribed or administered. OMOP DRUG_EXPOSURE table.
+  drug_exposure:
+    description: Medications prescribed or administered to the patient.
+    inclusion_criteria: One record is included for each medication exposure recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP DRUG_EXPOSURE
 
-  infusion: >
-    Cohort-local table for infusion episodes. Parallel to
-    drug_exposure; isolates anti-amyloid / infusion-therapy events.
+  infusion:
+    description: Infusion episodes administered to the patient. Isolates anti-amyloid and other infusion therapies.
+    inclusion_criteria: One record is included for each infusion episode recorded for each patient in the cohort.
+    data_source: Enhanced
+    source_table: Cohort-local
 
-  procedure_occurrence: >
-    Clinical procedures performed. OMOP PROCEDURE_OCCURRENCE table.
+  procedure_occurrence:
+    description: Clinical procedures performed for the patient.
+    inclusion_criteria: One record is included for each procedure recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP PROCEDURE_OCCURRENCE
 
-  measurement: >
-    Quantitative and categorical lab results and vitals. OMOP
-    MEASUREMENT table.
+  measurement:
+    description: Quantitative and categorical laboratory results and vital signs.
+    inclusion_criteria: One record is included for each measurement recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP MEASUREMENT
 
-  observation: >
-    Structured observations that don't fit the measurement model —
-    assessments, findings, patient-reported items. OMOP
-    OBSERVATION table.
+  observation:
+    description: Structured observations that don't fit the measurement model — assessments, findings, and patient-reported items.
+    inclusion_criteria: One record is included for each observation recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP OBSERVATION
 
-  visit_occurrence: >
-    Healthcare encounters (office visits, telehealth, infusion
-    appointments, diagnostic visits). OMOP VISIT_OCCURRENCE table.
+  visit_occurrence:
+    description: Healthcare encounters such as office visits, telehealth, infusion appointments, and diagnostic visits.
+    inclusion_criteria: One record is included for each visit recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP VISIT_OCCURRENCE
 
-  visit_detail: >
-    Finer-grained visit components (ICU stays, ED visits within an
-    admission, etc.). OMOP VISIT_DETAIL table.
+  visit_detail:
+    description: Finer-grained visit components such as ICU stays and emergency-department visits within a longer admission.
+    inclusion_criteria: One record is included for each visit-detail segment recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP VISIT_DETAIL
 
-  note: >
-    Clinical notes associated with encounters. OMOP NOTE table.
+  note:
+    description: Free-text clinical notes associated with patient encounters.
+    inclusion_criteria: One record is included for each clinical note recorded for each patient in the cohort.
+    data_source: Normalized
+    source_table: OMOP NOTE
 
-  note_nlp: >
-    NLP-extracted concepts from free-text notes. OMOP NOTE_NLP table.
+  note_nlp:
+    description: Concepts extracted from free-text clinical notes by natural-language processing.
+    inclusion_criteria: One record is included for each NLP-extracted concept identified within a clinical note.
+    data_source: NLP
+    source_table: OMOP NOTE_NLP
 
-  document: >
-    Scanned reports and attached documents (MRI, PET, EEG,
-    clinical summaries).
+  document:
+    description: Scanned reports and attached documents — MRI, PET, EEG, and clinical summaries.
+    inclusion_criteria: One record is included for each document attached to a patient encounter.
+    data_source: Normalized
+    source_table: Cohort-local
 
-  death: >
-    Mortality records for cohort patients. OMOP DEATH table.
+  death:
+    description: Mortality records for patients in the cohort.
+    inclusion_criteria: One record is included for each patient with a recorded death.
+    data_source: Normalized
+    source_table: OMOP DEATH
 
-  provider: >
-    Clinician / provider directory. OMOP PROVIDER table.
+  provider:
+    description: Clinician and provider directory referenced from clinical events.
+    inclusion_criteria: One record is included for each provider referenced by a clinical record in the cohort.
+    data_source: Normalized
+    source_table: OMOP PROVIDER
 
-  care_site: >
-    Care-site (clinic / hospital) directory. OMOP CARE_SITE table.
+  care_site:
+    description: Care-site directory — clinics, hospitals, and other locations of service.
+    inclusion_criteria: One record is included for each care-site referenced by a clinical record in the cohort.
+    data_source: Normalized
+    source_table: OMOP CARE_SITE
 
-  eosinophil_standardized: >
-    Cohort-local abstraction table holding standardised absolute
-    blood eosinophil counts produced by the Nimbus curated pipeline.
-    Parallel to measurement rows; surfaced on Page 4 as "Blood
-    Eosinophils (Standardized, Nimbus curated)". Present only in
-    nimbus_copd_curated at time of writing.
+  eosinophil_standardized:
+    description: Curated abstraction table of standardised absolute blood eosinophil counts.
+    inclusion_criteria: One record is included for each standardised eosinophil measurement available for each patient in the cohort.
+    data_source: Enhanced
+    source_table: Cohort-local
 
-  standard_profile_data_model: >
-    Flat per-patient profile export — name, DOB, address, NPIs,
-    fact-of-death, result codes. Carries PII; redacted in sales /
-    pharma audiences.
+  standard_profile_data_model:
+    description: Flat per-patient profile export — name, date of birth, address, NPIs, fact of death, and result codes.
+    inclusion_criteria: One record is included for each patient profile in the cohort. Contains PII; restricted to authorised technical reviewers.
+    data_source: Enhanced
+    source_table: Cohort-local
 
-  dv_tokenized_profile_data: >
-    Tokenised / vectorised patient profile records used as features
-    for downstream models. Derived data, not source clinical truth.
+  dv_tokenized_profile_data:
+    description: Tokenised and vectorised patient profile records used as features for downstream models.
+    inclusion_criteria: One record is included for each tokenised patient profile available in the cohort.
+    data_source: Derived
+    source_table: Cohort-local

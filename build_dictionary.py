@@ -106,13 +106,24 @@ class CohortSummary:
 
 @dataclass
 class TableRow:
-    """One row on Page 2 (Tables)."""
+    """One row on Page 2 (Tables).
+
+    `description` / `inclusion_criteria` / `data_source` / `source_table`
+    are the Flatiron-style metadata the workbook leads with. `purpose`
+    is retained as a backward-compatible alias for `description` so any
+    older consumer of the model.to_dict() output keeps working; new code
+    should read `description`.
+    """
     table_name: str
     category: str
     row_count: int
     column_count: int
     patient_count_in_table: int | None
-    purpose: str
+    purpose: str            # Back-compat alias; mirrors `description`.
+    description: str = ""
+    inclusion_criteria: str = ""
+    data_source: str = ""
+    source_table: str = ""
 
 
 @dataclass
@@ -132,21 +143,26 @@ class ColumnRow:
     extraction_type: str
     pii: bool
     notes: str
+    nullable: str = ""      # "Yes" / "No"
+    example: str = ""       # Single representative value.
+    coding_schema: str = "" # Closed value set, when known.
+    data_source: str = ""   # Normalized / Derived / Abstracted / NLP / Enhanced.
 
 
 @dataclass
 class VariableRow:
     """One row on Page 4 (Variables). Driven by packs/variables/<disease>.yaml.
 
-    Column order matches the earlier Century workbook:
+    Column order matches the earlier Century workbook plus the
+    Flatiron-style additions:
 
-        Category | Variable | Description | Table | Column(s) | Criteria |
+        Category | Variable | Description | Inclusion Criteria | Table |
+        Column(s) | Criteria | Field Type | Example | Coding Schema |
         Values | Distribution | Median (IQR) | Completeness |
-        Implemented | % Patient | Extraction Type | Notes
+        Implemented | % Patient | Data Source | Notes
 
-    Median (IQR) and Completeness are populated for numeric columns
-    within the criteria-filtered subset; Implemented / % Patient remain
-    the page's coverage metrics.
+    `criteria` (raw SQL) renders only for the technical audience; every
+    other audience sees `inclusion_criteria` (prose) instead.
     """
     category: str
     variable: str
@@ -163,6 +179,11 @@ class VariableRow:
     extraction_type: str
     notes: str
     pii: bool = False       # Audience filter drops these for sales/pharma.
+    inclusion_criteria: str = ""
+    field_type: str = ""
+    example: str = ""
+    coding_schema: str = ""
+    data_source: str = ""
 
 
 @dataclass
@@ -249,8 +270,42 @@ def load_categories_map() -> dict[str, str]:
     return out
 
 
-def load_table_descriptions() -> dict[str, str]:
-    return _yaml_load(PACKS_DIR / "table_descriptions.yaml").get("tables", {}) or {}
+def load_table_descriptions() -> dict[str, dict[str, str]]:
+    """Load packs/table_descriptions.yaml.
+
+    Accepts two YAML shapes for backward compatibility:
+
+      - Legacy:  `tables: { foo: "<one-line description>" }`
+      - Current: `tables: { foo: { description: "...",
+                                    inclusion_criteria: "...",
+                                    data_source: "Normalized",
+                                    source_table: "OMOP CONDITION_OCCURRENCE" } }`
+
+    Always returns a `{table_name: {field: value}}` map. Unknown keys
+    are preserved unchanged so future additions don't require a code
+    change here.
+    """
+    raw = _yaml_load(PACKS_DIR / "table_descriptions.yaml").get("tables", {}) or {}
+    out: dict[str, dict[str, str]] = {}
+    for table, payload in raw.items():
+        if isinstance(payload, str):
+            out[table] = {
+                "description": payload.strip(),
+                "inclusion_criteria": "",
+                "data_source": "",
+                "source_table": "",
+            }
+        elif isinstance(payload, dict):
+            out[table] = {
+                "description": (payload.get("description") or "").strip(),
+                "inclusion_criteria": (payload.get("inclusion_criteria") or "").strip(),
+                "data_source": (payload.get("data_source") or "").strip(),
+                "source_table": (payload.get("source_table") or "").strip(),
+            }
+        else:
+            out[table] = {"description": "", "inclusion_criteria": "",
+                          "data_source": "", "source_table": ""}
+    return out
 
 
 def load_column_descriptions() -> dict[str, str]:
@@ -299,6 +354,116 @@ _DATE_COVERAGE_CANDIDATES = [
     ("observation", "observation_date"),
     ("procedure_occurrence", "procedure_date"),
 ]
+
+
+# --------------------------------------------------------------------------- #
+# Data Source mapping (Flatiron-style typology)
+#
+# Three-way classification (Normalized / Derived / Abstracted / NLP /
+# Enhanced) is more informative for customers than the binary
+# Structured / Unstructured we used to render. Mapping rules:
+#
+#   - explicit `data_source:` on the pack row wins;
+#   - else the table name selects Enhanced / Derived for known
+#     curated / derived abstraction tables;
+#   - else extraction_type maps as below.
+#
+# Curated / derived tables are listed explicitly so a generic
+# `extraction_type: Structured` row pointing at a curated abstraction
+# still surfaces as Enhanced. Adding a new curated table is a one-line
+# entry here.
+# --------------------------------------------------------------------------- #
+
+
+_ENHANCED_TABLES: set[str] = {
+    # Cohort-curated abstraction tables seen in the live dumps.
+    "eosinophil_standardized",
+    "standard_profile_data_model",
+    "dv_tokenized_profile_data",
+    "infusion",
+}
+
+_DERIVED_TABLES: set[str] = {
+    # Tables computed from upstream OMOP rather than ingested directly.
+    "cohort_patients",
+}
+
+_EXTRACTION_TO_DATA_SOURCE: dict[str, str] = {
+    "structured":   "Normalized",
+    "unstructured": "NLP",
+    "abstracted":   "Abstracted",
+}
+
+
+def derive_data_source(extraction_type: str, table: str = "",
+                       explicit: str = "") -> str:
+    """Map a row's extraction_type + table to a Flatiron-style classification.
+
+    `explicit` is the pack row's `data_source:` key when set; it wins
+    unconditionally so authors can override on a per-row basis.
+    """
+    if explicit:
+        return explicit.strip()
+    if table in _ENHANCED_TABLES:
+        return "Enhanced"
+    if table in _DERIVED_TABLES:
+        return "Derived"
+    return _EXTRACTION_TO_DATA_SOURCE.get(
+        (extraction_type or "").strip().lower(), "Normalized"
+    )
+
+
+# Pattern → prose lookup for the most common ILIKE shapes our packs use.
+# Used as a fallback when a row has a `criteria:` (raw SQL) but no
+# explicit `inclusion_criteria:` (prose). Anything not matched here
+# returns empty so the row encourages an explicit prose override
+# rather than auto-translated SQL.
+_FRIENDLY_CRITERIA_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^(\w+)_concept_name\s+ILIKE\s+'%([^%']+)%'\s*$",
+                re.IGNORECASE),
+     "Records where the {0} concept matches {1!r}."),
+]
+
+
+def derive_inclusion_criteria(criteria_sql: str, explicit: str = "") -> str:
+    """Translate simple SQL criteria into a prose sentence.
+
+    Returns `explicit` when set, the friendly translation when the SQL
+    matches a known shape, or empty string otherwise. Multi-clause
+    criteria (containing AND / OR with parentheses) intentionally do
+    NOT auto-translate — the pack author should add an explicit
+    `inclusion_criteria:` to avoid false confidence in mechanical
+    rewording.
+    """
+    if explicit:
+        return explicit.strip()
+    sql = (criteria_sql or "").strip()
+    if not sql:
+        return ""
+    if " OR " in sql.upper() or " AND " in sql.upper():
+        return ""
+    for pat, template in _FRIENDLY_CRITERIA_PATTERNS:
+        m = pat.match(sql)
+        if m:
+            return template.format(*m.groups())
+    return ""
+
+
+def _example_from_column_info(ci: "ColumnInfo") -> str:
+    """Single representative value for the Example column.
+
+    Prefers categorical top-1 (matches what most customers want to
+    see). Falls back to the Min from a continuous / date numeric
+    summary. Returns empty when the column has no observed values.
+    """
+    if ci.top_values:
+        first = ci.top_values[0][0]
+        return first if first else ""
+    summary = ci.numeric_summary or ""
+    m = re.search(r"Min:\s*([^,;]+)", summary)
+    if m:
+        return m.group(1).strip()
+    return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -706,6 +871,29 @@ def resolve_variables(
                 except Exception:
                     conn.rollback()
 
+        # Flatiron-style additions. All optional pack keys; safe defaults
+        # so older packs without them keep rendering unchanged.
+        explicit_inclusion = (v.get("inclusion_criteria") or "").strip()
+        explicit_data_source = (v.get("data_source") or "").strip()
+        coding_schema = (v.get("coding_schema") or "").strip()
+
+        # Field Type comes from the underlying column's data_type when
+        # known; an `expression:`-backed row falls back to the pack's
+        # column type because the expression's output type isn't in
+        # information_schema.
+        field_type = column_types.get((table, column), "")
+
+        # Single representative example value. Prefer the first
+        # observed top-value; if categorical sampling didn't fire (date
+        # / continuous), parse Min from the distribution cell.
+        example = ""
+        if values_cell:
+            example = values_cell.split(",")[0].strip()
+        elif distribution_cell:
+            m = re.search(r"Min:\s*([^,;]+)", distribution_cell)
+            if m:
+                example = m.group(1).strip()
+
         out.append(VariableRow(
             category=category,
             variable=variable_name,
@@ -722,6 +910,11 @@ def resolve_variables(
             extraction_type=extraction,
             notes=notes,
             pii=is_pii(table, column, pii_pairs, pii_patterns),
+            inclusion_criteria=derive_inclusion_criteria(criteria, explicit_inclusion),
+            field_type=field_type,
+            example=example,
+            coding_schema=coding_schema,
+            data_source=derive_data_source(extraction, table, explicit_data_source),
         ))
     return out
 
@@ -821,27 +1014,38 @@ def build_model(
         patients_per_table: dict[str, int | None] = {}
         tables_with_person_id: set[str] = set()
         total_patients: int | None = None
-        variables_rows: list[VariableRow] = [
-            VariableRow(
+        variables_rows = []
+        for v in variables_pack:
+            extraction = v.get("extraction_type", "Structured")
+            table = v.get("table", "")
+            criteria = (v.get("criteria") or "").strip()
+            variables_rows.append(VariableRow(
                 category=v.get("category", ""),
                 variable=v.get("variable", v.get("column", "")),
                 description=v.get("description", ""),
-                table=v.get("table", ""),
+                table=table,
                 column=v.get("column", ""),
-                criteria=(v.get("criteria") or "").strip(),
+                criteria=criteria,
                 values="", distribution="",
                 median_iqr="",
                 completeness_pct=None,
                 implemented="No",
                 patient_pct=None,
-                extraction_type=v.get("extraction_type", "Structured"),
+                extraction_type=extraction,
                 notes=v.get("notes", ""),
                 pii=is_pii(
-                    v.get("table", ""), v.get("column", ""),
-                    pii_pairs, pii_patterns,
+                    table, v.get("column", ""), pii_pairs, pii_patterns,
                 ),
-            ) for v in variables_pack
-        ]
+                inclusion_criteria=derive_inclusion_criteria(
+                    criteria, (v.get("inclusion_criteria") or "").strip(),
+                ),
+                field_type="",
+                example="",
+                coding_schema=(v.get("coding_schema") or "").strip(),
+                data_source=derive_data_source(
+                    extraction, table, (v.get("data_source") or "").strip(),
+                ),
+            ))
     else:
         total_patients = fetch_person_count(conn, schema)
         columns_raw, tables_raw, patients_per_table, tables_with_person_id = \
@@ -865,6 +1069,12 @@ def build_model(
     def _category_for(table: str) -> str:
         return override_map.get(table) or categories_map.get(table) or "Other"
 
+    def _table_meta(name: str) -> dict[str, str]:
+        return table_descriptions.get(name) or {
+            "description": "", "inclusion_criteria": "",
+            "data_source": "", "source_table": "",
+        }
+
     table_rows = [
         TableRow(
             table_name=t.name,
@@ -872,7 +1082,13 @@ def build_model(
             row_count=t.row_count,
             column_count=t.column_count,
             patient_count_in_table=patients_per_table.get(t.name),
-            purpose=table_descriptions.get(t.name, ""),
+            # `purpose` mirrors `description` for back-compat with
+            # consumers that read model.to_dict().
+            purpose=_table_meta(t.name)["description"],
+            description=_table_meta(t.name)["description"],
+            inclusion_criteria=_table_meta(t.name)["inclusion_criteria"],
+            data_source=_table_meta(t.name)["data_source"],
+            source_table=_table_meta(t.name)["source_table"],
         )
         for t in tables_raw
     ]
@@ -911,6 +1127,10 @@ def build_model(
             extraction_type=extraction,
             pii=pii,
             notes="",
+            nullable="Yes" if ci.is_nullable else "No",
+            example=_example_from_column_info(ci),
+            coding_schema="",
+            data_source=derive_data_source(extraction, ci.table),
         ))
 
     # Page 1 — Summary
@@ -1019,14 +1239,20 @@ def write_xlsx(model: CohortModel, out_path: Path,
 
     tables_df = pd.DataFrame(
         [{
-            "Table":         t.table_name,
-            "Category":      t.category,
-            "Rows":          t.row_count,
-            "Columns":       t.column_count,
-            "Patients":      t.patient_count_in_table if t.patient_count_in_table is not None else "—",
-            "Purpose":       t.purpose,
+            "Table":              t.table_name,
+            "Category":           t.category,
+            "Description":        t.description or t.purpose,
+            "Inclusion Criteria": t.inclusion_criteria,
+            "Data Source":        t.data_source,
+            "Source Table":       t.source_table,
+            "Rows":               t.row_count,
+            "Columns":            t.column_count,
+            "Patients":           t.patient_count_in_table if t.patient_count_in_table is not None else "—",
         } for t in model.tables],
-        columns=["Table", "Category", "Rows", "Columns", "Patients", "Purpose"],
+        columns=[
+            "Table", "Category", "Description", "Inclusion Criteria",
+            "Data Source", "Source Table", "Rows", "Columns", "Patients",
+        ],
     )
 
     columns_df = pd.DataFrame(
@@ -1035,46 +1261,71 @@ def write_xlsx(model: CohortModel, out_path: Path,
             "Table(s)":        c.table,
             "Column":          c.column,
             "Description":     c.description,
-            "Data Type":       c.data_type,
+            "Field Type":      c.data_type,
+            "Nullable":        c.nullable,
+            "Example":         c.example,
+            "Coding Schema":   c.coding_schema,
             "Values":          c.values,
             "Distribution":    c.distribution,
             "Median (IQR)":    c.median_iqr,
             "Completeness":    f"{c.completeness_pct:.1f}%",
             "% Patient":       _fmt_pct(c.patient_pct),
-            "Extraction Type": c.extraction_type,
+            "Data Source":     c.data_source,
             "PII":             "Yes" if c.pii else "",
             "Notes":           c.notes,
         } for c in model.columns],
         columns=[
-            "Category", "Table(s)", "Column", "Description", "Data Type",
-            "Values", "Distribution", "Median (IQR)",
-            "Completeness", "% Patient", "Extraction Type", "PII", "Notes",
+            "Category", "Table(s)", "Column", "Description", "Field Type",
+            "Nullable", "Example", "Coding Schema", "Values", "Distribution",
+            "Median (IQR)", "Completeness", "% Patient", "Data Source",
+            "PII", "Notes",
         ],
     )
 
-    variables_df = pd.DataFrame(
-        [{
-            "Category":        v.category,
-            "Variable":        v.variable,
-            "Description":     v.description,
-            "Table(s)":        v.table,
-            "Column(s)":       v.column,
-            "Criteria":        v.criteria,
-            "Values":          v.values,
-            "Distribution":    v.distribution,
-            "Median (IQR)":    v.median_iqr,
-            "Completeness":    _fmt_pct(v.completeness_pct),
-            "Implemented":     v.implemented,
-            "% Patient":       _fmt_pct(v.patient_pct),
-            "Extraction Type": v.extraction_type,
-            "Notes":           v.notes,
-        } for v in model.variables],
-        columns=[
-            "Category", "Variable", "Description", "Table(s)", "Column(s)", "Criteria",
-            "Values", "Distribution", "Median (IQR)", "Completeness",
-            "Implemented", "% Patient", "Extraction Type", "Notes",
-        ],
-    )
+    # Variables sheet column set is audience-dependent: only the
+    # technical audience sees the raw SQL `Criteria` column; sales /
+    # pharma get the prose `Inclusion Criteria` only. Columns are
+    # built up in display order so the header list stays one source of
+    # truth for both pandas and the styling pass.
+    variables_records: list[dict[str, Any]] = []
+    for v in model.variables:
+        record: dict[str, Any] = {
+            "Category":           v.category,
+            "Variable":           v.variable,
+            "Description":        v.description,
+            "Inclusion Criteria": v.inclusion_criteria,
+            "Table(s)":           v.table,
+            "Column(s)":          v.column,
+        }
+        if audience == "technical":
+            record["Criteria"] = v.criteria
+        record.update({
+            "Field Type":     v.field_type,
+            "Example":        v.example,
+            "Coding Schema":  v.coding_schema,
+            "Values":         v.values,
+            "Distribution":   v.distribution,
+            "Median (IQR)":   v.median_iqr,
+            "Completeness":   _fmt_pct(v.completeness_pct),
+            "Implemented":    v.implemented,
+            "% Patient":      _fmt_pct(v.patient_pct),
+            "Data Source":    v.data_source,
+            "Notes":          v.notes,
+        })
+        variables_records.append(record)
+
+    variables_columns = [
+        "Category", "Variable", "Description", "Inclusion Criteria",
+        "Table(s)", "Column(s)",
+    ]
+    if audience == "technical":
+        variables_columns.append("Criteria")
+    variables_columns.extend([
+        "Field Type", "Example", "Coding Schema", "Values", "Distribution",
+        "Median (IQR)", "Completeness", "Implemented", "% Patient",
+        "Data Source", "Notes",
+    ])
+    variables_df = pd.DataFrame(variables_records, columns=variables_columns)
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         summary_df.to_excel(writer,   sheet_name="Summary",   index=False)
@@ -1095,18 +1346,22 @@ def write_xlsx(model: CohortModel, out_path: Path,
 
 
 # Tuned widths per header name. Narrow for short flag-style columns
-# (Implemented, % Patient, Extraction Type, PII) so they don't eat
-# horizontal space; wide for free-text columns (Description, Criteria,
-# Distribution, Notes) that carry the most reviewer content. Any
-# header not listed falls back to the old auto-size-with-cap rule.
+# (Implemented, % Patient, Data Source, PII, Nullable) so they don't
+# eat horizontal space; wide for free-text columns (Description,
+# Inclusion Criteria, Criteria, Distribution, Coding Schema, Notes)
+# that carry the most reviewer content. Any header not listed falls
+# back to the old auto-size-with-cap rule.
 _COLUMN_WIDTH_OVERRIDES: dict[str, int] = {
     # Narrow
     "Implemented":      12,
     "% Patient":        11,
     "Completeness":     13,
     "PII":               6,
+    "Nullable":          9,
     "Extraction Type":  15,
+    "Data Source":      14,
     "Data Type":        14,
+    "Field Type":       14,
     "Rows":             10,
     "Columns":          10,
     "Patients":         10,
@@ -1118,11 +1373,15 @@ _COLUMN_WIDTH_OVERRIDES: dict[str, int] = {
     "Column(s)":        24,
     "Variable":         30,
     "Median (IQR)":     26,
+    "Example":          22,
+    "Source Table":     26,
     # Wide
     "Values":           40,
     "Distribution":     50,
     "Description":      55,
     "Criteria":         55,
+    "Inclusion Criteria": 55,
+    "Coding Schema":    50,
     "Notes":            45,
     "Purpose":          55,
 }
@@ -1233,23 +1492,36 @@ def write_html(model: CohortModel, out_path: Path,
     ])
 
     tables_rows = [[
-        t.table_name, t.category, f"{t.row_count:,}", t.column_count,
+        t.table_name, t.category,
+        t.description or t.purpose, t.inclusion_criteria,
+        t.data_source, t.source_table,
+        f"{t.row_count:,}", t.column_count,
         t.patient_count_in_table if t.patient_count_in_table is not None else "—",
-        t.purpose,
     ] for t in model.tables]
 
     columns_rows = [[
         c.category, c.table, c.column, c.description, c.data_type,
+        c.nullable, c.example, c.coding_schema,
         c.values, c.distribution, c.median_iqr,
         f"{c.completeness_pct:.1f}%", _fmt_pct(c.patient_pct),
-        c.extraction_type, "Yes" if c.pii else "", c.notes,
+        c.data_source, "Yes" if c.pii else "", c.notes,
     ] for c in model.columns]
 
-    variables_rows = [[
-        v.category, v.variable, v.description, v.table, v.column, v.criteria,
-        v.values, v.distribution, v.median_iqr, _fmt_pct(v.completeness_pct),
-        v.implemented, _fmt_pct(v.patient_pct), v.extraction_type, v.notes,
-    ] for v in model.variables]
+    # Variables sheet — Criteria column is technical-only.
+    show_criteria = audience == "technical"
+    variables_rows = []
+    for v in model.variables:
+        row = [v.category, v.variable, v.description, v.inclusion_criteria,
+               v.table, v.column]
+        if show_criteria:
+            row.append(v.criteria)
+        row.extend([
+            v.field_type, v.example, v.coding_schema,
+            v.values, v.distribution, v.median_iqr,
+            _fmt_pct(v.completeness_pct), v.implemented,
+            _fmt_pct(v.patient_pct), v.data_source, v.notes,
+        ])
+        variables_rows.append(row)
 
     sections: list[str] = [
         f'<h2>Summary</h2><dl class="summary">{summary_html}</dl>',
@@ -1257,28 +1529,34 @@ def write_html(model: CohortModel, out_path: Path,
     if section_visible(audience, "tables"):
         sections.append(
             "<h2>Tables</h2>"
-            + _table(tables_rows, ["Table", "Category", "Rows", "Columns",
-                                   "Patients", "Purpose"])
+            + _table(tables_rows, [
+                "Table", "Category", "Description", "Inclusion Criteria",
+                "Data Source", "Source Table", "Rows", "Columns", "Patients",
+            ])
         )
     if section_visible(audience, "columns"):
         sections.append(
             "<h2>Columns</h2>"
             + _table(columns_rows, [
-                "Category", "Table(s)", "Column", "Description", "Data Type",
-                "Values", "Distribution", "Median (IQR)", "Completeness",
-                "% Patient", "Extraction Type", "PII", "Notes",
+                "Category", "Table(s)", "Column", "Description", "Field Type",
+                "Nullable", "Example", "Coding Schema", "Values", "Distribution",
+                "Median (IQR)", "Completeness", "% Patient", "Data Source",
+                "PII", "Notes",
             ])
         )
     if section_visible(audience, "variables"):
-        sections.append(
-            "<h2>Variables</h2>"
-            + _table(variables_rows, [
-                "Category", "Variable", "Description", "Table(s)", "Column(s)",
-                "Criteria", "Values", "Distribution", "Median (IQR)",
-                "Completeness", "Implemented", "% Patient",
-                "Extraction Type", "Notes",
-            ])
-        )
+        var_headers = [
+            "Category", "Variable", "Description", "Inclusion Criteria",
+            "Table(s)", "Column(s)",
+        ]
+        if show_criteria:
+            var_headers.append("Criteria")
+        var_headers.extend([
+            "Field Type", "Example", "Coding Schema", "Values", "Distribution",
+            "Median (IQR)", "Completeness", "Implemented", "% Patient",
+            "Data Source", "Notes",
+        ])
+        sections.append("<h2>Variables</h2>" + _table(variables_rows, var_headers))
 
     body = "\n".join(sections)
     page = f"""<!doctype html>
