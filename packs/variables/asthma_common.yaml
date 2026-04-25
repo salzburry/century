@@ -45,7 +45,7 @@ variables:
       condition_concept_name ILIKE '%asthma%' OR
       condition_concept_name ILIKE '%reactive airway disease%' OR
       condition_concept_name ILIKE '%status asthmaticus%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Asthma.
+    inclusion_criteria: Records are included for each diagnosis of asthma recorded for the patient — including severity / persistence variants (mild intermittent, mild/moderate/severe persistent), exercise-induced asthma, cough-variant asthma, status asthmaticus, and reactive airway disease.
     extraction_type: Structured
     notes: Indication-defining diagnosis for asthma populations.
 
@@ -66,7 +66,7 @@ variables:
       drug_concept_name ILIKE '%ProAir%' OR
       drug_concept_name ILIKE '%Ventolin%' OR
       drug_concept_name ILIKE '%Proventil%'
-    inclusion_criteria: Records of patients receiving Short-acting Beta-agonist (SABA — Reliever).
+    inclusion_criteria: Records are included for each short-acting beta-agonist reliever exposure (albuterol, levalbuterol — branded as ProAir, Ventolin, Proventil, Xopenex) recorded for the patient.
     extraction_type: Structured
 
   # ----- Medications — controller -----------------------------------
@@ -84,7 +84,7 @@ variables:
       drug_concept_name ILIKE '%beclomethasone%' OR
       drug_concept_name ILIKE '%mometasone%' OR
       drug_concept_name ILIKE '%ciclesonide%'
-    inclusion_criteria: Records of patients receiving Inhaled Corticosteroid (ICS — Controller).
+    inclusion_criteria: Records are included for each inhaled-corticosteroid controller exposure (fluticasone, budesonide, beclomethasone, mometasone, ciclesonide) recorded for the patient. ICS-LABA combinations are captured separately.
     extraction_type: Structured
     notes: >
       Includes mono-ICS and ICS appearing inside a combination
@@ -114,7 +114,7 @@ variables:
        drug_concept_name ILIKE '%vilanterol%') OR
       (drug_concept_name ILIKE '%mometasone%' AND
        drug_concept_name ILIKE '%formoterol%')
-    inclusion_criteria: Records of patients receiving ICS + LABA Combination.
+    inclusion_criteria: Records are included for each single-inhaler ICS-LABA combination exposure recorded for the patient — budesonide/formoterol (Symbicort), fluticasone/salmeterol (Advair), fluticasone/vilanterol (Breo), or mometasone/formoterol (Dulera).
     extraction_type: Structured
 
   - category: Medications
@@ -131,7 +131,7 @@ variables:
       drug_concept_name ILIKE '%Singulair%' OR
       drug_concept_name ILIKE '%Accolate%' OR
       drug_concept_name ILIKE '%Zyflo%'
-    inclusion_criteria: Records of patients receiving Leukotriene Receptor Antagonist (LTRA).
+    inclusion_criteria: Records are included for each leukotriene-receptor-antagonist exposure (montelukast/Singulair, zafirlukast, zileuton) recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -144,7 +144,7 @@ variables:
     criteria: >
       drug_concept_name ILIKE '%tiotropium%' OR
       drug_concept_name ILIKE '%Spiriva Respimat%'
-    inclusion_criteria: Records of patients receiving Long-acting Muscarinic Antagonist (LAMA — Add-on).
+    inclusion_criteria: Records are included for each tiotropium (Spiriva Respimat) exposure recorded for the patient — add-on controller therapy for severe asthma uncontrolled on ICS-LABA.
     extraction_type: Structured
 
   - category: Medications
@@ -170,7 +170,7 @@ variables:
       drug_concept_name ILIKE '%Fasenra%' OR
       drug_concept_name ILIKE '%Dupixent%' OR
       drug_concept_name ILIKE '%Tezspire%'
-    inclusion_criteria: Records of patients receiving Asthma Biologic (Anti-IgE / Anti-IL5 / Anti-IL4R / Anti-TSLP).
+    inclusion_criteria: Records are included for each asthma-biologic exposure recorded for the patient — omalizumab (Xolair, anti-IgE), mepolizumab (Nucala) and reslizumab (Cinqair, anti-IL5), benralizumab (Fasenra, anti-IL5R), dupilumab (Dupixent, anti-IL4R), or tezepelumab (Tezspire, anti-TSLP).
     extraction_type: Structured
     notes: >
       Each biologic has its own eligibility criteria (total IgE,
@@ -192,7 +192,7 @@ variables:
       drug_concept_name ILIKE '%prednisolone%' OR
       drug_concept_name ILIKE '%methylprednisolone%' OR
       drug_concept_name ILIKE '%dexamethasone%'
-    inclusion_criteria: Records of patients receiving Systemic Corticosteroid (Oral / IV).
+    inclusion_criteria: Records are included for each systemic-corticosteroid exposure (prednisone, prednisolone, methylprednisolone, dexamethasone) recorded for the patient. Attributing a course to an asthma exacerbation requires a temporal cross-reference with the Asthma Exacerbation diagnosis row.
     extraction_type: Structured
     notes: >
       Captures all systemic steroid exposures. Attributing a course
@@ -214,7 +214,7 @@ variables:
       (measurement_concept_name ILIKE '%total%' OR
        measurement_concept_name ILIKE '%serum%' OR
        measurement_concept_name ILIKE '%immunoglobulin E%')
-    inclusion_criteria: Records of Total IgE (Immunoglobulin E) measurements for the patient.
+    inclusion_criteria: Records are included for each total serum IgE measurement recorded for the patient. Allergen-specific IgE panels are excluded.
     extraction_type: Structured
     notes: >
       Criteria requires "IgE" plus a total/serum/immunoglobulin E
@@ -232,7 +232,7 @@ variables:
       measurement_concept_name ILIKE '%exhaled nitric oxide%' OR
       measurement_concept_name ILIKE '%FeNO%' OR
       measurement_concept_name ILIKE '%fractional nitric oxide%'
-    inclusion_criteria: Records of FeNO (Fractional Exhaled Nitric Oxide) measurements for the patient.
+    inclusion_criteria: Records are included for each fractional-exhaled-nitric-oxide (FeNO) measurement recorded for the patient — an airway-eosinophilic-inflammation marker used to phenotype type-2-high asthma.
     extraction_type: Structured
     notes: >
       TODO (clinical review): FeNO is not universally billed as a
@@ -252,7 +252,7 @@ variables:
       measurement_concept_name ILIKE '%FEV 1%' OR
       measurement_concept_name ILIKE '%forced expiratory volume%1%' OR
       measurement_concept_name ILIKE '%forced expir%1 second%'
-    inclusion_criteria: Records where an abstracted FEV1 (Forced Expiratory Volume in 1 second) event is captured for the patient.
+    inclusion_criteria: Records are included for each FEV1 (forced expiratory volume in one second) measurement abstracted from a pulmonary-function report for the patient.
     extraction_type: Abstracted
     notes: >
       Abstracted from PFT reports rather than a structured lab feed
@@ -267,7 +267,7 @@ variables:
     criteria: >
       measurement_concept_name ILIKE '%FVC%' OR
       measurement_concept_name ILIKE '%forced vital capacity%'
-    inclusion_criteria: Records where an abstracted FVC (Forced Vital Capacity) event is captured for the patient.
+    inclusion_criteria: Records are included for each FVC (forced vital capacity) measurement abstracted from a pulmonary-function report for the patient.
     extraction_type: Abstracted
 
   - category: Labs / Biomarkers
@@ -281,7 +281,7 @@ variables:
       measurement_concept_name ILIKE '%FEV1%FVC%' OR
       measurement_concept_name ILIKE '%FEV1/FVC%' OR
       measurement_concept_name ILIKE '%FEV 1%FVC%'
-    inclusion_criteria: Records where an abstracted FEV1 / FVC Ratio event is captured for the patient.
+    inclusion_criteria: Records are included for each post-bronchodilator FEV1/FVC ratio abstracted from a pulmonary-function report for the patient — ratio < 0.70 confirms COPD per GOLD criteria.
     extraction_type: Abstracted
 
   # ----- Outcomes - exacerbations and patient-reported outcomes -----
@@ -300,7 +300,7 @@ variables:
        (condition_concept_name ILIKE '%acute exacerbation%' OR
         condition_concept_name ILIKE '%with exacerbation%' OR
         condition_concept_name ILIKE '%attack%'))
-    inclusion_criteria: Records where an abstracted Asthma Exacerbation (Abstracted) event is captured for the patient.
+    inclusion_criteria: Records are included for each acute-asthma-exacerbation event abstracted for the patient — status asthmaticus, or asthma with acute exacerbation, with-exacerbation, or attack qualifiers.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): confirm the exacerbation definition
@@ -320,7 +320,7 @@ variables:
       observation_concept_name ILIKE '%Asthma Control Test%' OR
       observation_concept_name ILIKE '%ACT score%' OR
       observation_concept_name ILIKE '%ACT total%'
-    inclusion_criteria: Records where an abstracted ACT Score (Asthma Control Test) event is captured for the patient.
+    inclusion_criteria: Records are included for each Asthma Control Test (ACT) score abstracted from the patient's clinical notes — ACT < 20 indicates poorly controlled asthma.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): ACT is often captured on paper or

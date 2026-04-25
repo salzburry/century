@@ -129,6 +129,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%heart rate%'
+    inclusion_criteria: Records are included for each heart-rate or pulse measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -144,7 +145,7 @@ variables:
       observation_concept_name ILIKE '%oxygen saturation%' OR
       observation_concept_name ILIKE '%peripheral oxygen%' OR
       observation_concept_name ILIKE '%SpO2%'
-    inclusion_criteria: Records of Oxygen Saturation (SpO2) measurements for the patient.
+    inclusion_criteria: Records are included for each peripheral oxygen saturation (SpO2, O2 saturation) measurement recorded for the patient.
     extraction_type: Structured
 
   - category: Vitals
@@ -153,7 +154,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
-    inclusion_criteria: Records of Body Weight measurements for the patient.
+    inclusion_criteria: Records are included for each body-weight measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -180,7 +181,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%body mass index%' OR
       observation_concept_name ILIKE '%BMI%'
-    inclusion_criteria: Records of BMI (Body Mass Index) measurements for the patient.
+    inclusion_criteria: Records are included for each body-mass-index (BMI) measurement recorded for the patient.
     extraction_type: Structured
     notes: >
       TODO (clinical review): some sites record BMI in the measurement
@@ -209,7 +210,7 @@ variables:
       observation_concept_name ILIKE '%smoking%' OR
       observation_concept_name ILIKE '%tobacco use%' OR
       observation_concept_name ILIKE '%cigarette%'
-    inclusion_criteria: Records of Smoking Status captured as a structured observation.
+    inclusion_criteria: Records are included for each smoking-status observation (current, former, or never smoker; tobacco use; cigarette use) recorded for the patient.
     extraction_type: Structured
     notes: >
       TODO (clinical review): some warehouses map smoking status onto
@@ -263,7 +264,7 @@ variables:
        measurement_concept_name ILIKE '%absolute%' OR
        measurement_concept_name ILIKE '%percent%' OR
        measurement_concept_name ILIKE '%#%')
-    inclusion_criteria: Records of Blood Eosinophils measurements for the patient.
+    inclusion_criteria: Records are included for each blood eosinophil count (absolute or percentage, from CBC or differential panels) recorded for the patient. Sputum and tissue-biopsy eosinophil measurements are excluded.
     extraction_type: Structured
     notes: >
       Criteria requires both "eosinophil" and a blood/CBC/differential
@@ -308,7 +309,7 @@ variables:
       procedure_concept_name ILIKE '%diffusing capacity%' OR
       procedure_concept_name ILIKE '%lung volume%' OR
       procedure_concept_name ILIKE '%bronchodilator responsiveness%'
-    inclusion_criteria: Records of Spirometry / Pulmonary Function Test procedures performed for the patient.
+    inclusion_criteria: Records are included for each spirometry, diffusing-capacity (DLCO), lung-volume, or bronchodilator-responsiveness procedure performed for the patient.
     extraction_type: Structured
 
   - category: Procedures
@@ -320,7 +321,7 @@ variables:
       procedure_concept_name ILIKE '%pulse oximetry%' OR
       procedure_concept_name ILIKE '%oximetry%' OR
       procedure_concept_name ILIKE '%blood oxygen level%'
-    inclusion_criteria: Records of Pulse Oximetry procedures performed for the patient.
+    inclusion_criteria: Records are included for each pulse-oximetry or peripheral blood-oxygen procedure billed for the patient.
     extraction_type: Structured
 
   # ----- Reports ------------------------------------------------------
@@ -345,7 +346,7 @@ variables:
       document_type_concept_name ILIKE '%pulmonary%' OR
       document_type_concept_name ILIKE '%spirometry%' OR
       document_type_concept_name ILIKE '%PFT%'
-    inclusion_criteria: Records of Chest imaging / PFT reports filed for the patient.
+    inclusion_criteria: Records are included for each chest-imaging or pulmonary-function-test document attached to the patient encounter — chest X-ray, chest CT, spirometry, or PFT reports.
     extraction_type: Unstructured
     notes: >
       Criteria restricted to chest-/pulmonary-/spirometry-/PFT-named

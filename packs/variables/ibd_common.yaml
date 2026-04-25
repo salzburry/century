@@ -95,7 +95,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%heart rate%' OR observation_concept_name ILIKE '%pulse%'
-    inclusion_criteria: Records of Heart Rate measurements for the patient.
+    inclusion_criteria: Records are included for each heart-rate or pulse measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -104,7 +104,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
-    inclusion_criteria: Records of Body Weight measurements for the patient.
+    inclusion_criteria: Records are included for each body-weight measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -123,7 +123,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%body mass index%' OR
       observation_concept_name ILIKE '%BMI%'
-    inclusion_criteria: Records of BMI (Body Mass Index) measurements for the patient.
+    inclusion_criteria: Records are included for each body-mass-index (BMI) measurement recorded for the patient.
     extraction_type: Structured
 
   # ----- Observations -------------------------------------------------
@@ -147,7 +147,7 @@ variables:
       observation_concept_name ILIKE '%smoking%' OR
       observation_concept_name ILIKE '%tobacco%' OR
       observation_concept_name ILIKE '%cigarette%'
-    inclusion_criteria: Records of Smoking Status captured as a structured observation.
+    inclusion_criteria: Records are included for each smoking-status observation (current, former, or never smoker; tobacco use; cigarette use) recorded for the patient.
     extraction_type: Structured
 
   # ----- Diagnosis ----------------------------------------------------
@@ -190,7 +190,7 @@ variables:
       condition_concept_name ILIKE '%inflammatory bowel disease%' OR
       condition_concept_name ILIKE '%IBD%' OR
       condition_concept_name ILIKE '%regional enteritis%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of IBD.
+    inclusion_criteria: Records are included for each diagnosis of ulcerative colitis, Crohn's disease, inflammatory bowel disease (IBD), or regional enteritis recorded for the patient. Microscopic, collagenous, and lymphocytic colitis are excluded.
     extraction_type: Structured
     notes: Indication-defining diagnosis for inflammatory bowel disease populations. "Regional enteritis" is a legacy SNOMED synonym for Crohn's disease.
 
@@ -210,7 +210,7 @@ variables:
       condition_concept_name ILIKE '%rectal hemorrhage%' OR
       condition_concept_name ILIKE '%epigastric pain%' OR
       condition_concept_name ILIKE '%abdominal pain%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of GI Symptoms (Diarrhea / Rectal Bleeding / Epigastric Pain).
+    inclusion_criteria: Records are included for each diagnosis of diarrhea, rectal bleeding or hemorrhage, epigastric pain, or abdominal pain recorded for the patient — IBD flare-activity signals.
     extraction_type: Structured
 
   # ----- Medications — IBD-specific therapy -------------------------
@@ -233,7 +233,7 @@ variables:
       drug_concept_name ILIKE '%Pentasa%' OR
       drug_concept_name ILIKE '%Lialda%' OR
       drug_concept_name ILIKE '%Delzicol%'
-    inclusion_criteria: Records of patients receiving 5-ASA (Aminosalicylate).
+    inclusion_criteria: Records are included for each 5-aminosalicylate exposure recorded for the patient — mesalamine (Apriso, Asacol, Pentasa, Lialda, Delzicol), sulfasalazine, balsalazide, or olsalazine.
     extraction_type: Structured
 
   - category: Medications
@@ -253,7 +253,7 @@ variables:
       drug_concept_name ILIKE '%Entocort%' OR
       drug_concept_name ILIKE '%Uceris%' OR
       drug_concept_name ILIKE '%Anusol%'
-    inclusion_criteria: Records of patients receiving Corticosteroid (Topical / Systemic / Budesonide).
+    inclusion_criteria: Records are included for each corticosteroid exposure for IBD flares — topical hydrocortisone (Anusol), oral prednisone or methylprednisolone, or budesonide (Entocort, Uceris) — recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -266,7 +266,7 @@ variables:
       drug_concept_name ILIKE '%omeprazole%' OR
       drug_concept_name ILIKE '%esomeprazole%' OR
       drug_concept_name ILIKE '%lansoprazole%'
-    inclusion_criteria: Records of patients receiving Proton Pump Inhibitor (PPI).
+    inclusion_criteria: Records are included for each proton-pump-inhibitor exposure (pantoprazole, omeprazole, esomeprazole, lansoprazole, rabeprazole, dexlansoprazole) recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -284,7 +284,7 @@ variables:
       drug_concept_name ILIKE '%Creon%' OR
       drug_concept_name ILIKE '%Zenpep%' OR
       drug_concept_name ILIKE '%Pancreaze%'
-    inclusion_criteria: Records of patients receiving Pancreatic Enzyme Replacement (Pancrelipase).
+    inclusion_criteria: Records are included for each pancrelipase exposure (Creon, Zenpep, Pancreaze) recorded for the patient — indicated for pancreatic insufficiency.
     extraction_type: Structured
 
   - category: Medications
@@ -319,7 +319,7 @@ variables:
       drug_concept_name ILIKE '%Remicade%' OR
       drug_concept_name ILIKE '%Stelara%' OR
       drug_concept_name ILIKE '%Entyvio%'
-    inclusion_criteria: Records where an abstracted IBD Biologic / Immunomodulator (Abstracted) event is captured for the patient.
+    inclusion_criteria: Records are included for each IBD-targeted biologic or immunomodulator exposure abstracted for the patient — anti-TNF (infliximab/Remicade, adalimumab/Humira, golimumab, certolizumab), anti-integrin (vedolizumab/Entyvio, natalizumab), anti-IL-12/23 (ustekinumab/Stelara, risankizumab, mirikizumab), JAK inhibitors (tofacitinib, upadacitinib), S1P modulators (ozanimod, etrasimod), or traditional immunomodulators (azathioprine, 6-mercaptopurine, methotrexate).
     extraction_type: Abstracted
     notes: >
       TODO (clinical review) — standard-of-care for moderate-to-

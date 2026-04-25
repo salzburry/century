@@ -40,7 +40,7 @@ variables:
       condition_concept_name ILIKE '%macular degeneration%' OR
       condition_concept_name ILIKE '%AMD%' OR
       condition_concept_name ILIKE '%ARMD%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Age-Related Macular Degeneration.
+    inclusion_criteria: Records are included for each diagnosis of age-related macular degeneration (AMD/ARMD) recorded for the patient — covers all severities and both exudative (wet) and non-exudative (dry/atrophic) variants.
     extraction_type: Structured
     notes: Indication-defining diagnosis for age-related macular degeneration populations.
 
@@ -58,7 +58,7 @@ variables:
       condition_concept_name ILIKE '%wet%macular degeneration%' OR
       condition_concept_name ILIKE '%macular degeneration%choroidal neovascular%' OR
       condition_concept_name ILIKE '%neovascular AMD%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Exudative (Wet) AMD with Choroidal Neovascularization.
+    inclusion_criteria: Records are included for each diagnosis of exudative (wet) AMD with active choroidal neovascularization recorded for the patient — the subset that drives intravitreal anti-VEGF utilisation.
     extraction_type: Structured
 
   - category: Diagnosis
@@ -75,7 +75,7 @@ variables:
       condition_concept_name ILIKE '%dry%macular degeneration%' OR
       condition_concept_name ILIKE '%atrophic%macular degeneration%' OR
       condition_concept_name ILIKE '%geographic atrophy%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Non-exudative (Dry) AMD.
+    inclusion_criteria: Records are included for each diagnosis of non-exudative (dry) AMD recorded for the patient — including early-stage and geographic-atrophy variants.
     extraction_type: Structured
 
   - category: Diagnosis
@@ -89,7 +89,7 @@ variables:
     criteria: >
       condition_concept_name ILIKE '%vitreous degeneration%' OR
       condition_concept_name ILIKE '%posterior vitreous detachment%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Vitreous Degeneration.
+    inclusion_criteria: Records are included for each diagnosis of vitreous degeneration or posterior vitreous detachment recorded for the patient.
     extraction_type: Structured
 
   # ----- Medications — AREDS2 formulation + comorbidity markers ----
@@ -118,7 +118,7 @@ variables:
       drug_concept_name ILIKE '%lutein%' OR
       drug_concept_name ILIKE '%zeaxanthin%' OR
       drug_concept_name ILIKE '%zinc%' AND drug_concept_name ILIKE '%copper%'
-    inclusion_criteria: Records of patients receiving AREDS2 Supplementation (Vitamin D / Calcium / Omega-3).
+    inclusion_criteria: Records are included for each AREDS2-formulation supplement exposure recorded for the patient — vitamin D, calcium, omega-3 fatty acids (fish oil), lutein, zeaxanthin, and zinc–copper antioxidant pairings.
     extraction_type: Structured
     notes: >
       Row is deliberately broad — captures the over-the-counter

@@ -97,7 +97,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%heart rate%' OR observation_concept_name ILIKE '%pulse%'
-    inclusion_criteria: Records of Heart Rate measurements for the patient.
+    inclusion_criteria: Records are included for each heart-rate or pulse measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -106,7 +106,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
-    inclusion_criteria: Records of Body Weight measurements for the patient.
+    inclusion_criteria: Records are included for each body-weight measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -128,7 +128,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%body mass index%' OR
       observation_concept_name ILIKE '%BMI%'
-    inclusion_criteria: Records of BMI (Body Mass Index) measurements for the patient.
+    inclusion_criteria: Records are included for each body-mass-index (BMI) measurement recorded for the patient.
     extraction_type: Structured
 
   # ----- Observations -------------------------------------------------
@@ -149,7 +149,7 @@ variables:
       observation_concept_name ILIKE '%smoking%' OR
       observation_concept_name ILIKE '%tobacco%' OR
       observation_concept_name ILIKE '%cigarette%'
-    inclusion_criteria: Records of Smoking Status captured as a structured observation.
+    inclusion_criteria: Records are included for each smoking-status observation (current, former, or never smoker; tobacco use; cigarette use) recorded for the patient.
     extraction_type: Structured
 
   # ----- Diagnosis ----------------------------------------------------
@@ -195,7 +195,7 @@ variables:
       condition_concept_name ILIKE '%MASH%' OR
       condition_concept_name ILIKE '%MASLD%' OR
       condition_concept_name ILIKE '%metabolic%steatotic liver%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of MASH / NAFLD / Fatty Liver.
+    inclusion_criteria: Records are included for each diagnosis of metabolic-dysfunction-associated steatohepatitis (MASH/NASH), non-alcoholic fatty liver disease (NAFLD/MASLD), or fatty change of the liver recorded for the patient.
     extraction_type: Structured
     notes: Indication-defining diagnosis for hepatology populations.
 
@@ -211,7 +211,7 @@ variables:
       condition_concept_name ILIKE '%cirrhosis%' OR
       condition_concept_name ILIKE '%hepatic fibrosis%' OR
       condition_concept_name ILIKE '%liver fibrosis%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Cirrhosis / Advanced Liver Fibrosis.
+    inclusion_criteria: Records are included for each diagnosis of cirrhosis, hepatic fibrosis, or liver fibrosis recorded for the patient — the MASH-progression endpoint.
     extraction_type: Structured
     notes: TODO (clinical review) — confirm whether the cohort stratifies by fibrosis stage (F0-F4) on live build.
 
@@ -232,7 +232,7 @@ variables:
       condition_concept_name ILIKE '%H. pylori%' OR
       condition_concept_name ILIKE '%gastroesophageal reflux%' OR
       condition_concept_name ILIKE '%GERD%'
-    inclusion_criteria: Records of patients with a recorded diagnosis of Upper GI Comorbidities (Gastritis / Epigastric pain / H. pylori).
+    inclusion_criteria: Records are included for each diagnosis of epigastric pain, gastritis, Helicobacter pylori infection, or gastroesophageal reflux (GERD) recorded for the patient — the comorbidity burden that drives PPI utilisation in MASH cohorts.
     extraction_type: Structured
 
   # ----- Medications ------------------------------------------------
@@ -256,7 +256,7 @@ variables:
       drug_concept_name ILIKE '%lansoprazole%' OR
       drug_concept_name ILIKE '%rabeprazole%' OR
       drug_concept_name ILIKE '%dexlansoprazole%'
-    inclusion_criteria: Records of patients receiving Proton Pump Inhibitor (PPI).
+    inclusion_criteria: Records are included for each proton-pump-inhibitor exposure (pantoprazole, omeprazole, esomeprazole, lansoprazole, rabeprazole, dexlansoprazole) recorded for the patient.
     extraction_type: Structured
 
   - category: Medications
@@ -269,7 +269,7 @@ variables:
     criteria: >
       drug_concept_name ILIKE '%sucralfate%' OR
       drug_concept_name ILIKE '%Carafate%'
-    inclusion_criteria: Records of patients receiving Mucosal Protectant (Sucralfate).
+    inclusion_criteria: Records are included for each sucralfate (Carafate) exposure recorded for the patient — a mucosal protectant for peptic-ulcer and reflux-related mucosal injury.
     extraction_type: Structured
 
   - category: Medications
@@ -284,7 +284,7 @@ variables:
       drug_concept_name ILIKE '%polyethylene glycol%' OR
       drug_concept_name ILIKE '%Golytely%' OR
       drug_concept_name ILIKE '%Miralax%'
-    inclusion_criteria: Records of patients receiving Bowel Preparation (Polyethylene Glycol).
+    inclusion_criteria: Records are included for each polyethylene-glycol bowel-prep exposure (GoLytely, Miralax) recorded for the patient.
     extraction_type: Structured
 
   # ----- Visits -------------------------------------------------------
