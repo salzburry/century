@@ -2503,17 +2503,22 @@ class TestFlatironStyleMetadata(unittest.TestCase):
             "Records with an Alzheimer's diagnosis.",
         )
 
-    def test_derive_inclusion_criteria_simple_pattern(self):
-        # Single-clause ILIKE → friendly sentence as a fallback.
-        out = derive_inclusion_criteria(
-            "condition_concept_name ILIKE '%alzheimer%'"
+    def test_derive_inclusion_criteria_simple_returns_blank(self):
+        # Single-clause ILIKE returns empty so the validator forces
+        # the pack author to add explicit prose. The earlier
+        # friendly-translation fallback ("Records where the X concept
+        # matches 'Y'.") was removed because it produced QA-style
+        # copy rather than Flatiron-style clinical prose.
+        self.assertEqual(
+            derive_inclusion_criteria(
+                "condition_concept_name ILIKE '%alzheimer%'"
+            ),
+            "",
         )
-        self.assertIn("condition", out.lower())
-        self.assertIn("alzheimer", out.lower())
 
     def test_derive_inclusion_criteria_compound_returns_blank(self):
-        # Multi-clause SQL deliberately does NOT auto-translate — the
-        # pack author should provide an explicit prose sentence.
+        # Multi-clause SQL also requires explicit prose — same
+        # contract as the single-clause case.
         self.assertEqual(
             derive_inclusion_criteria(
                 "x ILIKE '%a%' OR x ILIKE '%b%'"

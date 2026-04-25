@@ -417,18 +417,6 @@ def derive_data_source(extraction_type: str, table: str = "",
     )
 
 
-# Pattern → prose lookup for the most common ILIKE shapes our packs use.
-# Used as a fallback when a row has a `criteria:` (raw SQL) but no
-# explicit `inclusion_criteria:` (prose). Anything not matched here
-# returns empty so the row encourages an explicit prose override
-# rather than auto-translated SQL.
-_FRIENDLY_CRITERIA_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"^(\w+)_concept_name\s+ILIKE\s+'%([^%']+)%'\s*$",
-                re.IGNORECASE),
-     "Records where the {0} concept matches {1!r}."),
-]
-
-
 # Per-table fallback prose for variable rows that have NO `criteria:`
 # at all (a row that points at a column unfiltered — typically a
 # demographic, visit, or generic-diagnosis umbrella row). Mirrors the
@@ -470,19 +458,22 @@ _TABLE_NO_CRITERIA_DEFAULTS: dict[str, str] = {
 
 def derive_inclusion_criteria(criteria_sql: str, explicit: str = "",
                               table: str = "") -> str:
-    """Translate simple SQL criteria into a prose sentence.
+    """Resolve a row's customer-visible Inclusion Criteria sentence.
 
     Resolution order:
       1. `explicit` — pack-author prose, returned unchanged.
-      2. Single-clause `<col>_concept_name ILIKE '%X%'` → friendly
-         sentence ("Records where the X concept matches 'Y'.").
-      3. Compound SQL (`AND` / `OR`) → empty string. The validator
-         catches this and forces the pack author to add explicit
-         prose, so this path should never reach a customer workbook.
-      4. No criteria at all → table-keyed default (e.g. "One record
+      2. No criteria at all → table-keyed default (e.g. "One record
          is included for each diagnosis recorded for each patient in
          the cohort.") so the rendered Inclusion Criteria cell is
          never blank for a generic umbrella row.
+      3. Any `criteria:` present → empty string. There is no
+         auto-translation from SQL — every row with a criteria
+         clause must carry an explicit `inclusion_criteria:`. The
+         older "concept matches 'X'" friendly fallback was removed
+         because it produced QA-style copy ("Records where the
+         observation concept matches 'language'.") rather than
+         Flatiron-style clinical prose. The validator enforces the
+         contract.
     """
     if explicit:
         return explicit.strip()
@@ -492,12 +483,6 @@ def derive_inclusion_criteria(criteria_sql: str, explicit: str = "",
             (table or "").strip(),
             "Records are included for each patient in the cohort.",
         )
-    if " OR " in sql.upper() or " AND " in sql.upper():
-        return ""
-    for pat, template in _FRIENDLY_CRITERIA_PATTERNS:
-        m = pat.match(sql)
-        if m:
-            return template.format(*m.groups())
     return ""
 
 

@@ -98,25 +98,30 @@ variables:
   # Intravitreal Injection row in retinal_common), not in
   # drug_exposure. drug_exposure in this cohort is dominated by
   # Mixes the over-the-counter supplements typically seen in older
-  # AMD patients with the AREDS2 antioxidant ingredients. Vitamin D,
-  # calcium, and omega-3 are NOT in NEI's AREDS2 formula (which is
-  # vitamin C, vitamin E, zinc, copper, lutein, and zeaxanthin) — they
-  # are general bone-health and cardiovascular-prevention supplements
-  # common in this population. Row reports the broad OTC footprint
-  # and flags the AREDS2 subset inline; tighten to AREDS2-only by
-  # narrowing the criteria when a cohort needs adherence attribution.
+  # AMD patients with the full set of NEI AREDS2 antioxidants. The
+  # AREDS2 formula is vitamin C, vitamin E, zinc, copper, lutein,
+  # and zeaxanthin (lutein + zeaxanthin replaced beta-carotene from
+  # the original AREDS). Vitamin D, calcium, and omega-3 are NOT
+  # AREDS2 ingredients — they are general bone-health and cardio-
+  # vascular-prevention supplements common in this age group, kept
+  # in the row because the cohort dump shows them as the dominant
+  # supplement footprint.
   - category: Medications
-    variable: OTC Supplements (Vitamin D / Calcium / Omega-3 / AREDS2 Antioxidants)
+    variable: OTC Supplements (AREDS2 Antioxidants + General Vitamin / Mineral)
     description: >
       Over-the-counter supplements common in older AMD patients —
-      vitamin D, calcium, and omega-3 fatty acids (fish oil) for
-      general bone-health and cardiovascular prevention, plus the
-      AREDS2 antioxidant ingredients (lutein, zeaxanthin, and
-      zinc–copper pairings) used to slow AMD progression in
-      intermediate disease.
+      the NEI AREDS2 antioxidant formula (vitamin C, vitamin E, zinc,
+      copper, lutein, zeaxanthin) used to slow AMD progression in
+      intermediate disease, together with the general vitamin /
+      mineral / omega-3 footprint (vitamin D, calcium, fish oil)
+      that dominates this cohort.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
+      drug_concept_name ILIKE '%vitamin C%' OR
+      drug_concept_name ILIKE '%ascorbic acid%' OR
+      drug_concept_name ILIKE '%vitamin E%' OR
+      drug_concept_name ILIKE '%alpha-tocopherol%' OR
       drug_concept_name ILIKE '%vitamin D%' OR
       drug_concept_name ILIKE '%calcium%' OR
       drug_concept_name ILIKE '%fish oil%' OR
@@ -125,9 +130,9 @@ variables:
       drug_concept_name ILIKE '%lutein%' OR
       drug_concept_name ILIKE '%zeaxanthin%' OR
       drug_concept_name ILIKE '%zinc%' AND drug_concept_name ILIKE '%copper%'
-    inclusion_criteria: Records are included for each over-the-counter supplement exposure recorded for the patient — vitamin D, calcium, fish oil, and omega-3 fatty acids (general supplementation), together with the AREDS2 antioxidant ingredients lutein, zeaxanthin, and zinc–copper. Vitamin C, vitamin E, vitamin D, calcium, and omega-3 are not part of NEI's AREDS2 formula; the row reports the broader OTC footprint, not AREDS2 adherence specifically.
+    inclusion_criteria: Records are included for each over-the-counter supplement exposure recorded for the patient — the NEI AREDS2 antioxidants (vitamin C, vitamin E, zinc, copper, lutein, zeaxanthin) plus the broader vitamin D, calcium, and omega-3 supplements common in this population. Vitamin D, calcium, and omega-3 are not part of NEI's AREDS2 formula; the row reports the combined supplement footprint, not AREDS2 adherence specifically.
     extraction_type: Structured
-    notes: Vitamin D, calcium, and omega-3 are common in non-AMD formulations too. Do not use this row alone as evidence of AREDS2 adherence.
+    notes: Vitamin D, calcium, and omega-3 are common in non-AMD formulations too. Do not use this row alone as evidence of AREDS2 adherence; subset to AREDS2 ingredients only (vitamin C, vitamin E, zinc + copper, lutein, zeaxanthin) when adherence attribution is required.
 
   - category: Medications
     variable: Aspirin (Antiplatelet)
@@ -137,4 +142,5 @@ variables:
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_concept_name ILIKE '%aspirin%'
+    inclusion_criteria: Records are included for each aspirin exposure recorded for the patient — low-dose antiplatelet therapy used for cardiovascular-event prevention.
     extraction_type: Structured

@@ -69,6 +69,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%language%'
+    inclusion_criteria: Records are included for each primary-language observation recorded for the patient.
     extraction_type: Structured
 
   - category: Demographics
@@ -77,6 +78,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%marital status%'
+    inclusion_criteria: Records are included for each marital-status observation recorded for the patient.
     extraction_type: Structured
 
   # ----- Vitals -------------------------------------------------------
@@ -101,12 +103,9 @@ variables:
     table: observation
     column: value_as_string
     criteria: observation_concept_name ILIKE '%blood pressure%'
+    inclusion_criteria: Records are included for each combined-format blood-pressure reading (e.g. "120/80") stored as an observation value string for the patient. Numeric systolic and diastolic readings appear under the Blood Pressure (Systolic / Diastolic, numeric) row instead.
     extraction_type: Structured
-    notes: >
-      Matches only the `value_as_string` column. Sites that record
-      systolic / diastolic numerically as separate observations
-      populate the "Blood Pressure (Systolic / Diastolic, numeric)"
-      row below instead.
+    notes: Sites that record systolic and diastolic blood pressures numerically as separate observations populate the Blood Pressure (Systolic / Diastolic, numeric) row instead.
 
   - category: Vitals
     variable: Blood Pressure (Systolic / Diastolic, numeric)
@@ -128,6 +127,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%temperature%'
+    inclusion_criteria: Records are included for each body-temperature measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -154,6 +154,7 @@ variables:
     table: observation
     column: value_as_string
     criteria: observation_concept_name ILIKE '%height%'
+    inclusion_criteria: Records are included for each patient-height measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -177,6 +178,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%allerg%'
+    inclusion_criteria: Records are included for each patient-allergy observation recorded for the patient.
     extraction_type: Structured
 
   # The shared Smoking Status row targets the OMOP `observation`
@@ -465,7 +467,7 @@ variables:
       measurement_concept_name ILIKE '%A1c%'
     inclusion_criteria: Records are included for each glycated-hemoglobin (HbA1c, A1c) measurement recorded for the patient.
     extraction_type: Structured
-    notes: Standard-of-care for diabetic CKD but not always stored under a measurement-side concept; sites that record HbA1c in `observation` will not surface here.
+    notes: Standard-of-care for diabetic CKD but not always recorded as a discrete laboratory measurement; sites that capture HbA1c only as an observation will not surface here.
 
   # ----- Visits -------------------------------------------------------
   - category: Visits
@@ -691,6 +693,7 @@ variables:
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_concept_name ILIKE '%aspirin%'
+    inclusion_criteria: Records are included for each aspirin exposure recorded for the patient — low-dose antiplatelet therapy used for cardiovascular-event prevention.
     extraction_type: Structured
     notes: >
       Not CKD-specific; aspirin is a cross-cohort cardiovascular-
@@ -706,7 +709,7 @@ variables:
     table: drug_exposure
     column: drug_concept_name
     criteria: drug_concept_name ILIKE '%sodium bicarbonate%'
-    inclusion_criteria: Records are included for each oral-sodium-bicarbonate exposure recorded for the patient — used to correct metabolic acidosis in advanced CKD.
+    inclusion_criteria: Records are included for each oral sodium-bicarbonate exposure recorded for the patient — used to correct metabolic acidosis in advanced CKD.
     extraction_type: Structured
 
   - category: Medications

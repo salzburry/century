@@ -88,6 +88,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%language%'
+    inclusion_criteria: Records are included for each primary-language observation recorded for the patient.
     extraction_type: Structured
 
   - category: Demographics
@@ -96,6 +97,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%marital status%'
+    inclusion_criteria: Records are included for each marital-status observation recorded for the patient.
     extraction_type: Structured
 
   - category: Demographics
@@ -104,6 +106,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%sexual orientation%'
+    inclusion_criteria: Records are included for each sexual-orientation observation recorded for the patient.
     extraction_type: Structured
 
   # ----- Vitals -------------------------------------------------------
@@ -113,6 +116,7 @@ variables:
     table: observation
     column: value_as_string
     criteria: observation_concept_name ILIKE '%blood pressure%'
+    inclusion_criteria: Records are included for each blood-pressure reading recorded for the patient at an office visit, stored as an observation value string.
     extraction_type: Structured
 
   - category: Vitals
@@ -121,6 +125,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%temperature%'
+    inclusion_criteria: Records are included for each body-temperature measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -163,6 +168,7 @@ variables:
     table: observation
     column: value_as_string
     criteria: observation_concept_name ILIKE '%height%'
+    inclusion_criteria: Records are included for each patient-height measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -171,6 +177,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%respiratory rate%'
+    inclusion_criteria: Records are included for each respiratory-rate measurement recorded for the patient at an office visit.
     extraction_type: Structured
 
   - category: Vitals
@@ -183,7 +190,7 @@ variables:
       observation_concept_name ILIKE '%BMI%'
     inclusion_criteria: Records are included for each body-mass-index (BMI) measurement recorded for the patient.
     extraction_type: Structured
-    notes: Some sites record BMI in the `measurement` table rather than `observation`; an alternate row on measurement_concept_name may be needed to surface those sites.
+    notes: Some sites record BMI as a laboratory measurement rather than an observation; an alternate measurement-side row may be needed to surface those sites.
 
   # ----- Observations -------------------------------------------------
   - category: Observations
@@ -192,6 +199,7 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%allerg%'
+    inclusion_criteria: Records are included for each patient-allergy observation recorded for the patient.
     extraction_type: Structured
 
   - category: Observations

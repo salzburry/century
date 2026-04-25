@@ -229,8 +229,6 @@ _PROSE_DENYLIST: list[tuple[re.Pattern[str], str]] = [
      "QA language: 'criteria restricted' (move to YAML comment)"),
     (re.compile(r"\bearlier\s+draft", re.IGNORECASE),
      "QA language: 'earlier draft' (move to YAML comment)"),
-    (re.compile(r"\bImplemented\s*=\s*(Yes|No)", re.IGNORECASE),
-     "generator field 'Implemented=Yes/No' in customer copy"),
     (re.compile(r"\bdeliberately\b", re.IGNORECASE),
      "QA language: 'deliberately' (move rationale to YAML comment)"),
     (re.compile(r"\bTODO\b"),
@@ -239,6 +237,27 @@ _PROSE_DENYLIST: list[tuple[re.Pattern[str], str]] = [
      "QA language: 'AND-qualifier' (move SQL rationale to YAML comment)"),
     (re.compile(r"\bdouble-?count\w*", re.IGNORECASE),
      "QA language: 'double count' (rephrase as a clinical caveat)"),
+
+    # Schema / generator vocabulary in backticks. OMOP physical-table
+    # and column names are implementation detail; customer copy should
+    # name the clinical concept instead.
+    (re.compile(r"`(value_as_(string|number|concept_name|datetime)|"
+                r"\w*_concept_(name|id)|drug_(concept_id|exposure)|"
+                r"condition_occurrence|procedure_occurrence|"
+                r"observation|measurement|note_text|drug_concept_name)`"),
+     "backticked schema field in customer copy "
+     "(rephrase using the clinical concept)"),
+
+    # Markdown emphasis is a generator artefact; customer prose should
+    # not carry **bold** or *italic* runs.
+    (re.compile(r"\*\*[^*]+\*\*"),
+     "markdown emphasis '**...**' (drop or rephrase)"),
+
+    # Colon-form Implemented label. The earlier rule caught only
+    # `Implemented = No`; the colon form leaks via copy/paste from
+    # generator output.
+    (re.compile(r"\bImplemented\s*[:=]\s*(Yes|No)\b", re.IGNORECASE),
+     "generator field 'Implemented: Yes/No' in customer copy"),
 
     # Prose-quality patterns. Catch the two failure modes the most
     # recent review surfaced — article + vowel mismatches and the
@@ -415,23 +434,26 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                     f"{cat}/{var}: {prose_field} hits style denylist — {label}",
                 ))
 
-        # Compound criteria require explicit inclusion_criteria prose.
-        # Without it, derive_inclusion_criteria() returns empty and the
-        # rendered workbook ships a blank prose column for the row —
-        # which defeats the audience-split contract (sales / pharma
-        # see no SQL Criteria, so they need the prose). Errors so the
-        # gap blocks `--strict` runs unconditionally; the editorial
-        # pass that backfilled every existing compound row is in the
-        # repo and `seed_inclusion_criteria.py` is a one-shot fix for
-        # any future compound row that ships without prose.
-        if _is_compound_criteria(criteria) and not (v.get("inclusion_criteria") or "").strip():
+        # Any criteria-bearing row (compound OR single-clause) needs
+        # explicit `inclusion_criteria:` prose. The friendly auto-
+        # translation ("Records where the observation concept matches
+        # 'language'.") was removed because it produced QA-style copy
+        # rather than Flatiron-style clinical prose; without explicit
+        # prose, derive_inclusion_criteria returns empty and the
+        # rendered workbook ships a blank Inclusion Criteria cell.
+        # Errors so the gap blocks --strict; the editorial pass that
+        # backfilled every existing row lives in the repo, and
+        # `scripts/rewrite_inclusion_criteria.py` is the canonical
+        # place to add prose for any new criteria-bearing row.
+        if criteria.strip() and not (v.get("inclusion_criteria") or "").strip():
             report.findings.append(Finding(
                 "error", slug,
-                f"{cat}/{var}: compound criteria has no `inclusion_criteria:` "
+                f"{cat}/{var}: criteria has no `inclusion_criteria:` "
                 f"prose — sales / pharma audiences would see a blank "
-                f"Inclusion Criteria cell. Add a one-sentence row-inclusion "
-                f"description to the pack row, or run "
-                f"`python scripts/seed_inclusion_criteria.py` to backfill.",
+                f"Inclusion Criteria cell. Add a one-sentence row-"
+                f"inclusion description to the pack row, or extend the "
+                f"MAPPINGS dict in "
+                f"`scripts/rewrite_inclusion_criteria.py`.",
             ))
 
     return report

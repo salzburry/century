@@ -108,5 +108,6 @@ variables:
     table: observation
     column: value_as_concept_name
     criteria: observation_concept_name ILIKE '%ARIA%'
+    inclusion_criteria: Records are included for each amyloid-related-imaging-abnormality (ARIA) observation recorded for the patient. AAT-specific cohorts split this into ARIA-H (microhemorrhage) and ARIA-E (edema) rows.
     extraction_type: Structured
     notes: ARIA-H (microhemorrhage) and ARIA-E (edema) split out in aat.yaml.

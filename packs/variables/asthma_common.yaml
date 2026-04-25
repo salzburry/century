@@ -268,7 +268,7 @@ variables:
       measurement_concept_name ILIKE '%FEV1%FVC%' OR
       measurement_concept_name ILIKE '%FEV1/FVC%' OR
       measurement_concept_name ILIKE '%FEV 1%FVC%'
-    inclusion_criteria: Records are included for each FEV1/FVC ratio measurement abstracted from a pulmonary-function report for the patient — pre- and post-bronchodilator values used to confirm airflow obstruction and assess bronchodilator reversibility, the diagnostic criterion for asthma.
+    inclusion_criteria: Records are included for each FEV1/FVC ratio measurement abstracted from a pulmonary-function report for the patient. Supports the GINA assessment of variable expiratory airflow limitation and bronchodilator responsiveness when interpreted alongside pre- and post-bronchodilator spirometry and the patient's symptom history.
     extraction_type: Abstracted
 
   # ----- Outcomes - exacerbations and patient-reported outcomes -----
