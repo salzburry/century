@@ -308,7 +308,7 @@ variables:
       procedure_concept_name ILIKE '%diffusing capacity%' OR
       procedure_concept_name ILIKE '%lung volume%' OR
       procedure_concept_name ILIKE '%bronchodilator responsiveness%'
-    inclusion_criteria: Records of Spirometry / Pulmonary Function Test (Procedure) procedures performed for the patient.
+    inclusion_criteria: Records of Spirometry / Pulmonary Function Test procedures performed for the patient.
     extraction_type: Structured
 
   - category: Procedures
@@ -320,7 +320,7 @@ variables:
       procedure_concept_name ILIKE '%pulse oximetry%' OR
       procedure_concept_name ILIKE '%oximetry%' OR
       procedure_concept_name ILIKE '%blood oxygen level%'
-    inclusion_criteria: Records of Pulse Oximetry (Procedure) procedures performed for the patient.
+    inclusion_criteria: Records of Pulse Oximetry procedures performed for the patient.
     extraction_type: Structured
 
   # ----- Reports ------------------------------------------------------
@@ -345,7 +345,7 @@ variables:
       document_type_concept_name ILIKE '%pulmonary%' OR
       document_type_concept_name ILIKE '%spirometry%' OR
       document_type_concept_name ILIKE '%PFT%'
-    inclusion_criteria: Records of Document (Chest imaging / PFT report) documents attached to the patient encounter.
+    inclusion_criteria: Records of Chest imaging / PFT reports filed for the patient.
     extraction_type: Unstructured
     notes: >
       Criteria restricted to chest-/pulmonary-/spirometry-/PFT-named

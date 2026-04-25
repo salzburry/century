@@ -93,7 +93,7 @@ variables:
       drug_concept_name ILIKE '%Razadyne%' OR
       drug_concept_name ILIKE '%Namenda%' OR
       drug_concept_name ILIKE '%Namzaric%'
-    inclusion_criteria: Records of patients receiving Symptomatic ADRD Therapy (Route).
+    inclusion_criteria: Records documenting the route of administration (oral, transdermal, etc.) for symptomatic ADRD therapy exposures.
     extraction_type: Structured
 
   # ----- Outcomes ----------------------------------------------------

@@ -427,7 +427,7 @@ variables:
       document_type_concept_name ILIKE '%imaging%' OR
       document_type_concept_name ILIKE '%CT%' OR
       document_type_concept_name ILIKE '%neuroimaging%'
-    inclusion_criteria: Records of Document (MRI / PET / EEG) documents attached to the patient encounter.
+    inclusion_criteria: Records of MRI / PET / EEG reports filed for the patient.
     extraction_type: Unstructured
 
   - category: Reports

@@ -42,6 +42,7 @@ variables:
       ETL ships it.
     table: eosinophil_standardized
     column: value_as_number
+    inclusion_criteria: Records of standardized absolute blood eosinophil results from the curated eosinophil abstraction table.
     extraction_type: Structured
     # Internal: table ships only in the nimbus_copd_curated schema.
     # If a future cohort adopts the same abstraction, copy this row
