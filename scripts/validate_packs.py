@@ -233,6 +233,20 @@ def _check_prose_quality(text: str) -> list[str]:
     return warnings
 
 
+# Compound-SQL detector. derive_inclusion_criteria() in build_dictionary
+# only auto-translates single-clause `<col>_concept_name ILIKE '%...%'`
+# rows; anything with AND / OR returns empty so the pack author writes
+# explicit prose instead of relying on mechanical translation. The
+# validator mirrors that contract: any compound `criteria:` without an
+# explicit `inclusion_criteria:` is flagged so the rendered Inclusion
+# Criteria column does not ship blank for the majority of variables.
+_COMPOUND_CRITERIA_RE = re.compile(r"\s+(AND|OR)\s+", re.IGNORECASE)
+
+
+def _is_compound_criteria(criteria: str) -> bool:
+    return bool(criteria) and bool(_COMPOUND_CRITERIA_RE.search(criteria))
+
+
 def _check_id_column_name_mismatch(v: dict[str, Any]) -> str | None:
     """Catch the Infusion-Drug-style mistake — variable named as a
     business-facing concept (`Drug`, `Diagnosis`) but the column is
@@ -346,16 +360,36 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                 "warning", slug, f"{cat}/{var}: {id_mismatch}",
             ))
 
-        # Prose quality: description / notes against the STYLE.md denylist.
-        # Currently warnings; will promote to errors once the editorial
-        # pass lands (see packs/STYLE.md).
-        for prose_field in ("description", "notes"):
+        # Prose quality: customer-visible strings against the STYLE.md
+        # denylist. inclusion_criteria is also rendered to customers
+        # (and is the only prose sales / pharma see for compound-SQL
+        # rows), so it gets the same treatment as description / notes.
+        for prose_field in ("description", "notes", "inclusion_criteria"):
             text = v.get(prose_field) or ""
             for label in _check_prose_quality(text):
                 report.findings.append(Finding(
                     "warning", slug,
                     f"{cat}/{var}: {prose_field} hits style denylist — {label}",
                 ))
+
+        # Compound criteria require explicit inclusion_criteria prose.
+        # Without it, derive_inclusion_criteria() returns empty and the
+        # rendered workbook ships a blank prose column for the row —
+        # which defeats the audience-split contract (sales / pharma
+        # see no SQL Criteria, so they need the prose). Errors so the
+        # gap blocks `--strict` runs unconditionally; the editorial
+        # pass that backfilled every existing compound row is in the
+        # repo and `seed_inclusion_criteria.py` is a one-shot fix for
+        # any future compound row that ships without prose.
+        if _is_compound_criteria(criteria) and not (v.get("inclusion_criteria") or "").strip():
+            report.findings.append(Finding(
+                "error", slug,
+                f"{cat}/{var}: compound criteria has no `inclusion_criteria:` "
+                f"prose — sales / pharma audiences would see a blank "
+                f"Inclusion Criteria cell. Add a one-sentence row-inclusion "
+                f"description to the pack row, or run "
+                f"`python scripts/seed_inclusion_criteria.py` to backfill.",
+            ))
 
     return report
 

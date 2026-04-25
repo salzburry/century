@@ -270,6 +270,15 @@ def load_categories_map() -> dict[str, str]:
     return out
 
 
+# Keys the renderer reads from each table_descriptions.yaml entry.
+# Listed here so the loader can normalise them to stripped strings
+# while still preserving any unknown key the YAML carries (the loader
+# contract — see docstring on load_table_descriptions).
+_TABLE_DESCRIPTION_KNOWN_KEYS = (
+    "description", "inclusion_criteria", "data_source", "source_table",
+)
+
+
 def load_table_descriptions() -> dict[str, dict[str, str]]:
     """Load packs/table_descriptions.yaml.
 
@@ -281,30 +290,25 @@ def load_table_descriptions() -> dict[str, dict[str, str]]:
                                     data_source: "Normalized",
                                     source_table: "OMOP CONDITION_OCCURRENCE" } }`
 
-    Always returns a `{table_name: {field: value}}` map. Unknown keys
-    are preserved unchanged so future additions don't require a code
-    change here.
+    Always returns a `{table_name: {field: value}}` map. The four
+    known keys above are normalised (missing → empty, leading /
+    trailing whitespace stripped). Any additional keys present in the
+    YAML are preserved unchanged so future additions to
+    table_descriptions.yaml don't require a code change here.
     """
     raw = _yaml_load(PACKS_DIR / "table_descriptions.yaml").get("tables", {}) or {}
-    out: dict[str, dict[str, str]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for table, payload in raw.items():
         if isinstance(payload, str):
-            out[table] = {
-                "description": payload.strip(),
-                "inclusion_criteria": "",
-                "data_source": "",
-                "source_table": "",
-            }
+            out[table] = {k: "" for k in _TABLE_DESCRIPTION_KNOWN_KEYS}
+            out[table]["description"] = payload.strip()
         elif isinstance(payload, dict):
-            out[table] = {
-                "description": (payload.get("description") or "").strip(),
-                "inclusion_criteria": (payload.get("inclusion_criteria") or "").strip(),
-                "data_source": (payload.get("data_source") or "").strip(),
-                "source_table": (payload.get("source_table") or "").strip(),
-            }
+            entry: dict[str, Any] = dict(payload)
+            for k in _TABLE_DESCRIPTION_KNOWN_KEYS:
+                entry[k] = (entry.get(k) or "").strip() if isinstance(entry.get(k), str) else (entry.get(k) or "")
+            out[table] = entry
         else:
-            out[table] = {"description": "", "inclusion_criteria": "",
-                          "data_source": "", "source_table": ""}
+            out[table] = {k: "" for k in _TABLE_DESCRIPTION_KNOWN_KEYS}
     return out
 
 
@@ -425,21 +429,69 @@ _FRIENDLY_CRITERIA_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-def derive_inclusion_criteria(criteria_sql: str, explicit: str = "") -> str:
+# Per-table fallback prose for variable rows that have NO `criteria:`
+# at all (a row that points at a column unfiltered — typically a
+# demographic, visit, or generic-diagnosis umbrella row). Mirrors the
+# Flatiron convention that every Inclusion Criteria cell is non-blank.
+# Unknown tables fall through to a safe generic default in the helper.
+_TABLE_NO_CRITERIA_DEFAULTS: dict[str, str] = {
+    "person":
+        "One record is included for each patient in the cohort.",
+    "location":
+        "One record is included for each location referenced by a patient in the cohort.",
+    "payer_plan_period":
+        "One record is included for each insurance coverage window for each patient in the cohort.",
+    "visit_occurrence":
+        "One record is included for each visit recorded for each patient in the cohort.",
+    "visit_detail":
+        "One record is included for each visit-detail segment for each patient in the cohort.",
+    "condition_occurrence":
+        "One record is included for each diagnosis recorded for each patient in the cohort.",
+    "drug_exposure":
+        "One record is included for each medication exposure recorded for each patient in the cohort.",
+    "procedure_occurrence":
+        "One record is included for each procedure recorded for each patient in the cohort.",
+    "measurement":
+        "One record is included for each measurement recorded for each patient in the cohort.",
+    "observation":
+        "One record is included for each observation recorded for each patient in the cohort.",
+    "note":
+        "One record is included for each clinical note recorded for each patient in the cohort.",
+    "note_nlp":
+        "One record is included for each NLP-extracted concept identified within a clinical note.",
+    "document":
+        "One record is included for each document attached to a patient encounter.",
+    "death":
+        "One record is included for each patient with a recorded death.",
+    "infusion":
+        "One record is included for each infusion episode recorded for each patient in the cohort.",
+}
+
+
+def derive_inclusion_criteria(criteria_sql: str, explicit: str = "",
+                              table: str = "") -> str:
     """Translate simple SQL criteria into a prose sentence.
 
-    Returns `explicit` when set, the friendly translation when the SQL
-    matches a known shape, or empty string otherwise. Multi-clause
-    criteria (containing AND / OR with parentheses) intentionally do
-    NOT auto-translate — the pack author should add an explicit
-    `inclusion_criteria:` to avoid false confidence in mechanical
-    rewording.
+    Resolution order:
+      1. `explicit` — pack-author prose, returned unchanged.
+      2. Single-clause `<col>_concept_name ILIKE '%X%'` → friendly
+         sentence ("Records where the X concept matches 'Y'.").
+      3. Compound SQL (`AND` / `OR`) → empty string. The validator
+         catches this and forces the pack author to add explicit
+         prose, so this path should never reach a customer workbook.
+      4. No criteria at all → table-keyed default (e.g. "One record
+         is included for each diagnosis recorded for each patient in
+         the cohort.") so the rendered Inclusion Criteria cell is
+         never blank for a generic umbrella row.
     """
     if explicit:
         return explicit.strip()
     sql = (criteria_sql or "").strip()
     if not sql:
-        return ""
+        return _TABLE_NO_CRITERIA_DEFAULTS.get(
+            (table or "").strip(),
+            "Records are included for each patient in the cohort.",
+        )
     if " OR " in sql.upper() or " AND " in sql.upper():
         return ""
     for pat, template in _FRIENDLY_CRITERIA_PATTERNS:
@@ -910,7 +962,9 @@ def resolve_variables(
             extraction_type=extraction,
             notes=notes,
             pii=is_pii(table, column, pii_pairs, pii_patterns),
-            inclusion_criteria=derive_inclusion_criteria(criteria, explicit_inclusion),
+            inclusion_criteria=derive_inclusion_criteria(
+                criteria, explicit_inclusion, table,
+            ),
             field_type=field_type,
             example=example,
             coding_schema=coding_schema,
@@ -1037,7 +1091,7 @@ def build_model(
                     table, v.get("column", ""), pii_pairs, pii_patterns,
                 ),
                 inclusion_criteria=derive_inclusion_criteria(
-                    criteria, (v.get("inclusion_criteria") or "").strip(),
+                    criteria, (v.get("inclusion_criteria") or "").strip(), table,
                 ),
                 field_type="",
                 example="",

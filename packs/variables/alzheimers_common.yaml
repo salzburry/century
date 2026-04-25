@@ -51,6 +51,7 @@ variables:
        drug_concept_name ILIKE '%memantine%' OR
        drug_concept_name ILIKE '%Namenda%' OR
        drug_concept_name ILIKE '%Namzaric%')
+    inclusion_criteria: Records where the medication ingredient matches a Symptomatic ADRD Therapy (Prescription) drug.
     extraction_type: Structured
 
   - category: Medications
@@ -71,6 +72,7 @@ variables:
        drug_concept_name ILIKE '%memantine%' OR
        drug_concept_name ILIKE '%Namenda%' OR
        drug_concept_name ILIKE '%Namzaric%')
+    inclusion_criteria: Records where the medication ingredient matches a Symptomatic ADRD Therapy (Administration) drug.
     extraction_type: Structured
 
   - category: Medications
@@ -91,6 +93,7 @@ variables:
       drug_concept_name ILIKE '%Razadyne%' OR
       drug_concept_name ILIKE '%Namenda%' OR
       drug_concept_name ILIKE '%Namzaric%'
+    inclusion_criteria: Records where the medication ingredient matches a Symptomatic ADRD Therapy (Route) drug.
     extraction_type: Structured
 
   # ----- Outcomes ----------------------------------------------------

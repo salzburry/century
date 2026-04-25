@@ -45,6 +45,7 @@ variables:
       condition_concept_name ILIKE '%asthma%' OR
       condition_concept_name ILIKE '%reactive airway disease%' OR
       condition_concept_name ILIKE '%status asthmaticus%'
+    inclusion_criteria: Records where the diagnosis concept matches the Asthma Diagnosis family.
     extraction_type: Structured
     notes: Indication-defining diagnosis for asthma populations.
 
@@ -65,6 +66,7 @@ variables:
       drug_concept_name ILIKE '%ProAir%' OR
       drug_concept_name ILIKE '%Ventolin%' OR
       drug_concept_name ILIKE '%Proventil%'
+    inclusion_criteria: Records where the medication ingredient matches a Short-acting Beta-agonist (SABA — Reliever) drug.
     extraction_type: Structured
 
   # ----- Medications — controller -----------------------------------
@@ -82,6 +84,7 @@ variables:
       drug_concept_name ILIKE '%beclomethasone%' OR
       drug_concept_name ILIKE '%mometasone%' OR
       drug_concept_name ILIKE '%ciclesonide%'
+    inclusion_criteria: Records where the medication ingredient matches a Inhaled Corticosteroid (ICS — Controller) drug.
     extraction_type: Structured
     notes: >
       Includes mono-ICS and ICS appearing inside a combination
@@ -111,6 +114,7 @@ variables:
        drug_concept_name ILIKE '%vilanterol%') OR
       (drug_concept_name ILIKE '%mometasone%' AND
        drug_concept_name ILIKE '%formoterol%')
+    inclusion_criteria: Records where the medication ingredient matches a ICS + LABA Combination drug.
     extraction_type: Structured
 
   - category: Medications
@@ -127,6 +131,7 @@ variables:
       drug_concept_name ILIKE '%Singulair%' OR
       drug_concept_name ILIKE '%Accolate%' OR
       drug_concept_name ILIKE '%Zyflo%'
+    inclusion_criteria: Records where the medication ingredient matches a Leukotriene Receptor Antagonist (LTRA) drug.
     extraction_type: Structured
 
   - category: Medications
@@ -139,6 +144,7 @@ variables:
     criteria: >
       drug_concept_name ILIKE '%tiotropium%' OR
       drug_concept_name ILIKE '%Spiriva Respimat%'
+    inclusion_criteria: Records where the medication ingredient matches a Long-acting Muscarinic Antagonist (LAMA — Add-on) drug.
     extraction_type: Structured
 
   - category: Medications
@@ -164,6 +170,7 @@ variables:
       drug_concept_name ILIKE '%Fasenra%' OR
       drug_concept_name ILIKE '%Dupixent%' OR
       drug_concept_name ILIKE '%Tezspire%'
+    inclusion_criteria: Records where the medication ingredient matches a Asthma Biologic (Anti-IgE / Anti-IL5 / Anti-IL4R / Anti-TSLP) drug.
     extraction_type: Structured
     notes: >
       Each biologic has its own eligibility criteria (total IgE,
@@ -185,6 +192,7 @@ variables:
       drug_concept_name ILIKE '%prednisolone%' OR
       drug_concept_name ILIKE '%methylprednisolone%' OR
       drug_concept_name ILIKE '%dexamethasone%'
+    inclusion_criteria: Records where the medication ingredient matches a Systemic Corticosteroid (Oral / IV) drug.
     extraction_type: Structured
     notes: >
       Captures all systemic steroid exposures. Attributing a course
@@ -206,6 +214,7 @@ variables:
       (measurement_concept_name ILIKE '%total%' OR
        measurement_concept_name ILIKE '%serum%' OR
        measurement_concept_name ILIKE '%immunoglobulin E%')
+    inclusion_criteria: Records where the measurement is for Total IgE (Immunoglobulin E).
     extraction_type: Structured
     notes: >
       Criteria requires "IgE" plus a total/serum/immunoglobulin E
@@ -223,6 +232,7 @@ variables:
       measurement_concept_name ILIKE '%exhaled nitric oxide%' OR
       measurement_concept_name ILIKE '%FeNO%' OR
       measurement_concept_name ILIKE '%fractional nitric oxide%'
+    inclusion_criteria: Records where the measurement is for FeNO (Fractional Exhaled Nitric Oxide).
     extraction_type: Structured
     notes: >
       TODO (clinical review): FeNO is not universally billed as a
@@ -242,6 +252,7 @@ variables:
       measurement_concept_name ILIKE '%FEV 1%' OR
       measurement_concept_name ILIKE '%forced expiratory volume%1%' OR
       measurement_concept_name ILIKE '%forced expir%1 second%'
+    inclusion_criteria: Records where the abstracted concept captures FEV1 (Forced Expiratory Volume in 1 second) for the patient.
     extraction_type: Abstracted
     notes: >
       Abstracted from PFT reports rather than a structured lab feed
@@ -256,6 +267,7 @@ variables:
     criteria: >
       measurement_concept_name ILIKE '%FVC%' OR
       measurement_concept_name ILIKE '%forced vital capacity%'
+    inclusion_criteria: Records where the abstracted concept captures FVC (Forced Vital Capacity) for the patient.
     extraction_type: Abstracted
 
   - category: Labs / Biomarkers
@@ -269,6 +281,7 @@ variables:
       measurement_concept_name ILIKE '%FEV1%FVC%' OR
       measurement_concept_name ILIKE '%FEV1/FVC%' OR
       measurement_concept_name ILIKE '%FEV 1%FVC%'
+    inclusion_criteria: Records where the abstracted concept captures FEV1 / FVC Ratio for the patient.
     extraction_type: Abstracted
 
   # ----- Outcomes - exacerbations and patient-reported outcomes -----
@@ -287,6 +300,7 @@ variables:
        (condition_concept_name ILIKE '%acute exacerbation%' OR
         condition_concept_name ILIKE '%with exacerbation%' OR
         condition_concept_name ILIKE '%attack%'))
+    inclusion_criteria: Records where the abstracted concept captures Asthma Exacerbation (Abstracted) for the patient.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): confirm the exacerbation definition
@@ -306,6 +320,7 @@ variables:
       observation_concept_name ILIKE '%Asthma Control Test%' OR
       observation_concept_name ILIKE '%ACT score%' OR
       observation_concept_name ILIKE '%ACT total%'
+    inclusion_criteria: Records where the abstracted concept captures ACT Score (Asthma Control Test) for the patient.
     extraction_type: Abstracted
     notes: >
       TODO (clinical review): ACT is often captured on paper or

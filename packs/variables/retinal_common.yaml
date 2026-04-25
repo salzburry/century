@@ -94,6 +94,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%heart rate%' OR observation_concept_name ILIKE '%pulse%'
+    inclusion_criteria: Records where the observation captures a Heart Rate value.
     extraction_type: Structured
 
   - category: Vitals
@@ -102,6 +103,7 @@ variables:
     table: observation
     column: value_as_number
     criteria: observation_concept_name ILIKE '%body weight%' OR observation_concept_name ILIKE '%weight%'
+    inclusion_criteria: Records where the observation captures a Body Weight value.
     extraction_type: Structured
 
   - category: Vitals
@@ -120,6 +122,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%body mass index%' OR
       observation_concept_name ILIKE '%BMI%'
+    inclusion_criteria: Records where the observation captures a BMI (Body Mass Index) value.
     extraction_type: Structured
 
   # ----- Observations -------------------------------------------------
@@ -140,6 +143,7 @@ variables:
       observation_concept_name ILIKE '%smoking%' OR
       observation_concept_name ILIKE '%tobacco%' OR
       observation_concept_name ILIKE '%cigarette%'
+    inclusion_criteria: Records where the observation concept matches Smoking Status.
     extraction_type: Structured
 
   # ----- Diagnosis ----------------------------------------------------
@@ -182,6 +186,7 @@ variables:
       condition_concept_name ILIKE '%primary%hypertension%' OR
       condition_concept_name ILIKE '%benign hypertension%' OR
       condition_concept_name ILIKE '%hypertensive disorder%'
+    inclusion_criteria: Records where the diagnosis concept matches the Hypertension family.
     extraction_type: Structured
 
   - category: Diagnosis
@@ -197,6 +202,7 @@ variables:
       condition_concept_name ILIKE '%intraocular lens%' OR
       condition_concept_name ILIKE '%pseudophakia%' OR
       condition_concept_name ILIKE '%aphakia%'
+    inclusion_criteria: Records where the diagnosis concept matches the Intraocular Lens / Post-Cataract State family.
     extraction_type: Structured
 
   # Kept on the shared retinal base — T2DM is cohort-defining for
@@ -216,6 +222,7 @@ variables:
       condition_concept_name ILIKE '%type 2 diabetes%' OR
       condition_concept_name ILIKE '%diabetes mellitus type 2%' OR
       condition_concept_name ILIKE '%DM type 2%'
+    inclusion_criteria: Records where the diagnosis concept matches the Type 2 Diabetes Mellitus family.
     extraction_type: Structured
     notes: >
       Does NOT match Type 1 DM (different CV/renal trajectory) or
@@ -250,6 +257,7 @@ variables:
       observation_concept_name ILIKE '%macular grid%' OR
       observation_concept_name ILIKE '%macular%total volume%' OR
       observation_concept_name ILIKE '%total volume%OCT%'
+    inclusion_criteria: Records where the observation captures a Macular Grid Total Volume (OCT) value.
     extraction_type: Structured
 
   - category: Labs / Biomarkers
@@ -260,6 +268,7 @@ variables:
     criteria: >
       observation_concept_name ILIKE '%average thickness%' OR
       observation_concept_name ILIKE '%average retinal thickness%'
+    inclusion_criteria: Records where the observation captures a Average Retinal Thickness (OCT) value.
     extraction_type: Structured
 
   # ----- Visits -------------------------------------------------------
@@ -294,6 +303,7 @@ variables:
     criteria: >
       procedure_concept_name ILIKE '%intravitreal injection%' OR
       procedure_concept_name ILIKE '%intravitreal%pharmacolog%'
+    inclusion_criteria: Records where the procedure concept matches a Intravitreal Injection entry.
     extraction_type: Structured
 
   - category: Procedures
@@ -308,6 +318,7 @@ variables:
       procedure_concept_name ILIKE '%photocoagulation%' OR
       procedure_concept_name ILIKE '%panretinal%' OR
       procedure_concept_name ILIKE '%retinal laser%'
+    inclusion_criteria: Records where the procedure concept matches a Retinal Photocoagulation / Laser entry.
     extraction_type: Structured
 
   # ----- Reports ------------------------------------------------------
