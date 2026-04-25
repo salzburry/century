@@ -54,10 +54,4 @@ variables:
       procedure_concept_name ILIKE '%smoking status%'
     inclusion_criteria: Records are included for each smoking-status SNOMED procedure recorded for the patient — current/former/never tobacco user, current/former/never smoker, or explicit smoking-status concepts. Cessation and counselling procedures (CPT 99406-99407) are excluded.
     extraction_type: Structured
-    notes: >
-      Parallel to the observation-side Smoking Status row. Combined
-      cohort-level counts require de-duplicating by person across
-      the two rows because some sites may populate both. Cessation
-      and counselling procedures (e.g. CPT 99406-99407, "Smoking
-      and tobacco use cessation counseling") are deliberately
-      excluded — they record an intervention, not a patient status.
+    notes: Parallel to the observation-side Smoking Status row. Combined cohort-level counts require de-duplicating by person across the two rows. Cessation and counselling procedures (CPT 99406-99407) record an intervention, not a patient status, and are excluded.

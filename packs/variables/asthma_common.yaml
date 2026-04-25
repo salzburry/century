@@ -118,10 +118,13 @@ variables:
     extraction_type: Structured
 
   - category: Medications
-    variable: Leukotriene Receptor Antagonist (LTRA)
+    variable: Leukotriene Modifier (LTRA / 5-Lipoxygenase Inhibitor)
     description: >
-      Oral leukotriene receptor antagonists — montelukast (Singulair),
-      zafirlukast, and 5-lipoxygenase inhibitor zileuton.
+      Oral leukotriene-pathway modifiers — leukotriene receptor
+      antagonists montelukast (Singulair) and zafirlukast (Accolate),
+      and the 5-lipoxygenase inhibitor zileuton (Zyflo). Two
+      pharmacologic classes grouped because they share the same
+      asthma-controller indication.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -131,7 +134,7 @@ variables:
       drug_concept_name ILIKE '%Singulair%' OR
       drug_concept_name ILIKE '%Accolate%' OR
       drug_concept_name ILIKE '%Zyflo%'
-    inclusion_criteria: Records are included for each leukotriene-receptor-antagonist exposure (montelukast/Singulair, zafirlukast, zileuton) recorded for the patient.
+    inclusion_criteria: Records are included for each leukotriene-modifier exposure recorded for the patient — leukotriene-receptor antagonists montelukast (Singulair) and zafirlukast (Accolate), and the 5-lipoxygenase inhibitor zileuton (Zyflo).
     extraction_type: Structured
 
   - category: Medications
@@ -172,11 +175,7 @@ variables:
       drug_concept_name ILIKE '%Tezspire%'
     inclusion_criteria: Records are included for each asthma-biologic exposure recorded for the patient — omalizumab (Xolair, anti-IgE), mepolizumab (Nucala) and reslizumab (Cinqair, anti-IL5), benralizumab (Fasenra, anti-IL5R), dupilumab (Dupixent, anti-IL4R), or tezepelumab (Tezspire, anti-TSLP).
     extraction_type: Structured
-    notes: >
-      Each biologic has its own eligibility criteria (total IgE,
-      eosinophil count, age); row reports any-biologic exposure. Do
-      not use this row to attribute a specific biologic without
-      per-ingredient filtering.
+    notes: Each biologic has its own eligibility criteria (total IgE, eosinophil count, age); this row reports any-biologic exposure. Per-ingredient filtering is needed to attribute a specific agent.
 
   - category: Medications
     variable: Systemic Corticosteroid (Oral / IV)
@@ -194,10 +193,7 @@ variables:
       drug_concept_name ILIKE '%dexamethasone%'
     inclusion_criteria: Records are included for each systemic-corticosteroid exposure (prednisone, prednisolone, methylprednisolone, dexamethasone) recorded for the patient. Attributing a course to an asthma exacerbation requires a temporal cross-reference with the Asthma Exacerbation diagnosis row.
     extraction_type: Structured
-    notes: >
-      Captures all systemic steroid exposures. Attributing a course
-      to an asthma exacerbation requires a temporal cross-reference
-      with the Asthma Exacerbation diagnosis row.
+    notes: Captures all systemic steroid exposures. Attributing a course to an asthma exacerbation requires a temporal cross-reference with the Asthma Exacerbation diagnosis row.
 
   # ----- Labs / Biomarkers — T2 inflammation + PFT ------------------
   # Eosinophils live in respiratory_common. IgE and FeNO are asthma-
@@ -216,10 +212,7 @@ variables:
        measurement_concept_name ILIKE '%immunoglobulin E%')
     inclusion_criteria: Records are included for each total serum IgE measurement recorded for the patient. Allergen-specific IgE panels are excluded.
     extraction_type: Structured
-    notes: >
-      Criteria requires "IgE" plus a total/serum/immunoglobulin E
-      qualifier so allergen-specific IgE panels (which can be
-      hundreds of individual concepts) don't dominate this row.
+    notes: Scoped to total / serum / immunoglobulin-E qualifiers so allergen-specific IgE panels (which can run to hundreds of concepts) do not dominate this row.
 
   - category: Labs / Biomarkers
     variable: FeNO (Fractional Exhaled Nitric Oxide)
@@ -234,10 +227,7 @@ variables:
       measurement_concept_name ILIKE '%fractional nitric oxide%'
     inclusion_criteria: Records are included for each fractional-exhaled-nitric-oxide (FeNO) measurement recorded for the patient — an airway-eosinophilic-inflammation marker used to phenotype type-2-high asthma.
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): FeNO is not universally billed as a
-      lab; some sites capture it as an observation. Expect
-      Implemented=No until site-specific mapping is confirmed.
+    notes: Not universally billed as a lab; some sites capture FeNO as an observation, in which case this row will be sparse.
 
   - category: Labs / Biomarkers
     variable: FEV1 (Forced Expiratory Volume in 1 second)
@@ -254,10 +244,7 @@ variables:
       measurement_concept_name ILIKE '%forced expir%1 second%'
     inclusion_criteria: Records are included for each FEV1 (forced expiratory volume in one second) measurement abstracted from a pulmonary-function report for the patient.
     extraction_type: Abstracted
-    notes: >
-      Abstracted from PFT reports rather than a structured lab feed
-      at most sites. Expect Implemented=No until the per-cohort
-      abstraction pipeline lands.
+    notes: Abstracted from PFT reports rather than a structured lab feed at most sites; per-cohort abstraction pipelines may be needed.
 
   - category: Labs / Biomarkers
     variable: FVC (Forced Vital Capacity)
@@ -281,7 +268,7 @@ variables:
       measurement_concept_name ILIKE '%FEV1%FVC%' OR
       measurement_concept_name ILIKE '%FEV1/FVC%' OR
       measurement_concept_name ILIKE '%FEV 1%FVC%'
-    inclusion_criteria: Records are included for each post-bronchodilator FEV1/FVC ratio abstracted from a pulmonary-function report for the patient — ratio < 0.70 confirms COPD per GOLD criteria.
+    inclusion_criteria: Records are included for each FEV1/FVC ratio measurement abstracted from a pulmonary-function report for the patient — pre- and post-bronchodilator values used to confirm airflow obstruction and assess bronchodilator reversibility, the diagnostic criterion for asthma.
     extraction_type: Abstracted
 
   # ----- Outcomes - exacerbations and patient-reported outcomes -----
@@ -302,11 +289,7 @@ variables:
         condition_concept_name ILIKE '%attack%'))
     inclusion_criteria: Records are included for each acute-asthma-exacerbation event abstracted for the patient — status asthmaticus, or asthma with acute exacerbation, with-exacerbation, or attack qualifiers.
     extraction_type: Abstracted
-    notes: >
-      TODO (clinical review): confirm the exacerbation definition
-      (condition-only vs visit-type + dx + steroid course). Current
-      criteria is narrow to avoid matching chronic or well-controlled
-      asthma.
+    notes: Confirm the exacerbation definition per cohort (condition-only vs visit-type + diagnosis + steroid course). Current criteria is narrow to avoid matching chronic or well-controlled asthma.
 
   - category: Outcomes
     variable: ACT Score (Asthma Control Test)
@@ -322,7 +305,4 @@ variables:
       observation_concept_name ILIKE '%ACT total%'
     inclusion_criteria: Records are included for each Asthma Control Test (ACT) score abstracted from the patient's clinical notes — ACT < 20 indicates poorly controlled asthma.
     extraction_type: Abstracted
-    notes: >
-      TODO (clinical review): ACT is often captured on paper or
-      within the clinical note; expect Implemented=No unless a
-      dedicated ACT abstraction exists.
+    notes: Often captured on paper or within the clinical note; a dedicated ACT abstraction may be needed at some sites.

@@ -183,10 +183,7 @@ variables:
       observation_concept_name ILIKE '%BMI%'
     inclusion_criteria: Records are included for each body-mass-index (BMI) measurement recorded for the patient.
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): some sites record BMI in the measurement
-      table instead of observation. If Implemented=No, promote an
-      alternate row on measurement.measurement_concept_name.
+    notes: Some sites record BMI in the `measurement` table rather than `observation`; an alternate row on measurement_concept_name may be needed to surface those sites.
 
   # ----- Observations -------------------------------------------------
   - category: Observations
@@ -212,13 +209,7 @@ variables:
       observation_concept_name ILIKE '%cigarette%'
     inclusion_criteria: Records are included for each smoking-status observation (current, former, or never smoker; tobacco use; cigarette use) recorded for the patient.
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): some warehouses map smoking status onto
-      condition_occurrence (e.g. "Tobacco use disorder") instead of
-      observation. If Implemented=No for a site, confirm whether to add
-      a condition-side mirror of this row. Pack-year burden is a
-      separate abstracted variable; not included here until a live
-      cohort confirms a concept-name pattern worth matching.
+    notes: Some warehouses map smoking status onto condition_occurrence (e.g. "Tobacco use disorder") instead of observation; the DRG cohort also surfaces it as a procedure-coded SNOMED concept. Pack-year burden is a separate abstracted variable.
 
   # ----- Diagnosis ----------------------------------------------------
   - category: Diagnosis
@@ -266,11 +257,7 @@ variables:
        measurement_concept_name ILIKE '%#%')
     inclusion_criteria: Records are included for each blood eosinophil count (absolute or percentage, from CBC or differential panels) recorded for the patient. Sputum and tissue-biopsy eosinophil measurements are excluded.
     extraction_type: Structured
-    notes: >
-      Criteria requires both "eosinophil" and a blood/CBC/differential
-      qualifier to avoid matching sputum-eosinophil or tissue-biopsy
-      eosinophil concept names. Widen carefully if a site records
-      eosinophil counts without a qualifier column.
+    notes: Scoped to blood / CBC / differential / absolute / percentage qualifiers so sputum and tissue-biopsy eosinophil concepts are not counted here.
 
   # ----- Visits -------------------------------------------------------
   - category: Visits
@@ -348,12 +335,4 @@ variables:
       document_type_concept_name ILIKE '%PFT%'
     inclusion_criteria: Records are included for each chest-imaging or pulmonary-function-test document attached to the patient encounter — chest X-ray, chest CT, spirometry, or PFT reports.
     extraction_type: Unstructured
-    notes: >
-      Criteria restricted to chest-/pulmonary-/spirometry-/PFT-named
-      document types. The broader %imaging% and %radiology% matches
-      from an earlier draft were dropped because they pull in every
-      non-respiratory imaging document (abdominal CT, mammography,
-      musculoskeletal MRI). Sites that file PFT reports under a
-      generic "Summary" or "Continuity of Care Document" type will
-      show Implemented=No until a more specific document-type label
-      is available.
+    notes: Sites that file PFT reports under a generic document type (e.g. "Summary" or "Continuity of Care Document") may be sparse on this row until a more specific document-type label is available.

@@ -120,11 +120,7 @@ variables:
       observation_concept_name ILIKE '%diastolic blood pressure%'
     inclusion_criteria: Records are included for each systolic or diastolic blood-pressure measurement stored as a numeric observation for the patient. Combined-format readings (e.g. "120/80") appear under the Blood Pressure (Combined) row instead.
     extraction_type: Structured
-    notes: >
-      Criteria is deliberately scoped to systolic / diastolic so
-      the generic "Blood pressure" concept (typically stored as
-      a value_as_string) doesn't leak into this numeric row.
-      Combined BP strings are captured by the row above.
+    notes: Scoped to systolic and diastolic concepts so the generic "Blood pressure" concept (typically stored as a string) does not leak into this numeric row. Combined-format readings appear under the Blood Pressure (Combined) row instead.
 
   - category: Vitals
     variable: Temperature
@@ -203,12 +199,7 @@ variables:
       observation_concept_name ILIKE '%cigarette%'
     inclusion_criteria: Records are included for each smoking-status observation (current, former, or never smoker; tobacco use; cigarette use) recorded for the patient.
     extraction_type: Structured
-    notes: >
-      Captures smoking status when it lives in the OMOP `observation`
-      table. If a cohort records smoking only via a procedure-coded
-      status concept, the live build will show Implemented=No on
-      this row and the parallel procedure-side row in the cohort's
-      own pack carries the signal instead.
+    notes: Some warehouses map smoking status onto condition_occurrence (e.g. "Tobacco use disorder") instead of observation; the DRG cohort also surfaces it as a procedure-coded SNOMED concept. Pack-year burden is a separate abstracted variable.
 
   # ----- Diagnosis ----------------------------------------------------
   - category: Diagnosis
@@ -296,10 +287,10 @@ variables:
   - category: Diagnosis
     variable: Hypertension
     description: >
-      Essential / primary hypertension — the dominant CKD comorbidity
-      and one of its leading causes. Hypertensive-renal-disease
-      variants are tracked by the CKD Diagnosis row above and are
-      deliberately excluded here to avoid double counting.
+      Essential or primary hypertension — the dominant CKD comorbidity
+      and one of its leading causes. Hypertensive renal disease is
+      tracked under the CKD Diagnosis row, so this row stays scoped
+      to non-renal hypertensive disorders.
     table: condition_occurrence
     column: condition_concept_name
     criteria: >
@@ -309,10 +300,7 @@ variables:
       condition_concept_name ILIKE '%benign hypertension%'
     inclusion_criteria: Records are included for each diagnosis of essential or primary hypertension, hypertensive disorder, or benign hypertension recorded for the patient. Hypertensive renal disease is captured under the CKD Diagnosis row to avoid double counting.
     extraction_type: Structured
-    notes: >
-      Narrowed to essential / primary / hypertensive-disorder
-      variants to avoid double-counting hypertensive-renal-disease
-      patients already covered by the CKD Diagnosis row.
+    notes: Narrowed to essential, primary, and hypertensive-disorder variants so hypertensive renal disease — already captured by the CKD Diagnosis row — is not counted twice.
 
   - category: Diagnosis
     variable: Vitamin D Deficiency
@@ -346,10 +334,7 @@ variables:
        measurement_concept_name ILIKE '%blood%')
     inclusion_criteria: Records are included for each serum, plasma, or blood creatinine measurement recorded for the patient. Urine-creatinine measurements are excluded.
     extraction_type: Structured
-    notes: >
-      AND-qualifier on "serum/plasma/blood" prevents urine-creatinine
-      panels from polluting this row. Urine creatinine is captured by
-      the UACR row below.
+    notes: Scoped to serum, plasma, or blood specimens; urine creatinine is captured separately under the UACR row.
 
   - category: Labs / Biomarkers
     variable: Estimated GFR (eGFR)
@@ -365,12 +350,7 @@ variables:
       measurement_concept_name ILIKE '%estimated GFR%'
     inclusion_criteria: Records are included for each estimated glomerular filtration rate (eGFR) value abstracted for the patient — derived from serum creatinine, age, and sex; drives CKD G1–G5 staging.
     extraction_type: Abstracted
-    notes: >
-      TODO (clinical review): some sites store eGFR only as a derived
-      flag in the EHR rather than a measurement row; expect
-      Implemented=No until live data confirms the concept-name
-      pattern. If Implemented=No, downstream consumers should compute
-      eGFR from the Serum Creatinine row using CKD-EPI 2021.
+    notes: Some sites store eGFR only as a derived flag in the EHR rather than as a discrete measurement; downstream consumers can compute eGFR from the Serum Creatinine row using CKD-EPI 2021 when this row is sparse.
 
   - category: Labs / Biomarkers
     variable: BUN (Urea Nitrogen)
@@ -400,12 +380,7 @@ variables:
       measurement_concept_name ILIKE '%urine%'
     inclusion_criteria: Records are included for each urine albumin/creatinine ratio (UACR) measurement recorded for the patient — gold-standard albuminuria marker driving CKD A1–A3 staging.
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): some cohorts ship a urea/creatinine
-      ratio in urine instead of the canonical albumin/creatinine
-      ratio — the two are different labs and the urea version does
-      not match this row. Confirm at the per-cohort level whether
-      true UACR is recorded.
+    notes: Some cohorts report a urea/creatinine ratio in urine instead of the canonical albumin/creatinine ratio; the two are different labs and the urea form does not match this row.
 
   - category: Labs / Biomarkers
     variable: Hemoglobin
@@ -420,9 +395,7 @@ variables:
        measurement_concept_name ILIKE '%mass/volume%')
     inclusion_criteria: Records are included for each blood hemoglobin measurement recorded for the patient. Glycated hemoglobin (HbA1c) is captured separately.
     extraction_type: Structured
-    notes: >
-      AND-qualifier prevents glycated-hemoglobin (HbA1c) and other
-      hemoglobin variants from being counted here.
+    notes: Scoped to whole-blood and mass-per-volume hemoglobin; glycated hemoglobin (HbA1c) and other hemoglobin variants are tracked separately.
 
   - category: Labs / Biomarkers
     variable: Serum Potassium
@@ -458,11 +431,7 @@ variables:
        measurement_concept_name ILIKE '%blood%')
     inclusion_criteria: Records are included for each serum, plasma, or blood calcium measurement recorded for the patient. Urine calcium and calcium-channel-blocker drug mentions are excluded.
     extraction_type: Structured
-    notes: >
-      AND-qualifier on "serum / plasma / blood" so urine-calcium
-      and calcium-channel-blocker drug mentions don't leak in.
-      Ionised vs total calcium distinction is left to a per-cohort
-      row if a reviewer needs it.
+    notes: Scoped to serum, plasma, and blood specimens; urine calcium and calcium-channel-blocker drug mentions are excluded. Ionised vs total calcium can be split in a per-cohort row.
 
   - category: Labs / Biomarkers
     variable: Serum Sodium
@@ -479,10 +448,7 @@ variables:
        measurement_concept_name ILIKE '%blood%')
     inclusion_criteria: Records are included for each serum, plasma, or blood sodium measurement recorded for the patient. Urine sodium and sodium-bicarbonate drug mentions are excluded.
     extraction_type: Structured
-    notes: >
-      AND-qualifier keeps urine sodium and "sodium bicarbonate"
-      drug mentions out; the drug is captured by the Sodium
-      Bicarbonate medication row.
+    notes: Scoped to serum, plasma, and blood specimens; urine sodium and sodium-bicarbonate drug mentions are excluded — the drug is captured under the Sodium Bicarbonate medication row.
 
   - category: Labs / Biomarkers
     variable: HbA1c (Hemoglobin A1c)
@@ -499,11 +465,7 @@ variables:
       measurement_concept_name ILIKE '%A1c%'
     inclusion_criteria: Records are included for each glycated-hemoglobin (HbA1c, A1c) measurement recorded for the patient.
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): standard-of-care for diabetic CKD but
-      not always captured under a measurement-side concept. Expect
-      Implemented=Yes only at sites that store HbA1c in `measurement`
-      rather than `observation`.
+    notes: Standard-of-care for diabetic CKD but not always stored under a measurement-side concept; sites that record HbA1c in `observation` will not surface here.
 
   # ----- Visits -------------------------------------------------------
   - category: Visits
@@ -634,10 +596,7 @@ variables:
       drug_concept_name ILIKE '%Invokana%'
     inclusion_criteria: Records are included for each SGLT2-inhibitor exposure (empagliflozin/Jardiance, dapagliflozin/Farxiga, canagliflozin/Invokana, ertugliflozin) recorded for the patient.
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): modern standard-of-care add-on for
-      CKD. Expect Implemented=No at sites whose data predates the
-      mid-2021 DAPA-CKD / EMPA-KIDNEY adoption window.
+    notes: Lower utilisation is expected at sites whose data predates broad SGLT2 adoption.
 
   - category: Medications
     variable: Mineralocorticoid Receptor Antagonist (MRA)
@@ -655,10 +614,7 @@ variables:
       drug_concept_name ILIKE '%Aldactone%'
     inclusion_criteria: Records are included for each mineralocorticoid-receptor-antagonist exposure recorded for the patient — steroidal MRAs (spironolactone/Aldactone, eplerenone) and the non-steroidal MRA finerenone (Kerendia).
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): not directly confirmed in the dumps.
-      Finerenone (Kerendia) is the newest agent; expect lower
-      utilisation in older cohorts.
+    notes: Finerenone (Kerendia) is the newest agent in this class; lower utilisation in older cohorts.
 
   - category: Medications
     variable: Loop Diuretic
@@ -703,14 +659,7 @@ variables:
       drug_concept_name ILIKE '%Procardia%'
     inclusion_criteria: Records are included for each calcium-channel-blocker exposure recorded for the patient — dihydropyridines (amlodipine/Norvasc, nifedipine/Procardia, felodipine, nicardipine, isradipine) and non-dihydropyridines (diltiazem, verapamil).
     extraction_type: Structured
-    notes: >
-      CCBs are not CKD-specific but are foundational for HTN
-      management in CKD (where ACE/ARB alone rarely reaches BP
-      targets). Row is deliberately by explicit-ingredient list to
-      avoid the banned '%blocker%' wildcard. Split into DHP vs
-      non-DHP per-cohort packs if a reviewer needs the class-level
-      breakdown — the clinical literature typically treats them
-      separately for MI / heart-failure co-management.
+    notes: CCBs are foundational for blood-pressure management in CKD (where ACE-i / ARB alone rarely reaches target) but are not CKD-specific. Class-level breakdown into dihydropyridine and non-dihydropyridine subtypes is available in per-cohort packs.
 
   - category: Medications
     variable: Statin (HMG-CoA Reductase Inhibitor)
@@ -730,9 +679,7 @@ variables:
       drug_concept_name ILIKE '%fluvastatin%'
     inclusion_criteria: Records are included for each statin exposure (atorvastatin, rosuvastatin, simvastatin, pravastatin, pitavastatin, lovastatin, fluvastatin) recorded for the patient.
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): not directly confirmed in the dumps but
-      standard-of-care in CKD with cardiovascular risk.
+    notes: Standard-of-care in CKD with cardiovascular risk; not all sites surface every branded statin under the same concept.
 
   # Provenance: aspirin 81 MG appears among the top drugs in both
   # Balboa and DRG raw dumps (DRG #1 drug, 1.2%).
@@ -781,7 +728,7 @@ variables:
       drug_concept_name ILIKE '%PhosLo%'
     inclusion_criteria: Records are included for each phosphate-binder exposure (sevelamer/Renvela/Renagel, calcium acetate/PhosLo, lanthanum, sucroferric oxyhydroxide, ferric citrate) recorded for the patient.
     extraction_type: Structured
-    notes: TODO (clinical review) — utilisation typically appears in dialysis-eligible patients only.
+    notes: Utilisation typically appears in dialysis-eligible patients only.
 
   - category: Medications
     variable: Potassium Binder
@@ -801,7 +748,7 @@ variables:
       drug_concept_name ILIKE '%Kayexalate%'
     inclusion_criteria: Records are included for each potassium-binder exposure (patiromer/Veltassa, sodium zirconium cyclosilicate/Lokelma, sodium polystyrene sulfonate/Kayexalate) recorded for the patient.
     extraction_type: Structured
-    notes: TODO (clinical review) — newer agents (patiromer, Lokelma) may not appear in older cohorts.
+    notes: Newer agents (patiromer, sodium zirconium cyclosilicate) may not appear in older cohorts.
 
   - category: Medications
     variable: Erythropoiesis-Stimulating Agent (ESA)
@@ -821,7 +768,7 @@ variables:
       drug_concept_name ILIKE '%Mircera%'
     inclusion_criteria: Records are included for each erythropoiesis-stimulating-agent exposure recorded for the patient — epoetin alfa (Epogen, Procrit), darbepoetin alfa (Aranesp), or methoxy polyethylene glycol-epoetin beta (Mircera).
     extraction_type: Structured
-    notes: TODO (clinical review) — utilisation typically appears in dialysis or pre-dialysis CKD patients.
+    notes: Utilisation typically appears in dialysis or pre-dialysis CKD patients.
 
   # ----- Reports ------------------------------------------------------
   - category: Reports
@@ -846,11 +793,7 @@ variables:
       condition_concept_name ILIKE '%end stage renal disease%'
     inclusion_criteria: Records are included for each first-dialysis transition event abstracted for the patient — captured via a dependence-on-dialysis or end-stage-renal-disease condition row. Full algorithmic definition requires joining the first dialysis procedure with the first ESRD condition per patient.
     extraction_type: Abstracted
-    notes: >
-      TODO (clinical review): condition-side proxy only. A full
-      algorithmic dialysis-initiation definition requires joining the
-      first procedure_occurrence dialysis row with the first ESRD or
-      dependence-on-dialysis condition row per patient.
+    notes: Condition-side proxy only. A full algorithmic dialysis-initiation definition requires joining the first dialysis procedure with the first ESRD or dependence-on-dialysis condition per patient.
 
   - category: Outcomes
     variable: Kidney Transplant (Abstracted)
@@ -867,7 +810,4 @@ variables:
       condition_concept_name ILIKE '%transplanted kidney%'
     inclusion_criteria: Records are included for each kidney-transplant event abstracted for the patient — kidney transplant, renal transplant, post-transplant kidney, or transplanted-kidney concepts.
     extraction_type: Abstracted
-    notes: >
-      TODO (clinical review): some sites record transplant only on
-      procedure_occurrence; if Implemented=No here, mirror the row
-      onto procedure_occurrence with appropriate CPT criteria.
+    notes: Some sites record transplant only as a procedure; if this row is sparse, mirror the row onto procedure_occurrence with appropriate CPT criteria.

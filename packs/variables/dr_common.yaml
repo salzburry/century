@@ -140,9 +140,7 @@ variables:
       drug_concept_name ILIKE '%Invokana%'
     inclusion_criteria: Records are included for each SGLT2-inhibitor exposure (empagliflozin/Jardiance, dapagliflozin/Farxiga, canagliflozin/Invokana, ertugliflozin) recorded for the patient.
     extraction_type: Structured
-    notes: >
-      Expect Implemented=No at sites whose data predates broad
-      SGLT2 adoption. Row kept for completeness.
+    notes: Lower utilisation is expected at sites whose data predates broad SGLT2 adoption.
 
   - category: Medications
     variable: GLP-1 Receptor Agonist
@@ -165,11 +163,7 @@ variables:
       drug_concept_name ILIKE '%Victoza%'
     inclusion_criteria: Records are included for each GLP-1 receptor agonist exposure recorded for the patient — semaglutide (Ozempic, Wegovy), liraglutide (Victoza), dulaglutide (Trulicity), exenatide, or tirzepatide (Mounjaro).
     extraction_type: Structured
-    notes: >
-      Expect Implemented=No on older data. Worth tracking because
-      GLP-1 RAs have been associated with transient worsening of
-      DR in clinical trials — a signal reviewers frequently ask
-      about.
+    notes: Worth tracking because GLP-1 receptor agonists have been associated with transient worsening of diabetic retinopathy in clinical trials — a signal reviewers frequently ask about. Lower utilisation is expected in older cohorts.
 
   - category: Medications
     variable: Aspirin (Antiplatelet)

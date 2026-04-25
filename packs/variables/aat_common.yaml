@@ -145,7 +145,4 @@ variables:
       procedure_concept_name ILIKE '%intravenous infusion%'
     inclusion_criteria: Records are included for each infusion procedure that may represent anti-amyloid therapy — explicit AAT drug-name matches (lecanemab, donanemab, aducanumab) plus generic HCPCS infusion-administration codes. Confirm anti-amyloid attribution by cross-referencing the Anti-amyloid Therapy (Administration) row on patient and date.
     extraction_type: Structured
-    notes: >
-      Row is deliberately broad — the HCPCS administration lines will
-      match non-AAT infusion activity too. Do not treat the count as
-      definitively anti-amyloid without the drug-linked cross-reference.
+    notes: Row is broad — HCPCS administration lines will match non-AAT infusion activity too. Confirm anti-amyloid attribution by cross-referencing the Anti-amyloid Therapy (Administration) row on patient and date.

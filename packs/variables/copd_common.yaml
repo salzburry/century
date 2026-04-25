@@ -121,10 +121,7 @@ variables:
       drug_concept_name ILIKE '%Tudorza%'
     inclusion_criteria: Records are included for each long-acting muscarinic-antagonist exposure (tiotropium, umeclidinium, aclidinium, revefenacin, or inhaled glycopyrrolate) recorded for the patient. Oral and injectable glycopyrrolate (used for secretion management, not COPD) are excluded.
     extraction_type: Structured
-    notes: >
-      Glycopyrrolate row is scoped to inhaled formulations — the
-      oral/injectable formulations are used for secretion management
-      and are not a COPD maintenance therapy.
+    notes: Glycopyrrolate is scoped to inhaled formulations; oral and injectable formulations are used for secretion management and are not COPD maintenance therapy.
 
   - category: Medications
     variable: Inhaled Corticosteroid (ICS)
@@ -148,8 +145,9 @@ variables:
     description: >
       Single-inhaler triple therapy — fluticasone / umeclidinium /
       vilanterol (Trelegy); budesonide / glycopyrrolate / formoterol
-      (Breztri). Cross-cuts the ICS / LABA / LAMA rows above; reviewer
-      should not double-count patients across rows.
+      (Breztri). Patients on triple therapy also appear in the
+      single-class ICS, LABA, and LAMA rows above; aggregate counts
+      should de-duplicate across rows.
     table: drug_exposure
     column: drug_concept_name
     criteria: >
@@ -179,10 +177,7 @@ variables:
       drug_concept_name ILIKE '%dexamethasone%'
     inclusion_criteria: Records are included for each systemic-corticosteroid exposure (prednisone, prednisolone, methylprednisolone, dexamethasone) recorded for the patient. Attributing a course to an asthma exacerbation requires a temporal cross-reference with the Asthma Exacerbation diagnosis row.
     extraction_type: Structured
-    notes: >
-      Captures all systemic steroid exposures. Attributing a course
-      to a COPD exacerbation requires a temporal cross-reference with
-      the COPD Exacerbation diagnosis row.
+    notes: Captures all systemic steroid exposures. Attributing a course to an asthma exacerbation requires a temporal cross-reference with the Asthma Exacerbation diagnosis row.
 
   - category: Medications
     variable: Phosphodiesterase-4 Inhibitor (Roflumilast)
@@ -209,10 +204,7 @@ variables:
       procedure_concept_name ILIKE '%long-term oxygen%'
     inclusion_criteria: Records are included for each supplemental-oxygen procedure billed for the patient — long-term oxygen therapy, home oxygen, or in-clinic oxygen administration.
     extraction_type: Structured
-    notes: >
-      TODO (clinical review): DME claims often carry oxygen via HCPCS
-      E-codes (E0424, E1390) that map to different concept names.
-      Widen criteria to include those codes if Implemented=No.
+    notes: DME claims often carry oxygen via HCPCS E-codes (E0424, E1390) that map to different concept names; broadening criteria to include those codes may be needed at some sites.
 
   # ----- Labs / Biomarkers — pulmonary function ---------------------
   # FEV1 / FVC / ratio are curated as Labs/Biomarkers (their raw home
@@ -238,10 +230,7 @@ variables:
       measurement_concept_name ILIKE '%forced expir%1 second%'
     inclusion_criteria: Records are included for each FEV1 (forced expiratory volume in one second) measurement abstracted from a pulmonary-function report for the patient.
     extraction_type: Abstracted
-    notes: >
-      Abstracted from PFT reports rather than a structured lab feed
-      at most sites. Expect Implemented=No until the per-cohort
-      abstraction pipeline lands.
+    notes: Abstracted from PFT reports rather than a structured lab feed at most sites; per-cohort abstraction pipelines may be needed.
 
   - category: Labs / Biomarkers
     variable: FVC (Forced Vital Capacity)
@@ -286,11 +275,7 @@ variables:
         condition_concept_name ILIKE '%emphysema%'))
     inclusion_criteria: Records are included for each acute COPD-exacerbation event captured by a condition-side acute-exacerbation diagnosis on an obstructive, bronchitis, COPD, or emphysema concept for the patient.
     extraction_type: Abstracted
-    notes: >
-      TODO (clinical review): confirm the exacerbation definition for
-      this cohort (condition-only vs visit-type + dx + steroid
-      course). Current criteria is narrow to avoid matching unrelated
-      exacerbations (e.g. CHF exacerbation).
+    notes: Confirm the exacerbation definition per cohort (condition-only vs visit-type + diagnosis + steroid course). Current criteria is narrow to avoid matching non-COPD exacerbations.
 
   - category: Outcomes
     variable: CAT Score (COPD Assessment Test)
@@ -305,10 +290,7 @@ variables:
       observation_concept_name ILIKE '%CAT total%'
     inclusion_criteria: Records are included for each COPD Assessment Test (CAT) score abstracted from the patient's clinical notes — CAT ≥ 10 typically triggers therapy escalation.
     extraction_type: Abstracted
-    notes: >
-      TODO (clinical review): CAT is often captured as a scanned
-      questionnaire rather than a structured observation. Expect
-      Implemented=No unless a dedicated CAT abstraction exists.
+    notes: Often captured as a scanned questionnaire rather than a structured observation; a dedicated CAT abstraction may be needed.
 
   - category: Outcomes
     variable: mMRC Dyspnea Scale
@@ -323,4 +305,4 @@ variables:
       observation_concept_name ILIKE '%MRC dyspnea%'
     inclusion_criteria: Records are included for each modified Medical Research Council (mMRC) dyspnea-scale score abstracted from the patient's clinical notes — paired with CAT for GOLD A/B/E grouping.
     extraction_type: Abstracted
-    notes: TODO (clinical review) — mMRC typically lives in clinical notes rather than structured observations.
+    notes: Typically lives in clinical notes rather than structured observations.

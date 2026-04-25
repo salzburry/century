@@ -213,7 +213,7 @@ variables:
       condition_concept_name ILIKE '%liver fibrosis%'
     inclusion_criteria: Records are included for each diagnosis of cirrhosis, hepatic fibrosis, or liver fibrosis recorded for the patient — the MASH-progression endpoint.
     extraction_type: Structured
-    notes: TODO (clinical review) — confirm whether the cohort stratifies by fibrosis stage (F0-F4) on live build.
+    notes: Confirm at the per-cohort level whether fibrosis is stratified by stage (F0–F4).
 
   - category: Diagnosis
     variable: Upper GI Comorbidities (Gastritis / Epigastric pain / H. pylori)
