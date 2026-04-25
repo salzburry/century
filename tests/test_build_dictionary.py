@@ -2708,8 +2708,8 @@ class TestFlatironStyleMetadata(unittest.TestCase):
         self.assertEqual(
             gaps, [],
             f"{len(gaps)} compound-criteria rows missing inclusion_criteria. "
-            f"Run `python scripts/seed_inclusion_criteria.py` to backfill, "
-            f"then commit. First 5: {gaps[:5]}",
+            f"Add an explicit `inclusion_criteria:` field to each, then "
+            f"commit. First 5: {gaps[:5]}",
         )
 
 

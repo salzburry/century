@@ -295,20 +295,6 @@ def _check_prose_quality(text: str) -> list[str]:
     return warnings
 
 
-# Compound-SQL detector. derive_inclusion_criteria() in build_dictionary
-# only auto-translates single-clause `<col>_concept_name ILIKE '%...%'`
-# rows; anything with AND / OR returns empty so the pack author writes
-# explicit prose instead of relying on mechanical translation. The
-# validator mirrors that contract: any compound `criteria:` without an
-# explicit `inclusion_criteria:` is flagged so the rendered Inclusion
-# Criteria column does not ship blank for the majority of variables.
-_COMPOUND_CRITERIA_RE = re.compile(r"\s+(AND|OR)\s+", re.IGNORECASE)
-
-
-def _is_compound_criteria(criteria: str) -> bool:
-    return bool(criteria) and bool(_COMPOUND_CRITERIA_RE.search(criteria))
-
-
 def _check_id_column_name_mismatch(v: dict[str, Any]) -> str | None:
     """Catch the Infusion-Drug-style mistake — variable named as a
     business-facing concept (`Drug`, `Diagnosis`) but the column is
@@ -441,19 +427,13 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
         # rather than Flatiron-style clinical prose; without explicit
         # prose, derive_inclusion_criteria returns empty and the
         # rendered workbook ships a blank Inclusion Criteria cell.
-        # Errors so the gap blocks --strict; the editorial pass that
-        # backfilled every existing row lives in the repo, and
-        # `scripts/rewrite_inclusion_criteria.py` is the canonical
-        # place to add prose for any new criteria-bearing row.
         if criteria.strip() and not (v.get("inclusion_criteria") or "").strip():
             report.findings.append(Finding(
                 "error", slug,
                 f"{cat}/{var}: criteria has no `inclusion_criteria:` "
                 f"prose — sales / pharma audiences would see a blank "
                 f"Inclusion Criteria cell. Add a one-sentence row-"
-                f"inclusion description to the pack row, or extend the "
-                f"MAPPINGS dict in "
-                f"`scripts/rewrite_inclusion_criteria.py`.",
+                f"inclusion description to the pack row.",
             ))
 
     return report
