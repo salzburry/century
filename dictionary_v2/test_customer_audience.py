@@ -578,6 +578,43 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertIn("no `criteria:` or `match:`", obs.error)
         self.assertEqual(obs.observed, [])
 
+    def test_scope_prefers_broad_criteria_when_match_also_present(self):
+        # Drift workflow: when a variable has BOTH a broad criteria:
+        # and a curated match: list, discovery's WHERE must use the
+        # broad criteria so the report can flag observed values that
+        # aren't yet in match.values. Using match: here would only
+        # enumerate already-configured values, making
+        # missing_from_config impossible.
+        matcher, scope, displayed, error = self.mod._resolve_scope({
+            "table": "drug_exposure",
+            "column": "drug_concept_name",
+            "criteria": "drug_concept_name ILIKE '%aspirin%'",
+            "match": {
+                "column": "drug_concept_name",
+                "values": ["Aspirin 81 MG"],
+            },
+        })
+        self.assertEqual(error, "")
+        # Broad ILIKE drives the live discovery query.
+        self.assertIn("ILIKE '%aspirin%'", scope)
+        # Strict IN list drives the displayed Criteria cell.
+        self.assertIn("IN ('Aspirin 81 MG')", displayed)
+
+    def test_scope_uses_match_when_no_broad_criteria(self):
+        # Match-only rows still scope to the curated set — falling
+        # back to WHERE TRUE would re-enumerate the whole table.
+        _matcher, scope, _displayed, error = self.mod._resolve_scope({
+            "table": "drug_exposure",
+            "column": "drug_concept_name",
+            "match": {
+                "column": "drug_concept_name",
+                "values": ["Aspirin 81 MG", "Aspirin 325 MG"],
+            },
+        })
+        self.assertEqual(error, "")
+        self.assertIn("Aspirin 81 MG", scope)
+        self.assertIn("Aspirin 325 MG", scope)
+
     def test_observe_uses_match_block_as_scope(self):
         # When only a `match:` block is configured (no free-form
         # criteria), discovery must scope to that strict IN list, not
@@ -751,6 +788,109 @@ class CohortKeyResolutionTests(unittest.TestCase):
         self.assertEqual(
             {t.table_name for t in filtered.tables}, {"cohort_patients"},
         )
+
+
+class DiscoveryApplyTests(unittest.TestCase):
+    """`--apply` writes proposed match: blocks into source packs.
+    Must round-trip the YAML safely (preserve comments / order),
+    only touch eligible variables, and refuse cleanly when ruamel
+    is unavailable."""
+
+    def setUp(self):
+        try:
+            import ruamel.yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("ruamel.yaml not installed")
+        self.mod = discover_mod
+        # Stage a temp variables pack under packs/variables/ so the
+        # apply path can find it via PACKS_DIR/variables/<slug>.yaml.
+        self.pack_slug = "_apply_test_pack"
+        self.pack_path = bd.PACKS_DIR / "variables" / f"{self.pack_slug}.yaml"
+        self.pack_path.write_text(
+            "# Test pack. Comments must survive --apply round-trip.\n"
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: Aspirin\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%aspirin%'\n"
+            "  - category: Drugs\n"
+            "    variable: Lisinopril\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%lisinopril%'\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: self.pack_path.unlink(missing_ok=True))
+
+    def _obs(self, variable, observed):
+        return self.mod.VariableObservation(
+            category="Drugs", variable=variable, table="drug_exposure",
+            column="drug_concept_name",
+            criteria=f"drug_concept_name ILIKE '%{variable.lower()}%'",
+            configured_values=[], observed=observed,
+            source_pack=self.pack_slug,
+        )
+
+    def test_apply_writes_match_blocks(self):
+        observations = [
+            self._obs("Aspirin",
+                      [("Aspirin 81 MG", 100), ("Aspirin 325 MG", 50)]),
+        ]
+        applied, skipped = self.mod.apply_suggestions(
+            observations, auto_yes=True,
+        )
+        self.assertEqual(applied, 1)
+        self.assertEqual(skipped, 0)
+        text = self.pack_path.read_text()
+        # Comment at the top must survive.
+        self.assertIn("Comments must survive --apply round-trip", text)
+        # Match block written under the right variable.
+        self.assertIn("- Aspirin 81 MG", text)
+        self.assertIn("- Aspirin 325 MG", text)
+
+    def test_apply_skips_unobserved_variables(self):
+        # Observation with no rows is not eligible — must not write.
+        observations = [self._obs("Aspirin", [])]
+        applied, skipped = self.mod.apply_suggestions(
+            observations, auto_yes=True,
+        )
+        self.assertEqual(applied, 0)
+        self.assertNotIn("match:", self.pack_path.read_text())
+
+    def test_apply_skips_errored_variables(self):
+        bad = self.mod.VariableObservation(
+            category="C", variable="Aspirin", table="t", column="c",
+            criteria="", configured_values=[],
+            observed=[("v", 1)],
+            error="value column",
+            source_pack=self.pack_slug,
+        )
+        applied, _ = self.mod.apply_suggestions([bad], auto_yes=True)
+        self.assertEqual(applied, 0)
+        self.assertNotIn("match:", self.pack_path.read_text())
+
+    def test_apply_skips_unknown_variable_in_pack(self):
+        # Variable not present in the source file (likely lives in
+        # an included pack). Must skip, not crash.
+        observations = [self._obs("Nonexistent", [("X", 1)])]
+        applied, skipped = self.mod.apply_suggestions(
+            observations, auto_yes=True,
+        )
+        self.assertEqual(applied, 0)
+        self.assertEqual(skipped, 1)
+
+    def test_apply_groups_by_source_pack(self):
+        # Two observations for the same pack → one read+write of the file.
+        observations = [
+            self._obs("Aspirin", [("Aspirin 81 MG", 100)]),
+            self._obs("Lisinopril", [("Lisinopril 10 MG", 80)]),
+        ]
+        applied, _ = self.mod.apply_suggestions(observations, auto_yes=True)
+        self.assertEqual(applied, 2)
+        text = self.pack_path.read_text()
+        self.assertIn("Aspirin 81 MG", text)
+        self.assertIn("Lisinopril 10 MG", text)
 
 
 if __name__ == "__main__":
