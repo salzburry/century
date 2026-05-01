@@ -1391,11 +1391,11 @@ def build_model(
 # the model filter and the renderer omits.
 AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
     "technical": {"summary": True, "tables": True, "columns": True, "variables": True},
-    # Sales now ships the Tempus-style Variables sheet only — the
-    # reviewer's reference layout is a single sheet, so Tables /
-    # Columns are dropped. Summary stays on (provider/disease/dates
-    # context) but its header row is suppressed in write_xlsx.
-    "sales":     {"summary": True, "tables": False, "columns": False, "variables": True},
+    # Sales ships four sheets — same set as customer, just with the
+    # Tempus-style Variables layout instead of the customer-trimmed
+    # one. Summary cover, Tables and Columns reuse the customer
+    # (trimmed) layouts since both audiences are stakeholder-facing.
+    "sales":     {"summary": True, "tables": True, "columns": True, "variables": True},
     "pharma":    {"summary": True, "tables": False, "columns": False, "variables": True},
     # Customer audience (PR-B). Opt-in via `--audience customer`. Keeps
     # all four sheets visible but trims columns and filters internal
@@ -1611,7 +1611,9 @@ _CUSTOMER_TABLES_LAYOUT: list[tuple[str, Any]] = [
 
 _TABLES_LAYOUT_BY_AUDIENCE: dict[str, list[tuple[str, Any]]] = {
     "technical": _TECHNICAL_TABLES_LAYOUT,
-    "sales":     _TECHNICAL_TABLES_LAYOUT,
+    # Sales is stakeholder-facing, so it uses the same trimmed
+    # Tables layout as customer (drops Data Source / Source Table).
+    "sales":     _CUSTOMER_TABLES_LAYOUT,
     "pharma":    _TECHNICAL_TABLES_LAYOUT,
     "customer":  _CUSTOMER_TABLES_LAYOUT,
 }
@@ -1651,7 +1653,10 @@ _CUSTOMER_COLUMNS_LAYOUT: list[tuple[str, Any]] = [
 
 _COLUMNS_LAYOUT_BY_AUDIENCE: dict[str, list[tuple[str, Any]]] = {
     "technical": _TECHNICAL_COLUMNS_LAYOUT,
-    "sales":     _TECHNICAL_COLUMNS_LAYOUT,
+    # Sales reuses the customer-trimmed Columns layout for the same
+    # stakeholder reasoning — the schema map needs Table / Column /
+    # Description / Field Type only, not full distribution stats.
+    "sales":     _CUSTOMER_COLUMNS_LAYOUT,
     "pharma":    _TECHNICAL_COLUMNS_LAYOUT,
     "customer":  _CUSTOMER_COLUMNS_LAYOUT,
 }
@@ -1795,7 +1800,7 @@ def filter_for_audience(
     # well as model.cohort (which is the cohort_name like
     # `balboa_ckd_cohort`) and schema_name as fallback keys, so the
     # YAML can be authored against whichever name is most natural.
-    if audience == "customer":
+    if audience in ("customer", "sales"):
         candidate_keys = [k for k in (
             cohort_slug, model.cohort, model.schema_name,
         ) if k]

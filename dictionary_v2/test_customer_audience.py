@@ -248,12 +248,28 @@ class CustomerTableFilterTests(unittest.TestCase):
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(rendered["Value Sets"], "")
 
-    def test_sales_visibility_is_variables_only(self):
+    def test_sales_visibility_ships_all_four_sheets(self):
         vis = bd.AUDIENCE_VISIBILITY["sales"]
+        self.assertTrue(vis["summary"])
+        self.assertTrue(vis["tables"])
+        self.assertTrue(vis["columns"])
         self.assertTrue(vis["variables"])
-        self.assertTrue(vis["summary"], msg="summary cover stays for context")
-        self.assertFalse(vis["tables"])
-        self.assertFalse(vis["columns"])
+
+    def test_sales_tables_uses_customer_trimmed_layout(self):
+        # Sales is stakeholder-facing → reuses the customer-trimmed
+        # Tables layout (no Data Source / Source Table).
+        headers = [label for label, _ in bd.tables_layout("sales")]
+        self.assertNotIn("Data Source", headers)
+        self.assertNotIn("Source Table", headers)
+        for kept in ("Table", "Description", "Inclusion Criteria",
+                     "Rows", "Columns", "Patients"):
+            self.assertIn(kept, headers)
+
+    def test_sales_columns_uses_customer_trimmed_layout(self):
+        headers = [label for label, _ in bd.columns_layout("sales")]
+        self.assertEqual(
+            headers, ["Table(s)", "Column", "Description", "Field Type"],
+        )
 
     def test_sales_summary_uses_trimmed_layout(self):
         # Sales is stakeholder-facing — Summary must NOT carry
@@ -267,15 +283,15 @@ class CustomerTableFilterTests(unittest.TestCase):
                      "table_count", "generated_at"):
             self.assertIn(kept, xl_keys)
 
-    def test_sales_audience_hides_tables_sheet(self):
-        # The Tempus-style sales layout is a single Variables sheet.
-        # Tables visibility is now off, so the filter empties out
-        # `model.tables` rather than passing them through.
+    def test_sales_audience_strips_internal_scaffolding_tables(self):
+        # Sales now ships a Tables sheet — but with the same
+        # internal-table excludes the customer audience uses
+        # (cohort_patients / standard_profile_data_model / etc.).
         tables = [_make_table("person"), _make_table("cohort_patients")]
         model = _make_model(tables, [_make_column("person")], [_make_variable("person")])
         filtered = bd.filter_for_audience(model, "sales")
-        self.assertEqual(filtered.tables, [],
-                         msg="sales must not ship a Tables sheet")
+        names = {t.table_name for t in filtered.tables}
+        self.assertEqual(names, {"person"})
 
 
 class StakeholderImplementedFilterTests(unittest.TestCase):
