@@ -451,9 +451,15 @@ Every heuristic fill is logged so the config can absorb it later.
 ## 10. Audience model
 
 ### 10.1 Presets
-- **technical** — Summary + Tables + Columns + Variables. No redaction.
-- **sales** — Summary + Tables + Variables. PII dropped.
-- **pharma** — Summary + Variables. PII dropped; no raw column inventory.
+- **technical** — Summary + Tables + Columns + Variables. No redaction. Raw SQL `Criteria` shown.
+- **sales** — Summary + Tables + Variables. PII dropped. SQL `Criteria` hidden.
+- **pharma** — Summary + Variables. PII dropped; no raw column inventory. SQL `Criteria` hidden.
+- **customer** — All four sheets but trimmed (drops debug summary
+  fields, internal scaffolding tables, PII; trims Columns to
+  Table / Column / Description / Field Type). Keeps the configured
+  `Criteria` column side-by-side with prose `Inclusion Criteria`
+  per reviewer feedback. JSON output is suppressed (customer
+  consumes xlsx/html). The main stakeholder-facing run mode.
 
 ### 10.2 PII requirement
 PII redaction is **not optional** for sales / pharma outputs. Any column

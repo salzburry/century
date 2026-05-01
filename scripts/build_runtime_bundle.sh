@@ -139,7 +139,7 @@ nimbus_copd, rmn_alzheimers, rvc_amd_curated, rvc_dr_curated
 | `technical` (default) | Full Summary + Tables + Columns + Variables, all debug fields, raw SQL Criteria, PII visible. | Internal review. |
 | `sales` | Drops the Columns sheet and PII rows. | Account / sales-engineering decks. |
 | `pharma` | Only Summary + Variables; Tables & Columns hidden; PII dropped. | Pharma partner outputs. |
-| `customer` | All four sheets but trimmed (drops debug fields, internal tables, raw SQL). PII dropped. JSON not produced. | Customer-facing dictionary — what the reviewer signs off on. |
+| `customer` | All four sheets but trimmed (drops debug fields like git_sha / variant / column_count, drops internal scaffolding tables, drops PII rows). Keeps the configured `Criteria` column side-by-side with `Inclusion Criteria` per reviewer feedback. JSON not produced. | Customer-facing dictionary — what the reviewer signs off on. |
 
 ### Other build flags
 ```bash
