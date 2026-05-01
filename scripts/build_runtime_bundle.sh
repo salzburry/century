@@ -349,13 +349,18 @@ same content in a single-page browsable form.
 
 ### Other audiences for the same cohort
 ```bash
-# Internal (debug fields, raw SQL Criteria, PII visible).
+# Internal (debug fields, raw SQL Criteria, PII visible). Writes
+# xlsx + html + json (json is the full debug CohortModel dump).
 python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience technical
 
-# Sales (drops Columns sheet, drops PII).
+# Sales — Tempus-style stakeholder spec. Writes xlsx + html only;
+# json is suppressed so the partner bundle never carries the
+# internal CohortModel dump. Sheets shipped: Summary cover (trimmed)
+# + Variables (Category, Variable, Description, Value Sets, Notes,
+# Type, Proposal, Completeness). Tables + Columns sheets dropped.
 python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales
 
-# Pharma (Summary + Variables only, drops PII).
+# Pharma — Summary + Variables only, drops PII. xlsx + html + json.
 python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience pharma
 ```
 

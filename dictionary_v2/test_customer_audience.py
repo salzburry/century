@@ -383,6 +383,45 @@ class CustomerJsonSuppressionTests(_CustomerSmokeBase):
         self.assertTrue(any(f.endswith(".xlsx") for f in files), msg=files)
         self.assertTrue(any(f.endswith(".html") for f in files), msg=files)
 
+    def test_main_skips_json_for_sales(self):
+        # Sales is now stakeholder-facing too — its JSON dump would
+        # carry criteria / coding_schema / implemented / patient_pct /
+        # data_source even though those columns are intentionally
+        # absent from the Tempus-style sales sheet. JSON must be
+        # suppressed so the bundle for that audience never accidentally
+        # ships an internal-only artifact.
+        out_dir = _output_dir(self.id())
+        rc = bd.main([
+            "--cohort", "balboa_ckd",
+            "--audience", "sales",
+            "--formats", "xlsx", "html", "json",
+            "--out-dir", str(out_dir),
+            "--dry-run",
+        ])
+        self.assertEqual(rc, 0)
+        files = sorted(p.name for p in out_dir.iterdir() if p.is_file())
+        self.assertFalse(any(f.endswith(".json") for f in files),
+                         msg=f"sales must not write JSON, got {files}")
+        self.assertTrue(any(f.endswith(".xlsx") for f in files), msg=files)
+        self.assertTrue(any(f.endswith(".html") for f in files), msg=files)
+
+    def test_main_still_writes_json_for_technical_and_pharma(self):
+        # Don't accidentally widen the suppression to internal
+        # audiences — they need the JSON for debugging.
+        for aud in ("technical", "pharma"):
+            out_dir = _output_dir(self.id() + ":" + aud)
+            rc = bd.main([
+                "--cohort", "balboa_ckd",
+                "--audience", aud,
+                "--formats", "xlsx", "html", "json",
+                "--out-dir", str(out_dir),
+                "--dry-run",
+            ])
+            self.assertEqual(rc, 0)
+            files = sorted(p.name for p in out_dir.iterdir() if p.is_file())
+            self.assertTrue(any(f.endswith(".json") for f in files),
+                            msg=f"{aud} should still write JSON, got {files}")
+
 
 class CustomerLayoutConfigTests(unittest.TestCase):
     """packs/dictionary_layout.yaml drives the customer table-exclude
