@@ -838,7 +838,7 @@ class DiscoveryApplyTests(unittest.TestCase):
                       [("Aspirin 81 MG", 100), ("Aspirin 325 MG", 50)]),
         ]
         applied, skipped = self.mod.apply_suggestions(
-            observations, auto_yes=True,
+            observations, target="shared", auto_yes=True,
         )
         self.assertEqual(applied, 1)
         self.assertEqual(skipped, 0)
@@ -853,7 +853,7 @@ class DiscoveryApplyTests(unittest.TestCase):
         # Observation with no rows is not eligible — must not write.
         observations = [self._obs("Aspirin", [])]
         applied, skipped = self.mod.apply_suggestions(
-            observations, auto_yes=True,
+            observations, target="shared", auto_yes=True,
         )
         self.assertEqual(applied, 0)
         self.assertNotIn("match:", self.pack_path.read_text())
@@ -866,7 +866,9 @@ class DiscoveryApplyTests(unittest.TestCase):
             error="value column",
             source_pack=self.pack_slug,
         )
-        applied, _ = self.mod.apply_suggestions([bad], auto_yes=True)
+        applied, _ = self.mod.apply_suggestions(
+            [bad], target="shared", auto_yes=True,
+        )
         self.assertEqual(applied, 0)
         self.assertNotIn("match:", self.pack_path.read_text())
 
@@ -875,7 +877,7 @@ class DiscoveryApplyTests(unittest.TestCase):
         # an included pack). Must skip, not crash.
         observations = [self._obs("Nonexistent", [("X", 1)])]
         applied, skipped = self.mod.apply_suggestions(
-            observations, auto_yes=True,
+            observations, target="shared", auto_yes=True,
         )
         self.assertEqual(applied, 0)
         self.assertEqual(skipped, 1)
@@ -886,11 +888,78 @@ class DiscoveryApplyTests(unittest.TestCase):
             self._obs("Aspirin", [("Aspirin 81 MG", 100)]),
             self._obs("Lisinopril", [("Lisinopril 10 MG", 80)]),
         ]
-        applied, _ = self.mod.apply_suggestions(observations, auto_yes=True)
+        applied, _ = self.mod.apply_suggestions(
+            observations, target="shared", auto_yes=True,
+        )
         self.assertEqual(applied, 2)
         text = self.pack_path.read_text()
         self.assertIn("Aspirin 81 MG", text)
         self.assertIn("Lisinopril 10 MG", text)
+
+    def test_apply_requires_valid_target(self):
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 1)])]
+        with self.assertRaises(ValueError):
+            self.mod.apply_suggestions(
+                observations, target="invalid", auto_yes=True,
+            )
+
+    def test_apply_target_cohort_writes_to_cohort_pack(self):
+        cohort_slug = "_apply_test_cohort"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "include: [_apply_test_pack]\n"
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: Aspirin\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%aspirin%'\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        applied, _ = self.mod.apply_suggestions(
+            observations, target="cohort",
+            cohort_slug=cohort_slug, auto_yes=True,
+        )
+        self.assertEqual(applied, 1)
+        # Per-cohort target must NOT touch the shared source pack.
+        self.assertIn("Aspirin 81 MG", cohort_path.read_text())
+        self.assertNotIn("Aspirin 81 MG", self.pack_path.read_text())
+
+    def test_apply_target_cohort_skips_inherited_only_variables(self):
+        cohort_slug = "_apply_test_cohort_empty"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "include: [_apply_test_pack]\nvariables: []\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        applied, skipped = self.mod.apply_suggestions(
+            observations, target="cohort",
+            cohort_slug=cohort_slug, auto_yes=True,
+        )
+        # Refuses to invent a row in the cohort pack (a bare
+        # `variable: + match:` would be unbuildable).
+        self.assertEqual(applied, 0)
+        self.assertEqual(skipped, 1)
+        self.assertNotIn("match:", cohort_path.read_text())
+        self.assertNotIn("match:", self.pack_path.read_text())
+
+    def test_main_apply_without_target_exits_nonzero(self):
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--cohort", "balboa_ckd",
+            "--out-dir", str(out_dir),
+            "--dry-run",
+            "--apply-yes",
+        ])
+        self.assertEqual(
+            rc, 2, msg="--apply without --target should exit 2",
+        )
 
 
 if __name__ == "__main__":
