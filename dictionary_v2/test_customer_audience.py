@@ -578,6 +578,43 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertIn("no `criteria:` or `match:`", obs.error)
         self.assertEqual(obs.observed, [])
 
+    def test_scope_prefers_broad_criteria_when_match_also_present(self):
+        # Drift workflow: when a variable has BOTH a broad criteria:
+        # and a curated match: list, discovery's WHERE must use the
+        # broad criteria so the report can flag observed values that
+        # aren't yet in match.values. Using match: here would only
+        # enumerate already-configured values, making
+        # missing_from_config impossible.
+        matcher, scope, displayed, error = self.mod._resolve_scope({
+            "table": "drug_exposure",
+            "column": "drug_concept_name",
+            "criteria": "drug_concept_name ILIKE '%aspirin%'",
+            "match": {
+                "column": "drug_concept_name",
+                "values": ["Aspirin 81 MG"],
+            },
+        })
+        self.assertEqual(error, "")
+        # Broad ILIKE drives the live discovery query.
+        self.assertIn("ILIKE '%aspirin%'", scope)
+        # Strict IN list drives the displayed Criteria cell.
+        self.assertIn("IN ('Aspirin 81 MG')", displayed)
+
+    def test_scope_uses_match_when_no_broad_criteria(self):
+        # Match-only rows still scope to the curated set — falling
+        # back to WHERE TRUE would re-enumerate the whole table.
+        _matcher, scope, _displayed, error = self.mod._resolve_scope({
+            "table": "drug_exposure",
+            "column": "drug_concept_name",
+            "match": {
+                "column": "drug_concept_name",
+                "values": ["Aspirin 81 MG", "Aspirin 325 MG"],
+            },
+        })
+        self.assertEqual(error, "")
+        self.assertIn("Aspirin 81 MG", scope)
+        self.assertIn("Aspirin 325 MG", scope)
+
     def test_observe_uses_match_block_as_scope(self):
         # When only a `match:` block is configured (no free-form
         # criteria), discovery must scope to that strict IN list, not

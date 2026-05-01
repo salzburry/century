@@ -261,7 +261,16 @@ def _resolve_scope(
     matcher_column, matcher_skip = _resolve_matcher_column(v)
     raw_criteria = (v.get("criteria") or "").strip()
     match_sql = _bd.compile_match_block(v.get("match"))
-    scope_sql = match_sql or raw_criteria
+    # Drift detection: discovery's WHERE prefers the broad `criteria:`
+    # so the report can flag observed values that aren't in the curated
+    # `match.values` list yet. Using `match:` here would only enumerate
+    # values that are *already* configured, making missing_from_config
+    # impossible by construction. Match-only rows (no criteria) fall
+    # back to the match SQL so they're still scoped to the curated set.
+    scope_sql = raw_criteria or match_sql
+    # Displayed criteria remains strict-when-available — what the
+    # dictionary's Criteria cell shows. The build path uses the same
+    # ordering for consistency.
     displayed_criteria = match_sql or raw_criteria
 
     if not (v.get("table") or "").strip():
