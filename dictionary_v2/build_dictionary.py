@@ -47,7 +47,10 @@ from typing import Any
 
 # This module lives in dictionary_v2/, so add the repo root to sys.path
 # before importing the existing introspection backbone from there.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Guarded so repeated imports don't pile up duplicate path entries.
+_REPO_ROOT_FOR_IMPORTS = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT_FOR_IMPORTS not in sys.path:
+    sys.path.insert(0, _REPO_ROOT_FOR_IMPORTS)
 
 # Re-use the existing introspection backbone — don't duplicate the
 # schema-walking code.
@@ -1231,6 +1234,59 @@ AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
 # in PR-B once the customer audience is approved.
 # --------------------------------------------------------------------------- #
 
+# Summary layout. Each entry is (xlsx_label, html_label, accessor):
+#   - `xlsx_label is None` skips the row in the XLSX Summary sheet.
+#   - `html_label is None` skips the entry in the HTML <dl> block.
+# The two renderers historically diverged on this sheet — XLSX writes
+# 17 lowercase metric/value rows while HTML writes 15 title-case
+# entries that merge min/max/years into one "Date coverage" line.
+# Carrying both labels in one tuple lets PR-B add a customer-trimmed
+# layout in one place instead of editing both renderers.
+SUMMARY_LAYOUT: list[tuple[str | None, str | None, Any]] = [
+    ("cohort",                   "Cohort",             lambda m: m.cohort),
+    ("provider",                 "Provider",           lambda m: m.provider),
+    ("disease",                  "Disease",            lambda m: m.disease),
+    ("display_name",             "Display name",       lambda m: m.display_name),
+    ("schema_name",              "Schema",             lambda m: m.schema_name),
+    ("variant",                  "Variant",            lambda m: m.variant),
+    ("patient_count",            "Patient count",      lambda m: m.summary.patient_count),
+    ("table_count",              "Table count",        lambda m: m.summary.table_count),
+    ("column_count",             "Column count",       lambda m: m.summary.column_count),
+    # XLSX exposes min/max/years as three rows; HTML collapses them
+    # into a single human-readable string below.
+    ("min_date",                 None,                 lambda m: m.summary.date_coverage.min_date),
+    ("max_date",                 None,                 lambda m: m.summary.date_coverage.max_date),
+    ("years_of_data",            None,                 lambda m: m.summary.date_coverage.years_of_data),
+    (None,                       "Date coverage",
+        lambda m: (
+            f"{m.summary.date_coverage.min_date} → {m.summary.date_coverage.max_date}"
+            f" ({m.summary.date_coverage.years_of_data} years)"
+            if m.summary.date_coverage.min_date else "—"
+        )),
+    ("status",                   "Status",             lambda m: m.status),
+    ("generated_at",             "Generated at",       lambda m: m.generated_at),
+    ("git_sha",                  "Git SHA",            lambda m: m.git_sha),
+    ("introspect_version",       "Introspect version", lambda m: m.introspect_version),
+    ("schema_snapshot_digest",   "Schema snapshot",    lambda m: m.schema_snapshot_digest),
+]
+
+
+def summary_xlsx_rows(model: Any) -> list[dict[str, Any]]:
+    """Materialize SUMMARY_LAYOUT entries that opt in to the XLSX sheet."""
+    return [
+        {"metric": xl_label, "value": fn(model)}
+        for xl_label, _, fn in SUMMARY_LAYOUT if xl_label is not None
+    ]
+
+
+def summary_html_pairs(model: Any) -> list[tuple[str, Any]]:
+    """Materialize SUMMARY_LAYOUT entries that opt in to the HTML <dl>."""
+    return [
+        (html_label, fn(model))
+        for _, html_label, fn in SUMMARY_LAYOUT if html_label is not None
+    ]
+
+
 TABLES_LAYOUT: list[tuple[str, Any]] = [
     ("Table",              lambda t: t.table_name),
     ("Category",           lambda t: t.category),
@@ -1354,26 +1410,7 @@ def write_xlsx(model: CohortModel, out_path: Path,
     except ImportError as exc:
         raise SystemExit("pandas is not installed: pip install pandas openpyxl") from exc
 
-    summary_rows = [
-        {"metric": "cohort",         "value": model.cohort},
-        {"metric": "provider",       "value": model.provider},
-        {"metric": "disease",        "value": model.disease},
-        {"metric": "display_name",   "value": model.display_name},
-        {"metric": "schema_name",    "value": model.schema_name},
-        {"metric": "variant",        "value": model.variant},
-        {"metric": "patient_count",  "value": model.summary.patient_count},
-        {"metric": "table_count",    "value": model.summary.table_count},
-        {"metric": "column_count",   "value": model.summary.column_count},
-        {"metric": "min_date",       "value": model.summary.date_coverage.min_date},
-        {"metric": "max_date",       "value": model.summary.date_coverage.max_date},
-        {"metric": "years_of_data",  "value": model.summary.date_coverage.years_of_data},
-        {"metric": "status",         "value": model.status},
-        {"metric": "generated_at",   "value": model.generated_at},
-        {"metric": "git_sha",        "value": model.git_sha},
-        {"metric": "introspect_version", "value": model.introspect_version},
-        {"metric": "schema_snapshot_digest", "value": model.schema_snapshot_digest},
-    ]
-    summary_df = pd.DataFrame(summary_rows, columns=["metric", "value"])
+    summary_df = pd.DataFrame(summary_xlsx_rows(model), columns=["metric", "value"])
 
     tables_df = _df_from_layout(pd, TABLES_LAYOUT, model.tables)
     columns_df = _df_from_layout(pd, COLUMNS_LAYOUT, model.columns)
@@ -1524,26 +1561,10 @@ def write_html(model: CohortModel, out_path: Path,
         )
         return f'<table class="dd"><thead><tr>{th}</tr></thead><tbody>{trs}</tbody></table>'
 
-    summary_html = "".join(f"<dt>{esc(k)}</dt><dd>{esc(str(v))}</dd>" for k, v in [
-        ("Cohort",          model.cohort),
-        ("Provider",        model.provider),
-        ("Disease",         model.disease),
-        ("Display name",    model.display_name),
-        ("Schema",          model.schema_name),
-        ("Variant",         model.variant),
-        ("Patient count",   model.summary.patient_count),
-        ("Table count",     model.summary.table_count),
-        ("Column count",    model.summary.column_count),
-        ("Date coverage",
-         f"{model.summary.date_coverage.min_date} → {model.summary.date_coverage.max_date}"
-         f" ({model.summary.date_coverage.years_of_data} years)"
-         if model.summary.date_coverage.min_date else "—"),
-        ("Status",          model.status),
-        ("Generated at",    model.generated_at),
-        ("Git SHA",         model.git_sha),
-        ("Introspect version", model.introspect_version),
-        ("Schema snapshot", model.schema_snapshot_digest),
-    ])
+    summary_html = "".join(
+        f"<dt>{esc(k)}</dt><dd>{esc(str(v))}</dd>"
+        for k, v in summary_html_pairs(model)
+    )
 
     tables_headers = [label for label, _ in TABLES_LAYOUT]
     tables_rows = _rows_from_layout(TABLES_LAYOUT, model.tables)
