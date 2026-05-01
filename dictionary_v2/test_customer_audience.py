@@ -341,110 +341,145 @@ class CustomerLayoutConfigTests(unittest.TestCase):
         self.assertEqual({t.table_name for t in filtered.tables}, {"cohort_patients"})
 
 
-class _FakeCursor:
-    def __init__(self, rows):
-        self._rows = rows
-        self._calls = []
+class CompileMatchBlockTests(unittest.TestCase):
+    """The structured `match:` block in variable YAML compiles to a
+    strict `column IN (...)` SQL clause. The data dictionary uses this
+    as both the displayed Criteria and the WHERE for completeness, so
+    the definition stays config-owned (not data-derived)."""
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def execute(self, sql):
-        self._calls.append(sql)
-
-    def fetchall(self):
-        return [(r,) for r in self._rows]
-
-
-class _FakeConn:
-    def __init__(self, rows):
-        self._rows = rows
-        self.queries = []
-
-    def cursor(self):
-        cur = _FakeCursor(self._rows)
-        self.queries.append(cur)
-        return cur
-
-    def rollback(self):
-        pass
-
-
-class StrictCriteriaDerivationTests(unittest.TestCase):
-    """Auto-derive `column IN (...)` from the cohort's actual top-N
-    values. Replaces hand-written ILIKE patterns; the dictionary then
-    describes what's really in the data."""
-
-    def test_emits_in_list_from_top_values(self):
-        conn = _FakeConn(["Lecanemab", "Leqembi", "Donanemab"])
-        result = bd.derive_strict_criteria(
-            conn, "schema", "drug_exposure", "drug_concept_name", top_n=50,
-        )
+    def test_inline_values_compile_to_in_list(self):
+        sql = bd.compile_match_block({
+            "column": "drug_concept_name",
+            "values": ["Lecanemab", "Leqembi", "Donanemab"],
+        })
         self.assertEqual(
-            result,
+            sql,
             "\"drug_concept_name\" IN ('Lecanemab', 'Leqembi', 'Donanemab')",
         )
 
     def test_escapes_single_quotes(self):
-        conn = _FakeConn(["O'Brien syndrome", "Plain value"])
-        result = bd.derive_strict_criteria(
-            conn, "schema", "condition", "concept_name", top_n=10,
-        )
-        self.assertIn("'O''Brien syndrome'", result)
+        sql = bd.compile_match_block({
+            "column": "concept_name",
+            "values": ["O'Brien syndrome", "Plain value"],
+        })
+        self.assertIn("'O''Brien syndrome'", sql)
+        self.assertIn("'Plain value'", sql)
 
-    def test_top_n_zero_opts_out(self):
-        conn = _FakeConn(["x"])
+    def test_dedupes_inline_values_preserving_order(self):
+        sql = bd.compile_match_block({
+            "column": "c",
+            "values": ["A", "B", "A", "C", "B"],
+        })
+        self.assertEqual(sql, "\"c\" IN ('A', 'B', 'C')")
+
+    def test_missing_column_returns_blank(self):
+        self.assertEqual(bd.compile_match_block({"values": ["x"]}), "")
+
+    def test_empty_values_returns_blank(self):
+        self.assertEqual(bd.compile_match_block({"column": "c"}), "")
+        self.assertEqual(bd.compile_match_block({"column": "c", "values": []}), "")
+
+    def test_none_block_returns_blank(self):
+        self.assertEqual(bd.compile_match_block(None), "")
+
+    def test_values_file_loads_and_unions_with_inline(self):
+        # values_file points at packs/<rel_path>; create a temp file
+        # there and clean it up.
+        rel = "_test_match_values.yaml"
+        path = bd.PACKS_DIR / rel
+        path.write_text("- Foo\n- Bar\n", encoding="utf-8")
+        try:
+            sql = bd.compile_match_block({
+                "column": "concept_name",
+                "values": ["Bar", "Baz"],
+                "values_file": rel,
+            })
+        finally:
+            path.unlink()
+        # Order: inline first, file values second; "Bar" appears once.
         self.assertEqual(
-            bd.derive_strict_criteria(conn, "s", "t", "c", top_n=0),
-            "",
+            sql,
+            "\"concept_name\" IN ('Bar', 'Baz', 'Foo')",
         )
 
-    def test_skips_freetext_columns(self):
-        conn = _FakeConn(["anything"])
-        for col in ("note_text", "observation_source_value_text"):
-            self.assertEqual(
-                bd.derive_strict_criteria(conn, "s", "t", col, top_n=50),
-                "",
-                msg=f"freetext column {col} should be skipped",
-            )
 
-    def test_skips_surrogate_keys(self):
-        conn = _FakeConn(["1", "2", "3"])
-        # Surrogate-key heuristic catches *_concept_id / *_id columns —
-        # top-N of identifiers is meaningless.
-        result = bd.derive_strict_criteria(
-            conn, "s", "drug_exposure", "drug_concept_id", top_n=50,
+# Load the discovery script once under a stable module name so the
+# dataclass it defines (VariableObservation) survives across test cases.
+import importlib.util as _ilu_disc  # noqa: E402
+
+_DISC_PATH = Path(__file__).resolve().parent / "discover_exact_matches.py"
+_disc_spec = _ilu_disc.spec_from_file_location(
+    "discover_exact_matches_under_test", _DISC_PATH,
+)
+discover_mod = _ilu_disc.module_from_spec(_disc_spec)
+sys.modules["discover_exact_matches_under_test"] = discover_mod
+_disc_spec.loader.exec_module(discover_mod)
+
+
+class DiscoveryScriptTests(unittest.TestCase):
+    """The discovery script proposes additions to a variable's `match:`
+    block — it must never modify the disease pack automatically."""
+
+    def setUp(self):
+        self.mod = discover_mod
+
+    def _obs(self, configured, observed):
+        return self.mod.VariableObservation(
+            category="C", variable="V", table="t", column="c",
+            criteria="c ILIKE '%x%'", configured_values=configured,
+            observed=observed,
         )
-        self.assertEqual(result, "")
 
-    def test_empty_result_returns_blank(self):
-        conn = _FakeConn([])
+    def test_partitions_observed_against_config(self):
+        o = self._obs(
+            configured=["Aspirin 81 MG", "Aspirin 325 MG", "Old Label"],
+            observed=[("Aspirin 81 MG", 100), ("Aspirin 325 MG", 50),
+                      ("acetylsalicylic acid", 5)],
+        )
         self.assertEqual(
-            bd.derive_strict_criteria(conn, "s", "t", "concept_name", top_n=50),
-            "",
+            o.configured_and_observed,
+            [("Aspirin 81 MG", 100), ("Aspirin 325 MG", 50)],
         )
-
-    def test_query_failure_returns_blank(self):
-        class BoomConn:
-            def cursor(self):
-                raise RuntimeError("connection lost")
-            def rollback(self):
-                pass
         self.assertEqual(
-            bd.derive_strict_criteria(
-                BoomConn(), "s", "t", "concept_name", top_n=50,
-            ),
-            "",
+            o.missing_from_config, [("acetylsalicylic acid", 5)],
         )
+        self.assertEqual(o.stale_in_config, ["Old Label"])
 
-    def test_top_n_default_is_configurable(self):
-        # Should match the value in packs/dictionary_layout.yaml.
-        n = bd.criteria_top_n_default()
-        self.assertIsInstance(n, int)
-        self.assertGreater(n, 0)
+    def test_report_flags_candidate_additions(self):
+        o = self._obs(
+            configured=["A"],
+            observed=[("A", 10), ("B", 3)],
+        )
+        md = self.mod._fmt_md([o], "test_cohort")
+        self.assertIn("Observed but NOT in config", md)
+        self.assertIn("`B`", md)
+        # Existing config entry is shown but not flagged as candidate.
+        self.assertIn("Configured & observed", md)
+
+    def test_suggestions_yaml_unions_observed_and_configured(self):
+        o = self._obs(
+            configured=["A", "C"],
+            observed=[("A", 10), ("B", 3)],
+        )
+        y = self.mod._fmt_suggestions_yaml([o])
+        # Observed-first ordering, configured tail, deduped.
+        self.assertIn("- A", y)
+        self.assertIn("- B", y)
+        self.assertIn("- C", y)
+        self.assertIn("column: c", y)
+        # Header line warns this is for review only.
+        self.assertIn("Review and copy", y)
+
+    def test_dry_run_writes_report_without_db(self):
+        # End-to-end: --dry-run must not require psycopg / a DB.
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--cohort", "balboa_ckd",
+            "--out-dir", str(out_dir),
+            "--dry-run",
+        ])
+        self.assertEqual(rc, 0)
+        self.assertTrue((out_dir / "balboa_ckd" / "report.md").is_file())
 
 
 if __name__ == "__main__":

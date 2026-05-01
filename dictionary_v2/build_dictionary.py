@@ -736,72 +736,82 @@ def _is_freetext_column(column: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Strict-match Criteria derivation. Replaces hand-written ILIKE patterns
-# with `column IN (...)` lists sourced from the cohort's actual top-N
-# values. The dictionary is descriptive — the data itself is the source
-# of truth, so the Criteria cell is what's literally there, not a guess.
+# Structured `match:` config for variable Criteria. Reviewer asked for
+# the Criteria column to live in config and be exact matches to the
+# column, not fuzzy ILIKE. Variable YAML carries:
+#
+#   match:
+#     column: drug_concept_name
+#     values:
+#       - aspirin 81 MG Oral Tablet
+#       - aspirin 325 MG Oral Tablet
+#
+# which compiles to: "drug_concept_name" IN ('aspirin 81 MG Oral Tablet', ...)
+#
+# Values can also live in a separate file when the list is long:
+#
+#   match:
+#     column: drug_concept_name
+#     values_file: packs/value_sets/aspirin.yaml
+#
+# The build never derives matches from observed data — see
+# dictionary_v2/discover_exact_matches.py for the offline discovery
+# workflow that proposes additions to a `match:` list.
 # --------------------------------------------------------------------------- #
-
-DEFAULT_CRITERIA_TOP_N = 50
-
-
-def criteria_top_n_default() -> int:
-    """Global top-N value count, configurable via packs/dictionary_layout.yaml."""
-    layout = _load_dictionary_layout()
-    n = ((layout.get("criteria") or {}).get("top_n"))
-    if isinstance(n, int) and n >= 0:
-        return n
-    return DEFAULT_CRITERIA_TOP_N
 
 
 def _sql_quote(value: str) -> str:
-    """Escape a string for inclusion in single-quoted SQL literal."""
+    """Escape a string for inclusion in a single-quoted SQL literal."""
     return value.replace("'", "''")
 
 
-def derive_strict_criteria(
-    conn, schema: str, table: str, column: str, top_n: int,
-) -> str:
-    """`column IN ('v1', 'v2', ...)` SQL built from the column's top-N
-    most frequent non-null values. Returns "" when:
-      - top_n <= 0 (caller opted out)
-      - the column is freetext / surrogate key (top-N is meaningless)
-      - the query fails or returns no rows
+def _load_match_values_file(rel_path: str) -> list[str]:
+    """Load `values:` list from a YAML file referenced by `values_file:`.
 
-    The returned string is suitable as both the displayed Criteria cell
-    and the WHERE clause used for Completeness / % Patient denominators.
+    Path is resolved relative to PACKS_DIR. Accepts either a top-level
+    list or a `values:` key for forward-compatibility with richer
+    value-set metadata.
     """
-    if top_n <= 0:
+    path = (PACKS_DIR / rel_path).resolve()
+    data = _yaml_load(path)
+    if isinstance(data, list):
+        return [str(v) for v in data]
+    if isinstance(data, dict):
+        return [str(v) for v in (data.get("values") or [])]
+    return []
+
+
+def compile_match_block(match: dict[str, Any] | None) -> str:
+    """Return `"<column>" IN ('v1', 'v2', ...)` SQL from a structured
+    match block, or "" if the block is missing/empty.
+
+    Values come from `match.values` (inline) and/or `match.values_file`
+    (path under packs/). Both sources are unioned and deduplicated
+    while preserving first-seen order.
+    """
+    if not isinstance(match, dict):
         return ""
-    if _is_freetext_column(column) or is_surrogate_key(column):
+    column = (match.get("column") or "").strip()
+    if not column:
         return ""
 
-    sql = (
-        f'SELECT "{column}"::text AS v '
-        f'FROM "{schema}"."{table}" '
-        f'WHERE "{column}" IS NOT NULL '
-        f'GROUP BY "{column}" '
-        f'ORDER BY COUNT(*) DESC '
-        f'LIMIT {int(top_n)};'
-    )
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            rows = [r[0] for r in cur.fetchall() if r[0] is not None]
-    except Exception as exc:
-        sys.stderr.write(
-            f"[warn] strict-criteria derivation failed for "
-            f"{table}.{column}: {exc}\n"
-        )
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        return ""
+    values: list[str] = []
+    seen: set[str] = set()
+    for v in (match.get("values") or []):
+        s = str(v)
+        if s not in seen:
+            seen.add(s)
+            values.append(s)
+    values_file = (match.get("values_file") or "").strip()
+    if values_file:
+        for v in _load_match_values_file(values_file):
+            if v not in seen:
+                seen.add(v)
+                values.append(v)
 
-    if not rows:
+    if not values:
         return ""
-    quoted = ", ".join(f"'{_sql_quote(str(v))}'" for v in rows)
+    quoted = ", ".join(f"'{_sql_quote(v)}'" for v in values)
     return f'"{column}" IN ({quoted})'
 
 
@@ -844,22 +854,25 @@ def resolve_variables(
     column_types = column_types or {}
 
     out: list[VariableRow] = []
-    default_top_n = criteria_top_n_default()
     for v in variables_pack:
         table = v.get("table") or ""
         column = v.get("column") or ""
         expression = (v.get("expression") or "").strip() or f'"{column}"'
         criteria = (v.get("criteria") or "").strip()
         category = v.get("category") or ""
-        # Strict-match override: auto-derive `column IN (...)` from the
-        # cohort's top-N actual values. The dictionary's Criteria cell
-        # then reflects what's really in the data, not a hand-written
-        # ILIKE pattern. `top_n: 0` in the variable YAML opts out.
-        top_n = v.get("top_n", default_top_n)
-        if isinstance(top_n, int) and top_n > 0 and table and column:
-            derived = derive_strict_criteria(conn, schema, table, column, top_n)
-            if derived:
-                criteria = derived
+        # Structured `match:` block compiles to strict `column IN (...)`
+        # and overrides any free-form `criteria:` for both display and
+        # filtering. The data dictionary thus shows config-owned exact
+        # matches instead of fuzzy ILIKE, per reviewer feedback.
+        # Variables without a `match:` block keep their hand-written
+        # criteria untouched — the build never derives criteria from
+        # observed data, since that would let observations redefine
+        # the clinical variable. See dictionary_v2/discover_exact_matches.py
+        # for the offline discovery workflow.
+        match_block = v.get("match")
+        match_sql = compile_match_block(match_block) if match_block else ""
+        if match_sql:
+            criteria = match_sql
         variable_name = v.get("variable") or column
         description = v.get("description") or ""
         extraction = v.get("extraction_type") or "Structured"
