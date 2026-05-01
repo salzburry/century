@@ -233,6 +233,46 @@ class CustomerTableFilterTests(unittest.TestCase):
         self.assertFalse(vis["tables"])
         self.assertFalse(vis["columns"])
 
+    def test_sales_summary_uses_trimmed_layout(self):
+        # Sales is stakeholder-facing — Summary must NOT carry
+        # internal/debug fields (variant, column_count, status,
+        # git_sha, introspect_version, schema_snapshot_digest).
+        xl_keys = [k for k, _, _ in bd.summary_layout("sales") if k is not None]
+        for dropped in ("variant", "column_count", "status", "git_sha",
+                        "introspect_version", "schema_snapshot_digest"):
+            self.assertNotIn(dropped, xl_keys, msg=f"sales must drop {dropped}")
+        for kept in ("cohort", "provider", "disease", "patient_count",
+                     "table_count", "generated_at"):
+            self.assertIn(kept, xl_keys)
+
+    def test_value_set_normalizer_handles_scalar_and_list(self):
+        # YAML list — used as-is.
+        self.assertEqual(
+            bd._normalize_value_set(["Yes", "No", "Unknown"]),
+            ["Yes", "No", "Unknown"],
+        )
+        # Scalar string with commas — split, never iterated by char.
+        self.assertEqual(
+            bd._normalize_value_set("Yes, No, Unknown"),
+            ["Yes", "No", "Unknown"],
+        )
+        # Single scalar string — one-element list, NOT 8 chars.
+        self.assertEqual(
+            bd._normalize_value_set("Hispanic"),
+            ["Hispanic"],
+        )
+        # Empty / None → empty list.
+        self.assertEqual(bd._normalize_value_set(None), [])
+        self.assertEqual(bd._normalize_value_set(""), [])
+        self.assertEqual(bd._normalize_value_set([]), [])
+        # Skip empty strings inside a list.
+        self.assertEqual(
+            bd._normalize_value_set(["A", "", "B"]),
+            ["A", "B"],
+        )
+        # Junk type — empty list, no crash.
+        self.assertEqual(bd._normalize_value_set(42), [])
+
     def test_sales_audience_hides_tables_sheet(self):
         # The Tempus-style sales layout is a single Variables sheet.
         # Tables visibility is now off, so the filter empties out
@@ -1641,6 +1681,76 @@ class VariablePackOverrideTests(unittest.TestCase):
             msg="validator must collapse overrides too",
         )
         self.assertIn("match", aspirin_rows[0])
+
+    def test_validator_flags_value_set_scalar_as_error(self):
+        # Pack a value_set as a scalar string — validator must flag
+        # it as an error, since the renderer would otherwise iterate
+        # the string char-by-char in the Value Sets cell.
+        scalar_path = bd.PACKS_DIR / "variables" / "_validator_value_set_scalar.yaml"
+        scalar_path.write_text(
+            "variables:\n"
+            "  - category: Demographics\n"
+            "    variable: ScalarValueSetTest\n"
+            "    table: person\n"
+            "    column: gender_concept_name\n"
+            "    value_set: 'Yes, No, Unknown'\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: scalar_path.unlink(missing_ok=True))
+
+        import importlib.util
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_value_set_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_value_set_test"] = vp
+        spec.loader.exec_module(vp)
+
+        rows = vp._resolve_variables("_validator_value_set_scalar", findings=[])
+        # Walk the row through the validator's checker.
+        msgs = []
+        for v in rows:
+            vs = v.get("value_set")
+            if vs is not None and not isinstance(vs, (list, tuple)):
+                msgs.append(str(type(vs).__name__))
+        self.assertEqual(
+            msgs, ["str"],
+            msg="validator should detect scalar value_set as a non-list type",
+        )
+
+    def test_validator_flags_unknown_proposal_value(self):
+        # Anything other than Standard / Custom (when proposal is set)
+        # must be rejected so a typo doesn't ship to a sales workbook.
+        path = bd.PACKS_DIR / "variables" / "_validator_proposal_typo.yaml"
+        path.write_text(
+            "variables:\n"
+            "  - category: Demographics\n"
+            "    variable: ProposalTypoTest\n"
+            "    table: person\n"
+            "    column: gender_concept_name\n"
+            "    proposal: Stnadard\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        import importlib.util
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_proposal_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_proposal_test"] = vp
+        spec.loader.exec_module(vp)
+
+        rows = vp._resolve_variables("_validator_proposal_typo", findings=[])
+        bad_proposals = [
+            v.get("proposal") for v in rows
+            if isinstance(v.get("proposal"), str)
+            and v.get("proposal").strip()
+            and v.get("proposal").strip() not in ("Standard", "Custom")
+        ]
+        self.assertEqual(bad_proposals, ["Stnadard"])
 
 
 if __name__ == "__main__":

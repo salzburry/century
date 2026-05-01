@@ -173,14 +173,15 @@ hardcoded-empty any more.
 
 ### 4.3 Audience filtering
 
-Three audiences, each with a different section-visibility rule
+Four audiences, each with a different section-visibility rule
 (`AUDIENCE_VISIBILITY` in `build_dictionary.py`):
 
 | Audience | Summary | Tables | Columns | Variables |
 |---|---|---|---|---|
 | technical | ✓ | ✓ | ✓ | ✓ |
-| sales | ✓ | ✓ | — | ✓ |
+| sales | ✓ (trimmed) | — | — | ✓ (Tempus-style) |
 | pharma | ✓ | — | — | ✓ |
+| customer | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) |
 
 Run with `--audience sales` or `--audience pharma` to switch; PII-
 flagged variables are dropped from the Variables sheet in both
@@ -488,7 +489,7 @@ Minimum sections by audience:
 | Audience | Summary | Tables | Columns | Variables |
 |---|---|---|---|---|
 | technical | ✓ | ✓ | ✓ | ✓ |
-| sales | ✓ | ✓ | — | ✓ |
+| sales | ✓ (trimmed) | — | — | ✓ (Tempus-style) |
 | pharma | ✓ | — | — | ✓ |
 | customer | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) |
 
