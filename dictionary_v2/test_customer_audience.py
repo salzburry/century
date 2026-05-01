@@ -292,6 +292,116 @@ class CustomerTableFilterTests(unittest.TestCase):
         self.assertEqual(names, {"person"})
 
 
+class StakeholderCoverTests(unittest.TestCase):
+    """Sales / customer audiences ship a styled cover Summary sheet
+    (title block, description, hero stats, coverage rollup) — not the
+    bare key/value layout. The helpers must be cohort-agnostic and
+    degrade gracefully when fields are missing."""
+
+    def test_coverage_rollup_groups_and_alphabetises_categories(self):
+        rows = [
+            _make_variable("person", variable="Sex"),
+            _make_variable("person", variable="Race"),
+            _make_variable("drug_exposure", variable="Aspirin"),
+        ]
+        rows[0].category = "Demographics"
+        rows[0].completeness_pct = 100.0
+        rows[1].category = "Demographics"
+        rows[1].completeness_pct = 90.0
+        rows[2].category = "Medications"
+        rows[2].completeness_pct = 60.0
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=rows,
+        )
+        rollup = bd._coverage_rollup(model)
+        self.assertEqual([r["category"] for r in rollup],
+                         ["Demographics", "Medications"])
+        demo = rollup[0]
+        self.assertEqual(demo["total"], 2)
+        self.assertEqual(demo["implemented"], 2)
+        self.assertEqual(demo["implemented_pct"], 100.0)
+        self.assertAlmostEqual(demo["avg_completeness"], 95.0)
+
+    def test_coverage_rollup_skips_avg_when_no_implemented_rows(self):
+        v = _make_variable("person", variable="X", implemented="No")
+        v.category = "Outcomes"
+        v.completeness_pct = None
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v],
+        )
+        rollup = bd._coverage_rollup(model)
+        self.assertEqual(rollup[0]["implemented"], 0)
+        self.assertIsNone(rollup[0]["avg_completeness"])
+
+    def test_hero_stats_degrade_on_dry_run(self):
+        # Dry-run model: patient_count is None and no implemented rows.
+        v = _make_variable("person", variable="X", implemented="No")
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v],
+        )
+        model = dataclasses.replace(
+            model,
+            summary=dataclasses.replace(model.summary, patient_count=None),
+        )
+        h = bd._hero_stats(model)
+        self.assertIsNone(h["patients"])
+        self.assertEqual(h["variables_total"], 1)
+        self.assertEqual(h["variables_implemented"], 0)
+        self.assertEqual(h["variables_implemented_pct"], 0.0)
+
+    def test_cover_renders_title_description_hero_and_rollup(self):
+        # Drive the cover renderer end-to-end via write_xlsx and
+        # spot-check the rendered cells. Asserts the helper is
+        # genuinely cohort-agnostic (it only reads model fields).
+        import openpyxl
+        v_demo = _make_variable("person", variable="Sex")
+        v_demo.category = "Demographics"
+        v_demo.completeness_pct = 100.0
+        v_meds = _make_variable("drug_exposure", variable="Aspirin")
+        v_meds.category = "Medications"
+        v_meds.completeness_pct = 60.0
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v_demo, v_meds],
+        )
+        # Pretend live model so hero stats + filter behave as in prod.
+        model = dataclasses.replace(
+            model,
+            description="A sample cohort for testing.",
+            summary=dataclasses.replace(model.summary, patient_count=42),
+        )
+
+        path = _output_dir(self.id()) / "cover.xlsx"
+        bd.write_xlsx(model, path, audience="sales")
+        wb = openpyxl.load_workbook(path)
+        ws = wb["Summary"]
+        text = "\n".join(
+            str(ws.cell(row=r, column=c).value or "")
+            for r in range(1, ws.max_row + 1)
+            for c in range(1, ws.max_column + 1)
+        )
+        # Title block carries display_name + disease.
+        self.assertIn("dn", text)   # display_name from _make_model
+        # Description paragraph is rendered.
+        self.assertIn("A sample cohort for testing.", text)
+        # Hero stats labels.
+        self.assertIn("Patients", text)
+        self.assertIn("Years of follow-up", text)
+        self.assertIn("Variables", text)
+        self.assertIn("With data", text)
+        # Coverage rollup section + categories.
+        self.assertIn("Coverage by category", text)
+        self.assertIn("Demographics", text)
+        self.assertIn("Medications", text)
+
+
 class StakeholderImplementedFilterTests(unittest.TestCase):
     """Variables that have no data in the cohort (`implemented="No"`)
     must not appear in stakeholder-facing audiences (customer, sales).
@@ -393,16 +503,27 @@ class CustomerXlsxSmokeTests(_CustomerSmokeBase):
             self.skipTest("openpyxl / pandas not installed")
         super().setUp()
 
-    def test_summary_has_no_metric_value_header(self):
+    def test_summary_renders_stakeholder_cover_for_customer(self):
+        # Customer Summary is a styled cover — title block + hero
+        # stats + coverage rollup — not a `metric / value` list.
+        # Row 1 is the merged title cell starting with the cohort's
+        # display_name (or "Cohort" fallback for the synthetic test
+        # model whose display_name is "dn"). Either way it must NOT
+        # be the literal labels "metric / value" and NOT be the
+        # first key/value pair from the old layout.
         import openpyxl
         path = _output_dir(self.id()) / "out.xlsx"
         bd.write_xlsx(self.filtered, path, audience="customer")
         wb = openpyxl.load_workbook(path)
         ws = wb["Summary"]
-        # Row 1 must be the first data row, not the literal labels.
-        row1 = [c.value for c in ws[1]]
-        self.assertEqual(row1, ["cohort", "c"])
-        self.assertNotEqual(row1, ["metric", "value"])
+        title = ws.cell(row=1, column=1).value
+        self.assertNotEqual([title, ws.cell(row=1, column=2).value],
+                            ["metric", "value"])
+        self.assertNotEqual([title, ws.cell(row=1, column=2).value],
+                            ["cohort", "c"])
+        self.assertIsInstance(title, str)
+        self.assertIn("cohort", title.lower(),
+                      msg=f"title row should announce the cohort, got {title!r}")
 
     def test_columns_sheet_has_exactly_four_headers(self):
         import openpyxl

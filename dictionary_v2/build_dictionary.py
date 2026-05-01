@@ -1867,25 +1867,289 @@ def write_xlsx(model: CohortModel, out_path: Path,
         pd, variables_layout(audience), model.variables
     )
 
-    # Customer and sales audiences hide the literal "metric" / "value" header row
-    # on Summary — the reviewer flagged those words as not customer-
-    # facing. Other audiences keep the header for backward compatibility
-    # with existing tests / consumers.
-    summary_with_header = audience not in ("customer", "sales")
+    # Stakeholder audiences (customer, sales) get a styled cover sheet
+    # with a title block, description paragraph, hero stats, date
+    # coverage, and a coverage-by-category rollup. Internal audiences
+    # (technical, pharma) keep the bare key/value Summary that downstream
+    # tools and tests already read.
+    stakeholder_cover = audience in ("customer", "sales")
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        summary_df.to_excel(
-            writer, sheet_name="Summary", index=False,
-            header=summary_with_header,
-        )
+        if stakeholder_cover:
+            # Create the Summary sheet directly via openpyxl rather
+            # than letting pandas dump key/value rows into it.
+            ws = writer.book.create_sheet("Summary", 0)
+            _render_stakeholder_cover(ws, model)
+        else:
+            summary_df.to_excel(
+                writer, sheet_name="Summary", index=False, header=True,
+            )
         if section_visible(audience, "tables"):
             tables_df.to_excel(writer, sheet_name="Tables", index=False)
         if section_visible(audience, "columns"):
             columns_df.to_excel(writer, sheet_name="Columns", index=False)
         if section_visible(audience, "variables"):
             variables_df.to_excel(writer, sheet_name="Variables", index=False)
-        _autosize_and_wrap(writer)
+        _autosize_and_wrap(writer, skip_summary=stakeholder_cover)
+        if section_visible(audience, "variables"):
+            for ws in writer.book.worksheets:
+                _apply_completeness_gradient(ws)
     print(f"Wrote {out_path}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------- #
+# Stakeholder-cover helpers. Used by the customer / sales audiences to
+# replace the bare key/value Summary sheet with a real cover page —
+# big header, cohort description, hero stats, coverage rollup. Cohort-
+# agnostic: every helper reads only from the canonical CohortModel.
+# --------------------------------------------------------------------- #
+
+
+def _coverage_rollup(model: CohortModel) -> list[dict[str, Any]]:
+    """Per-category implementation + completeness summary.
+
+    Returns one dict per category seen in `model.variables`:
+        {category, total, implemented, implemented_pct, avg_completeness}
+    Categories are alphabetised; `avg_completeness` is the mean of
+    completeness_pct across the *implemented* rows (un-implemented
+    rows have no signal to average). Empty model → [].
+    """
+    by_cat: dict[str, list[VariableRow]] = {}
+    for v in model.variables:
+        by_cat.setdefault((v.category or "Uncategorized").strip(), []).append(v)
+
+    out: list[dict[str, Any]] = []
+    for cat in sorted(by_cat.keys(), key=str.lower):
+        rows = by_cat[cat]
+        implemented = [r for r in rows if r.implemented == "Yes"]
+        completes = [r.completeness_pct for r in implemented
+                     if r.completeness_pct is not None]
+        avg = (sum(completes) / len(completes)) if completes else None
+        out.append({
+            "category": cat,
+            "total": len(rows),
+            "implemented": len(implemented),
+            "implemented_pct": (100.0 * len(implemented) / len(rows))
+                                if rows else 0.0,
+            "avg_completeness": avg,
+        })
+    return out
+
+
+def _hero_stats(model: CohortModel) -> dict[str, Any]:
+    """The four headline numbers that go on the cover.
+
+    - patients:        live patient count for the cohort
+    - years_of_data:   span between min/max event dates
+    - variables:       total variable rows in the model
+    - implemented_pct: fraction of variables with `implemented == "Yes"`
+
+    All gracefully degrade to `None` / "—" when the model is dry-run
+    (no DB) or empty, so the cover renders without crashing.
+    """
+    total_vars = len(model.variables)
+    implemented = sum(1 for v in model.variables if v.implemented == "Yes")
+    impl_pct = (100.0 * implemented / total_vars) if total_vars else 0.0
+    return {
+        "patients": model.summary.patient_count,
+        "years_of_data": model.summary.date_coverage.years_of_data,
+        "variables_total": total_vars,
+        "variables_implemented": implemented,
+        "variables_implemented_pct": impl_pct,
+    }
+
+
+def _render_stakeholder_cover(ws, model: CohortModel) -> None:
+    """Write a styled Summary cover into an empty openpyxl worksheet.
+
+    Layout (top to bottom):
+      1. Title row     — display_name + " — " + disease pretty name
+      2. Description   — wrapped paragraph from cohort YAML
+      3. Hero stats    — N patients · X years · M variables · K% implemented
+      4. Date coverage — single readable line
+      5. Coverage table — per-category implemented + avg completeness
+
+    Cohort-agnostic: only reads model fields. No sheet-name or
+    cohort-slug specialisation.
+    """
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    title_font     = Font(name="Calibri", size=22, bold=True, color="1F3864")
+    subtitle_font  = Font(name="Calibri", size=11, italic=True, color="595959")
+    hero_label     = Font(name="Calibri", size=10, color="595959")
+    hero_value     = Font(name="Calibri", size=18, bold=True, color="1F3864")
+    section_font   = Font(name="Calibri", size=12, bold=True, color="1F3864")
+    rollup_header  = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    body_font      = Font(name="Calibri", size=10)
+    rollup_fill    = PatternFill("solid", fgColor="1F3864")
+    band_fill      = PatternFill("solid", fgColor="F2F2F2")
+    thin           = Side(style="thin", color="BFBFBF")
+    cell_border    = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap_top       = Alignment(wrap_text=True, vertical="top")
+    center         = Alignment(horizontal="center", vertical="center")
+    center_wrap    = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # 1. Title — `<display_name> — <Disease> cohort`
+    title = (model.display_name or model.cohort or "Cohort").strip()
+    if model.disease:
+        title = f"{title} — {model.disease.strip()} cohort"
+    ws.cell(row=1, column=1, value=title).font = title_font
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=6)
+
+    # Provider · schema · generated-at one-liner under the title.
+    subtitle_bits = []
+    if model.provider:
+        subtitle_bits.append(f"Provider: {model.provider}")
+    if model.schema_name:
+        subtitle_bits.append(f"Schema: {model.schema_name}")
+    if model.generated_at:
+        subtitle_bits.append(f"Generated: {model.generated_at}")
+    sub = ws.cell(row=2, column=1, value="  ·  ".join(subtitle_bits))
+    sub.font = subtitle_font
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=6)
+
+    # 2. Description paragraph (from the cohort YAML).
+    row = 4
+    if (model.description or "").strip():
+        cell = ws.cell(row=row, column=1, value=model.description.strip())
+        cell.font = body_font
+        cell.alignment = wrap_top
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=6)
+        ws.row_dimensions[row].height = 60
+        row += 2
+
+    # 3. Hero stats block — four cells, each two rows tall (label / value).
+    hero = _hero_stats(model)
+
+    def _fmt_int(n: Any) -> str:
+        if isinstance(n, int):
+            return f"{n:,}"
+        return "—"
+
+    def _fmt_years(n: Any) -> str:
+        if isinstance(n, (int, float)):
+            return f"{n:.1f} yrs"
+        return "—"
+
+    hero_cells = [
+        ("Patients",            _fmt_int(hero["patients"])),
+        ("Years of follow-up",  _fmt_years(hero["years_of_data"])),
+        ("Variables",
+         f"{hero['variables_total']:,}"
+         if hero["variables_total"] else "—"),
+        ("With data",
+         f"{hero['variables_implemented_pct']:.0f}% "
+         f"({hero['variables_implemented']:,}/"
+         f"{hero['variables_total']:,})"
+         if hero["variables_total"] else "—"),
+    ]
+    label_row = row
+    value_row = row + 1
+    for i, (label, value) in enumerate(hero_cells):
+        col = 1 + i * 2  # 1, 3, 5, 7 — leave a gap col between blocks
+        lc = ws.cell(row=label_row, column=col, value=label)
+        lc.font = hero_label
+        lc.alignment = center
+        ws.merge_cells(start_row=label_row, start_column=col,
+                       end_row=label_row, end_column=col + 1)
+        vc = ws.cell(row=value_row, column=col, value=value)
+        vc.font = hero_value
+        vc.alignment = center
+        ws.merge_cells(start_row=value_row, start_column=col,
+                       end_row=value_row, end_column=col + 1)
+    ws.row_dimensions[label_row].height = 16
+    ws.row_dimensions[value_row].height = 28
+    row = value_row + 2
+
+    # 4. Date coverage line.
+    dc = model.summary.date_coverage
+    if dc.min_date and dc.max_date:
+        coverage = (
+            f"Date coverage: {dc.min_date} → {dc.max_date}"
+            f"   ·   {dc.years_of_data:.1f} years"
+        )
+        cell = ws.cell(row=row, column=1, value=coverage)
+        cell.font = body_font
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=6)
+        row += 2
+
+    # 5. Coverage rollup table.
+    rollup = _coverage_rollup(model)
+    if rollup:
+        header = ws.cell(row=row, column=1, value="Coverage by category")
+        header.font = section_font
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=6)
+        row += 1
+
+        cols = ["Category", "Variables", "Implemented", "Avg completeness"]
+        for j, c in enumerate(cols, start=1):
+            cell = ws.cell(row=row, column=j, value=c)
+            cell.font = rollup_header
+            cell.fill = rollup_fill
+            cell.alignment = center_wrap
+            cell.border = cell_border
+        row += 1
+
+        for i, r in enumerate(rollup):
+            band = band_fill if i % 2 else None
+            avg = r["avg_completeness"]
+            avg_str = f"{avg:.1f}%" if avg is not None else "—"
+            impl_str = (
+                f"{r['implemented']} / {r['total']} "
+                f"({r['implemented_pct']:.0f}%)"
+            )
+            values = [r["category"], r["total"], impl_str, avg_str]
+            for j, val in enumerate(values, start=1):
+                cell = ws.cell(row=row, column=j, value=val)
+                cell.font = body_font
+                cell.border = cell_border
+                if band is not None:
+                    cell.fill = band
+                if j == 1:
+                    cell.alignment = wrap_top
+                else:
+                    cell.alignment = center
+            row += 1
+
+    # Set column widths for the cover. Standard for the rollup table
+    # plus a generous header column.
+    widths = {1: 32, 2: 14, 3: 22, 4: 20, 5: 18, 6: 18}
+    for c, w in widths.items():
+        ws.column_dimensions[get_column_letter(c)].width = w
+
+
+def _apply_completeness_gradient(ws) -> None:
+    """3-color scale on the Completeness column of a Variables sheet.
+
+    Red < 30 / yellow at 70 / green at 100. Reads the literal cell
+    text — `_fmt_pct` writes values like '87.5%' — and sets a
+    color-scale rule on the matching numeric range.
+    """
+    if ws.title != "Variables" or ws.max_row < 2:
+        return
+    # Find the Completeness column by its header text.
+    target_col = None
+    for col_idx in range(1, ws.max_column + 1):
+        if ws.cell(row=1, column=col_idx).value == "Completeness":
+            target_col = col_idx
+            break
+    if target_col is None:
+        return
+
+    from openpyxl.formatting.rule import ColorScaleRule
+    from openpyxl.utils import get_column_letter
+    letter = get_column_letter(target_col)
+    rng = f"{letter}2:{letter}{ws.max_row}"
+    rule = ColorScaleRule(
+        start_type="num", start_value=0,   start_color="F8696B",   # red
+        mid_type="num",   mid_value=70,    mid_color="FFEB84",     # yellow
+        end_type="num",   end_value=100,   end_color="63BE7B",     # green
+    )
+    ws.conditional_formatting.add(rng, rule)
 
 
 # --------------------------------------------------------------------- #
@@ -1959,17 +2223,24 @@ def _style_xlsx_header_row(ws) -> None:
     ws.row_dimensions[1].height = 28
 
 
-def _autosize_and_wrap(writer) -> None:
+def _autosize_and_wrap(writer, skip_summary: bool = False) -> None:
     """Per-sheet polish:
       - Tuned column widths (per-header overrides, else old auto-size).
       - Styled header row (bold white on navy).
       - Freeze top row + auto-filter on data sheets (Tables / Columns /
         Variables). Summary is key / value and doesn't need either.
-      - Word-wrap on every body cell."""
+      - Word-wrap on every body cell.
+
+    `skip_summary=True` leaves the Summary sheet untouched — used
+    when the stakeholder cover renderer has already styled it
+    explicitly (column widths, fonts, merged cells) and the
+    auto-size pass would clobber that."""
     from openpyxl.styles import Alignment
     body_align = Alignment(wrap_text=True, vertical="top")
 
     for ws in writer.book.worksheets:
+        if skip_summary and ws.title == "Summary":
+            continue
         # Column widths + wrap on body cells.
         for col_idx, col in enumerate(ws.columns, start=1):
             header_value = ws.cell(row=1, column=col_idx).value
