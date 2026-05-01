@@ -371,8 +371,13 @@ python dictionary_v2/build_dictionary.py \
     --audience sales
 ```
 
-`Completeness` is now populated from live cohort counts. Hand off
-the xlsx + html as the sales artifact.
+`Completeness` is now populated from live cohort counts. Variables
+the cohort doesn't actually carry data for (`Implemented = No`)
+are dropped automatically from the sales / customer artifacts —
+they'd otherwise render as 0% rows and add noise. Internal
+audiences (`technical`, `pharma`) keep them so QA can see gaps.
+
+Hand off the xlsx + html as the sales artifact.
 
 ---
 

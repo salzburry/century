@@ -6,6 +6,7 @@ build_dictionary.py module (which doesn't know about customer).
 """
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import shutil
 import sys
@@ -67,12 +68,15 @@ def _make_column(table: str, column: str = "year_of_birth") -> "bd.ColumnRow":
     )
 
 
-def _make_variable(table: str, column: str = "year_of_birth") -> "bd.VariableRow":
+def _make_variable(
+    table: str, column: str = "year_of_birth",
+    implemented: str = "Yes", variable: str = "Age",
+) -> "bd.VariableRow":
     return bd.VariableRow(
-        category="Demographics", variable="Age", description="Patient age",
+        category="Demographics", variable=variable, description="Patient age",
         table=table, column=column, criteria="year_of_birth IS NOT NULL",
         values="", distribution="", median_iqr="",
-        completeness_pct=100.0, implemented="Yes", patient_pct=100.0,
+        completeness_pct=100.0, implemented=implemented, patient_pct=100.0,
         extraction_type="Direct", pii=False, notes="",
         inclusion_criteria="Patients with a birth year on file.",
         field_type="integer", example="44", coding_schema="",
@@ -282,6 +286,86 @@ class CustomerTableFilterTests(unittest.TestCase):
         filtered = bd.filter_for_audience(model, "sales")
         self.assertEqual(filtered.tables, [],
                          msg="sales must not ship a Tables sheet")
+
+
+class StakeholderImplementedFilterTests(unittest.TestCase):
+    """Variables that have no data in the cohort (`implemented="No"`)
+    must not appear in stakeholder-facing audiences (customer, sales).
+    They'd otherwise render as 0% rows that add noise to the partner
+    artifact. Internal audiences (technical, pharma) keep them so QA
+    can see gaps."""
+
+    def _live_model(self, *variables):
+        # `patient_count > 0` puts the model in "live" (non-dry-run)
+        # mode so the implemented filter actually fires.
+        m = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=list(variables),
+        )
+        return dataclasses.replace(
+            m,
+            summary=dataclasses.replace(m.summary, patient_count=10),
+        )
+
+    def test_customer_drops_unimplemented_variables(self):
+        live = self._live_model(
+            _make_variable("person", variable="Has Data", implemented="Yes"),
+            _make_variable("person", variable="No Data Yet", implemented="No"),
+        )
+        filtered = bd.filter_for_audience(live, "customer")
+        names = [v.variable for v in filtered.variables]
+        self.assertEqual(names, ["Has Data"])
+
+    def test_sales_drops_unimplemented_variables(self):
+        live = self._live_model(
+            _make_variable("person", variable="Has Data", implemented="Yes"),
+            _make_variable("person", variable="No Data Yet", implemented="No"),
+        )
+        filtered = bd.filter_for_audience(live, "sales")
+        names = [v.variable for v in filtered.variables]
+        self.assertEqual(names, ["Has Data"])
+
+    def test_technical_keeps_unimplemented_variables(self):
+        live = self._live_model(
+            _make_variable("person", variable="Has Data", implemented="Yes"),
+            _make_variable("person", variable="No Data Yet", implemented="No"),
+        )
+        # Technical audience returns the model verbatim — no filter.
+        filtered = bd.filter_for_audience(live, "technical")
+        names = [v.variable for v in filtered.variables]
+        self.assertEqual(names, ["Has Data", "No Data Yet"])
+
+    def test_pharma_keeps_unimplemented_variables(self):
+        live = self._live_model(
+            _make_variable("person", variable="Has Data", implemented="Yes"),
+            _make_variable("person", variable="No Data Yet", implemented="No"),
+        )
+        filtered = bd.filter_for_audience(live, "pharma")
+        names = [v.variable for v in filtered.variables]
+        self.assertEqual(set(names), {"Has Data", "No Data Yet"})
+
+    def test_dry_run_skips_implemented_filter_for_customer(self):
+        # Dry-run model carries patient_count=None; every row is
+        # implemented="No" because no DB was open. The filter must
+        # NOT fire here or the offline preview becomes empty.
+        m = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[
+                _make_variable("person", variable="A", implemented="No"),
+                _make_variable("person", variable="B", implemented="No"),
+            ],
+        )
+        dry = dataclasses.replace(
+            m, summary=dataclasses.replace(m.summary, patient_count=None),
+        )
+        filtered = bd.filter_for_audience(dry, "customer")
+        self.assertEqual(
+            len(filtered.variables), 2,
+            msg="dry-run preview must keep all rows; the implemented "
+                "filter relies on live DB counts",
+        )
 
 
 class _CustomerSmokeBase(unittest.TestCase):

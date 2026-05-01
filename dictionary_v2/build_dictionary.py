@@ -1828,6 +1828,25 @@ def filter_for_audience(
         filtered_columns  = [c for c in filtered_columns  if c.table      not in excluded]
         filtered_variables = [v for v in filtered_variables if v.table    not in excluded]
 
+    # Stakeholder audiences (customer, sales) drop variables that
+    # don't have any data in the cohort. `implemented == "Yes"` is
+    # the same signal the technical sheet already reports — rows
+    # with implemented="No" would otherwise render as "0%" /
+    # "Implemented: No" and add noise to the partner artifact.
+    # Internal audiences (technical, pharma) keep them so QA can
+    # see what's missing.
+    #
+    # Dry-run models have implemented="No" for every row (no DB
+    # connection is open, so the resolver can't tell what's
+    # populated). Detect that via `patient_count is None` — set
+    # only by the dry-run branch in build_model — and skip the
+    # implemented filter so offline previews still show every row.
+    is_dry_run = model.summary.patient_count is None
+    if audience in ("customer", "sales") and not is_dry_run:
+        filtered_variables = [
+            v for v in filtered_variables if v.implemented == "Yes"
+        ]
+
     visibility = AUDIENCE_VISIBILITY[audience]
     return dataclasses.replace(
         model,
