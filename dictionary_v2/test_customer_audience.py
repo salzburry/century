@@ -151,12 +151,14 @@ class CustomerLayoutTests(unittest.TestCase):
         self.assertNotIn("% Patient", headers)
 
     def test_other_audiences_unaffected(self):
-        for aud in ("technical", "sales", "pharma"):
+        # technical and pharma share the same Tables / Columns
+        # layouts as before; sales now has a single-sheet
+        # Tempus-style spec layout exercised separately.
+        for aud in ("technical", "pharma"):
             tables = [l for l, _ in bd.tables_layout(aud)]
             self.assertIn("Data Source", tables, msg=f"{aud} Tables should keep Data Source")
             cols = [l for l, _ in bd.columns_layout(aud)]
             self.assertIn("Coding Schema", cols, msg=f"{aud} Columns should keep Coding Schema")
-            # % Patient stays for non-customer audiences.
             vars_layout = [l for l, _ in bd.variables_layout(aud)]
             self.assertIn(
                 "% Patient", vars_layout,
@@ -193,12 +195,53 @@ class CustomerTableFilterTests(unittest.TestCase):
         names = {t.table_name for t in filtered.tables}
         self.assertEqual(names, {"person", "cohort_patients"})
 
-    def test_sales_keeps_internal_tables(self):
+    def test_sales_layout_is_tempus_spec_columns(self):
+        # The sales layout matches the reviewer's Tempus reference
+        # workbook plus a Completeness column.
+        headers = [label for label, _ in bd.variables_layout("sales")]
+        self.assertEqual(
+            headers,
+            ["Category", "Variable", "Description", "Value Sets",
+             "Notes", "Type", "Proposal", "Completeness"],
+        )
+
+    def test_sales_value_set_renders_newline_separated(self):
+        # Multi-value `value_set` lists render one-per-line so xlsx
+        # cells display the same way the reference Google sheet does.
+        row = bd.VariableRow(
+            category="Demographics", variable="Education level",
+            description="The patient's highest level of education received.",
+            table="observation", column="value_as_concept_name",
+            criteria="", values="", distribution="", median_iqr="",
+            completeness_pct=100.0, implemented="Yes", patient_pct=100.0,
+            extraction_type="Abstracted", notes="Yes",
+            value_set=["Less than high school", "Bachelor's degree"],
+            proposal="Custom",
+        )
+        rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
+        self.assertEqual(
+            rendered["Value Sets"], "Less than high school\nBachelor's degree",
+        )
+        self.assertEqual(rendered["Type"], "Abstracted")
+        self.assertEqual(rendered["Proposal"], "Custom")
+        self.assertEqual(rendered["Completeness"], "100.0%")
+
+    def test_sales_visibility_is_variables_only(self):
+        vis = bd.AUDIENCE_VISIBILITY["sales"]
+        self.assertTrue(vis["variables"])
+        self.assertTrue(vis["summary"], msg="summary cover stays for context")
+        self.assertFalse(vis["tables"])
+        self.assertFalse(vis["columns"])
+
+    def test_sales_audience_hides_tables_sheet(self):
+        # The Tempus-style sales layout is a single Variables sheet.
+        # Tables visibility is now off, so the filter empties out
+        # `model.tables` rather than passing them through.
         tables = [_make_table("person"), _make_table("cohort_patients")]
         model = _make_model(tables, [_make_column("person")], [_make_variable("person")])
         filtered = bd.filter_for_audience(model, "sales")
-        names = {t.table_name for t in filtered.tables}
-        self.assertEqual(names, {"person", "cohort_patients"})
+        self.assertEqual(filtered.tables, [],
+                         msg="sales must not ship a Tables sheet")
 
 
 class _CustomerSmokeBase(unittest.TestCase):

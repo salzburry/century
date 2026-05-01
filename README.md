@@ -452,7 +452,15 @@ Every heuristic fill is logged so the config can absorb it later.
 
 ### 10.1 Presets
 - **technical** — Summary + Tables + Columns + Variables. No redaction. Raw SQL `Criteria` shown.
-- **sales** — Summary + Tables + Variables. PII dropped. SQL `Criteria` hidden.
+- **sales** — Tempus-style single-sheet spec. Summary cover plus
+  a Variables sheet with exactly:
+  `Category | Variable | Description | Value Sets | Notes | Type |
+  Proposal | Completeness`. Tables and Columns sheets are not
+  produced. PII rows dropped. `Value Sets` (newline-separated
+  clinical reference values) and `Proposal` (Standard / Custom)
+  are authored per row in the variables YAML
+  (`value_set:`, `proposal:`); rows that aren't curated yet
+  render those cells empty.
 - **pharma** — Summary + Variables. PII dropped; no raw column inventory. SQL `Criteria` hidden.
 - **customer** — All four sheets but trimmed (drops debug summary
   fields, internal scaffolding tables, PII; trims Columns to
