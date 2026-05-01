@@ -210,9 +210,9 @@ class CustomerTableFilterTests(unittest.TestCase):
         )
 
     def test_sales_value_sets_renders_observed_top_values(self):
-        # Value Sets is the observed top-N labels from `v.values`,
-        # newline-separated. No curation field; the data is the
-        # source of truth.
+        # Value Sets reads from the structured top_value_labels list
+        # (newline-separated, no counts). Dataset is source of truth;
+        # no curation field.
         row = bd.VariableRow(
             category="Medications", variable="Anti-amyloid Therapy",
             description="Anti-amyloid mAb administrations.",
@@ -221,6 +221,8 @@ class CustomerTableFilterTests(unittest.TestCase):
             distribution="ignored for sales", median_iqr="",
             completeness_pct=87.5, implemented="Yes", patient_pct=80.0,
             extraction_type="Structured", notes="",
+            top_value_labels=["Lecanemab", "Lecanemab-irmb", "Leqembi",
+                              "Donanemab-azbt", "Kisunla"],
             proposal="Standard",
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
@@ -232,8 +234,32 @@ class CustomerTableFilterTests(unittest.TestCase):
         self.assertEqual(rendered["Proposal"], "Standard")
         self.assertEqual(rendered["Completeness"], "87.5%")
 
+    def test_sales_value_sets_preserves_labels_with_commas(self):
+        # OMOP concept names can contain commas
+        # ("Cancer, malignant", "Aspirin 81 MG, Oral Tablet"). The
+        # structured top_value_labels list must render each verbatim
+        # — the prior implementation split v.values on commas and
+        # would have fragmented these into bogus cell entries.
+        row = bd.VariableRow(
+            category="Diagnosis", variable="Cancer Site",
+            description="Site/type of cancer.",
+            table="condition_occurrence", column="condition_concept_name",
+            criteria="", values="Cancer, malignant, Cancer, in situ",
+            distribution="", median_iqr="",
+            completeness_pct=80.0, implemented="Yes", patient_pct=80.0,
+            extraction_type="Structured", notes="",
+            top_value_labels=["Cancer, malignant", "Cancer, in situ"],
+            proposal="",
+        )
+        rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
+        self.assertEqual(
+            rendered["Value Sets"],
+            "Cancer, malignant\nCancer, in situ",
+            msg="labels with internal commas must render verbatim",
+        )
+
     def test_sales_value_sets_empty_when_no_observed_values(self):
-        # Free-text columns / dry-run rows have v.values = "".
+        # Free-text columns / dry-run rows have empty top_value_labels.
         # Cell renders empty rather than "—" — there's no curation
         # path to fall back to.
         row = bd.VariableRow(
@@ -243,6 +269,7 @@ class CustomerTableFilterTests(unittest.TestCase):
             values="", distribution="", median_iqr="",
             completeness_pct=None, implemented="No", patient_pct=None,
             extraction_type="Unstructured", notes="",
+            top_value_labels=[],
             proposal="",
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
