@@ -11,16 +11,35 @@ actually-observed values, and compares those against any configured
   - missing from config     (observed but not yet in `match.values`)
   - stale in config         (in `match.values` but never observed)
 
-This script never modifies the disease YAML. With
-`--write-suggestions`, it writes a `*.suggested.yaml` proposal next
-to the report, intended for human review.
+By default this script is read-only. With `--write-suggestions` it
+writes a `*.suggested.yaml` proposal next to the report — still no
+changes to disease YAML. With `--apply` (after an explicit y/N
+confirmation, or `--apply-yes` for scripted runs) it can inject the
+proposed `match:` blocks into pack files; `--target` is required and
+controls whether writes go to the cohort's own pack or the shared
+source pack the variable was inherited from.
 
 Usage:
+    # Read-only report.
     python dictionary_v2/discover_exact_matches.py --cohort balboa_ckd
+
+    # Read-only report + suggested.yaml proposal.
     python dictionary_v2/discover_exact_matches.py --cohort balboa_ckd \\
         --variable "Aspirin" --write-suggestions
+
+    # Offline preview, no DB.
     python dictionary_v2/discover_exact_matches.py --cohort balboa_ckd \\
-        --dry-run   # offline; reports config-only without DB observations
+        --dry-run
+
+    # Write match: blocks into the cohort's own pack only (safer).
+    python dictionary_v2/discover_exact_matches.py --cohort balboa_ckd \\
+        --apply --target cohort
+
+    # Write match: blocks into each variable's source pack (touches
+    # files that other cohorts include — only use for clinically
+    # universal values).
+    python dictionary_v2/discover_exact_matches.py --cohort balboa_ckd \\
+        --apply --target shared
 """
 from __future__ import annotations
 
@@ -516,14 +535,33 @@ def _confirm(prompt: str) -> bool:
 
 def apply_suggestions(
     observations: list[VariableObservation],
+    target: str,
+    cohort_slug: str | None = None,
     auto_yes: bool = False,
 ) -> tuple[int, int]:
     """Interactively (or with auto_yes) inject `match:` blocks back
-    into the source pack files.
+    into pack files.
+
+    `target` must be one of:
+      - "shared":  write to the variable's source pack (e.g. the
+                   shared ckd_common.yaml). Use only when the proposed
+                   values are clinically appropriate for every cohort
+                   that includes the source pack.
+      - "cohort":  write to the cohort's own pack
+                   (packs/variables/<cohort_slug>.yaml). Variables
+                   that don't already exist in that file are skipped
+                   with a message — the cohort pack must explicitly
+                   override the shared row before per-cohort match
+                   values can land.
 
     Returns (applied, skipped). Refuses to write if ruamel.yaml is
     not installed, since pyyaml round-trip would destroy comments.
     """
+    if target not in ("shared", "cohort"):
+        raise ValueError(f"target must be 'shared' or 'cohort', got {target!r}")
+    if target == "cohort" and not cohort_slug:
+        raise ValueError("target='cohort' requires cohort_slug")
+
     eligible = [o for o in observations if _eligible_for_apply(o)]
     if not eligible:
         print("[apply] nothing eligible to apply.", file=sys.stderr)
@@ -540,18 +578,37 @@ def apply_suggestions(
         )
         return (0, len(eligible))
 
+    # Group eligible observations by destination file so each file is
+    # read+written once. With target=cohort everything lands in the
+    # cohort's own pack regardless of source; with target=shared it
+    # lands in each variable's source pack.
+    by_pack: dict[str, list[VariableObservation]] = {}
+    for o in eligible:
+        dest_pack = cohort_slug if target == "cohort" else o.source_pack
+        by_pack.setdefault(dest_pack, []).append(o)
+
     if not auto_yes:
+        scope_label = (
+            f"cohort pack packs/variables/{cohort_slug}.yaml"
+            if target == "cohort"
+            else "the variable's source pack (shared definitions may be touched)"
+        )
         print(
             f"[apply] {len(eligible)} variable(s) have observations "
-            f"that can be written as `match:` blocks into source packs:",
+            f"that can be written as `match:` blocks into {scope_label}:",
             file=sys.stderr,
         )
-        for o in eligible:
+        for dest, obs_list in by_pack.items():
             print(
-                f"  - {o.category} / {o.variable}  "
-                f"({len(o.observed)} values → packs/variables/{o.source_pack}.yaml)",
+                f"  → packs/variables/{dest}.yaml ({len(obs_list)} variable(s)):",
                 file=sys.stderr,
             )
+            for o in obs_list:
+                print(
+                    f"      - {o.category} / {o.variable}  "
+                    f"({len(o.observed)} values, source={o.source_pack})",
+                    file=sys.stderr,
+                )
         if not _confirm("[apply] proceed? [y/N]: "):
             print("[apply] aborted.", file=sys.stderr)
             return (0, len(eligible))
@@ -559,12 +616,6 @@ def apply_suggestions(
     yaml_rt = YAML(typ="rt")
     yaml_rt.preserve_quotes = True
     yaml_rt.width = 4096   # don't reflow long IN list lines
-
-    # Group eligible observations by source pack so each file is read
-    # and written exactly once.
-    by_pack: dict[str, list[VariableObservation]] = {}
-    for o in eligible:
-        by_pack.setdefault(o.source_pack, []).append(o)
 
     applied = 0
     skipped = 0
@@ -586,12 +637,28 @@ def apply_suggestions(
         for o in obs_list:
             row = rows_by_name.get(o.variable)
             if row is None:
-                print(
-                    f"[apply] {pack_slug}: variable {o.variable!r} not "
-                    f"found in {path.name} (likely lives in an "
-                    f"included pack); skipping",
-                    file=sys.stderr,
-                )
+                if target == "cohort":
+                    # Refuse to invent a new variable definition in the
+                    # cohort pack. The reviewer must first copy the
+                    # variable's full definition from the shared pack
+                    # (table/column/criteria/description) before
+                    # per-cohort match values can land — otherwise a
+                    # bare `variable: + match:` row is unbuildable.
+                    print(
+                        f"[apply] target=cohort: variable {o.variable!r} "
+                        f"is not defined in {path.name}. Copy its base "
+                        f"definition from packs/variables/{o.source_pack}.yaml "
+                        f"into {path.name} first if you want a per-cohort "
+                        f"override; skipping.",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"[apply] {pack_slug}: variable {o.variable!r} not "
+                        f"found in {path.name} (likely lives in a "
+                        f"different included pack); skipping",
+                        file=sys.stderr,
+                    )
                 skipped += 1
                 continue
             row["match"] = {
@@ -626,11 +693,20 @@ def main(argv: list[str] | None = None) -> int:
                         help="also emit a *.suggested.yaml proposal file")
     parser.add_argument("--apply", action="store_true",
                         help="after writing the report, prompt to write "
-                             "match: blocks directly into source packs "
-                             "(ruamel.yaml required)")
+                             "match: blocks into pack files (requires "
+                             "--target; ruamel.yaml required)")
     parser.add_argument("--apply-yes", action="store_true",
                         help="implies --apply with no interactive prompt; "
                              "for scripted use")
+    parser.add_argument("--target", choices=("cohort", "shared"),
+                        default=None,
+                        help="where --apply writes match: blocks. "
+                             "`cohort` writes to packs/variables/<cohort>.yaml "
+                             "and skips variables that don't already live "
+                             "there (safe default for per-cohort work). "
+                             "`shared` writes to each variable's source "
+                             "pack — only use when the values are clinically "
+                             "appropriate for every cohort that includes it.")
     parser.add_argument("--dry-run", action="store_true",
                         help="skip DB; report config-only with no observations")
     args = parser.parse_args(argv)
@@ -683,7 +759,22 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.apply or args.apply_yes:
-        apply_suggestions(observations, auto_yes=args.apply_yes)
+        if not args.target:
+            print(
+                "[apply] --apply requires --target {cohort|shared}. "
+                "Pick `cohort` to write to packs/variables/"
+                f"{args.cohort}.yaml only (safer), or `shared` to "
+                "write to each variable's source pack (touches files "
+                "that other cohorts include).",
+                file=sys.stderr,
+            )
+            return 2
+        apply_suggestions(
+            observations,
+            target=args.target,
+            cohort_slug=args.cohort,
+            auto_yes=args.apply_yes,
+        )
 
     return 0
 

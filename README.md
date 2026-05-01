@@ -269,24 +269,26 @@ Explicit so the plan matches the codebase we have.
   ILIKE, missing criteria on clinically-specific rows, and column
   vs variable-name mismatches (e.g. `_concept_id` column under a row
   whose name doesn't mention "ID").
-- `century-dictionary-runtime.zip` — self-contained runtime bundle
-  at the repo root. ~90 KB, contains exactly what a server needs to
-  run the generator: the two Python entrypoints, the validator,
-  `packs/`, `requirements.txt`, `.env.example`, and a snapshot of
-  `VALIDATION_REPORT.md`. No tests, no reference PDFs, no historical
-  design docs. Extract, `pip install -r requirements.txt`, fill in
-  `.env` from `.env.example`, and `python3 build_dictionary.py
-  --cohort <slug>` runs.
-- `scripts/dump_new_schemas.py` — raw-dump helper for the backlog
-  cohorts that don't have a reference PDF under `Output/` yet
-  (Rocky Mountain Neurology Alzheimer's, Newtown MASH, Newtown IBD,
-  RVC DR, RVC AMD). Hands each schema name to
-  `introspect_cohort.py --schema`, which walks the warehouse without
-  needing a cohort pack. Output lands under `Output/raw/<schema>/`
-  (gitignored — dumps carry real warehouse distributions). Run once
-  the schemas are provisioned; mine the resulting files the same
-  way the existing Nimbus / Balboa / DRG cohorts were mined, then
-  commit proper `<disease>_common` + per-cohort packs.
+- `century-dictionary.zip` — self-contained runtime bundle at the
+  repo root. ~165 KB, contains everything a server needs to run both
+  the generator **and** the offline exact-match discovery tool:
+  the legacy + v2 build entrypoints (`build_dictionary.py`,
+  `dictionary_v2/build_dictionary.py`), the discovery script
+  (`dictionary_v2/discover_exact_matches.py`), the introspection
+  backbone, the validator, `packs/` (incl. `dictionary_layout.yaml`),
+  `requirements.txt`, and `BUNDLE_README.md` describing the
+  discover → apply → build workflow. No tests, no reference PDFs,
+  no historical design docs. Rebuild with
+  `bash scripts/build_runtime_bundle.sh`. Extract, `pip install -r
+  requirements.txt`, fill in `.env` from `.env.example`, and
+  `python dictionary_v2/build_dictionary.py --cohort <slug>
+  --audience customer` runs.
+- `scripts/dump_new_schemas.py` — raw-dump helper for new schemas
+  that haven't been mined into a cohort pack yet. Hands each schema
+  name to `introspect_cohort.py --schema`, which walks the warehouse
+  without needing a cohort pack. Output lands under
+  `Output/raw/<schema>/` (gitignored — dumps carry real warehouse
+  distributions).
 
 ### 5.2 What is NOT a clinical validation
 `VALIDATION_REPORT.md` is a structural lint, not a clinical
@@ -316,9 +318,6 @@ reviewing the generated `Output/<schema>_dictionary.xlsx` per cohort
   ratio in urine, not the canonical albumin-side UACR), SGLT2 / MRA /
   ESA utilisation rates, and Dialysis Initiation / Kidney Transplant
   abstraction state.
-- Per-disease variable packs beyond Alzheimer's / AAT / COPD /
-  Asthma / CKD (MASH, IBD, DR) — clinical curation work per the
-  registry backlog in §2.1.
 - WeasyPrint PDF renderer (PR 7 in the shipping plan).
 - Schema-drift detection (PR 8).
 - Batch `--all` runner + combined Nimbus / Nimbus AZ views (PR 9).
