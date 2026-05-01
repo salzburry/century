@@ -7,10 +7,14 @@
 #   customer:
 #     exclude_tables: [<table_name>, ...]   # global excludes
 #   cohorts:
-#     <cohort_slug>:
+#     <cohort_slug>:                             # CLI/filename slug, e.g. `balboa_ckd`
 #       customer:
 #         exclude_tables: [<table_name>, ...]   # replaces global list
 #         extra_exclude_tables: [<table_name>, ...]   # adds to global list
+#
+# The lookup also tries the cohort_name (`balboa_ckd_cohort`) and
+# schema_name as fallback keys, so packs authored against either
+# name still work. Slug is the documented preferred key.
 
 customer:
   # Internal scaffolding tables that should not appear in the
