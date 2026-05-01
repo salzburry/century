@@ -735,6 +735,76 @@ def _is_freetext_column(column: str) -> bool:
     return any(p.search(column) for p in _TEXT_COLUMN_PATTERNS)
 
 
+# --------------------------------------------------------------------------- #
+# Strict-match Criteria derivation. Replaces hand-written ILIKE patterns
+# with `column IN (...)` lists sourced from the cohort's actual top-N
+# values. The dictionary is descriptive — the data itself is the source
+# of truth, so the Criteria cell is what's literally there, not a guess.
+# --------------------------------------------------------------------------- #
+
+DEFAULT_CRITERIA_TOP_N = 50
+
+
+def criteria_top_n_default() -> int:
+    """Global top-N value count, configurable via packs/dictionary_layout.yaml."""
+    layout = _load_dictionary_layout()
+    n = ((layout.get("criteria") or {}).get("top_n"))
+    if isinstance(n, int) and n >= 0:
+        return n
+    return DEFAULT_CRITERIA_TOP_N
+
+
+def _sql_quote(value: str) -> str:
+    """Escape a string for inclusion in single-quoted SQL literal."""
+    return value.replace("'", "''")
+
+
+def derive_strict_criteria(
+    conn, schema: str, table: str, column: str, top_n: int,
+) -> str:
+    """`column IN ('v1', 'v2', ...)` SQL built from the column's top-N
+    most frequent non-null values. Returns "" when:
+      - top_n <= 0 (caller opted out)
+      - the column is freetext / surrogate key (top-N is meaningless)
+      - the query fails or returns no rows
+
+    The returned string is suitable as both the displayed Criteria cell
+    and the WHERE clause used for Completeness / % Patient denominators.
+    """
+    if top_n <= 0:
+        return ""
+    if _is_freetext_column(column) or is_surrogate_key(column):
+        return ""
+
+    sql = (
+        f'SELECT "{column}"::text AS v '
+        f'FROM "{schema}"."{table}" '
+        f'WHERE "{column}" IS NOT NULL '
+        f'GROUP BY "{column}" '
+        f'ORDER BY COUNT(*) DESC '
+        f'LIMIT {int(top_n)};'
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            rows = [r[0] for r in cur.fetchall() if r[0] is not None]
+    except Exception as exc:
+        sys.stderr.write(
+            f"[warn] strict-criteria derivation failed for "
+            f"{table}.{column}: {exc}\n"
+        )
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return ""
+
+    if not rows:
+        return ""
+    quoted = ", ".join(f"'{_sql_quote(str(v))}'" for v in rows)
+    return f'"{column}" IN ({quoted})'
+
+
 def resolve_variables(
     conn, schema: str,
     variables_pack: list[dict[str, Any]],
@@ -774,12 +844,22 @@ def resolve_variables(
     column_types = column_types or {}
 
     out: list[VariableRow] = []
+    default_top_n = criteria_top_n_default()
     for v in variables_pack:
         table = v.get("table") or ""
         column = v.get("column") or ""
         expression = (v.get("expression") or "").strip() or f'"{column}"'
         criteria = (v.get("criteria") or "").strip()
         category = v.get("category") or ""
+        # Strict-match override: auto-derive `column IN (...)` from the
+        # cohort's top-N actual values. The dictionary's Criteria cell
+        # then reflects what's really in the data, not a hand-written
+        # ILIKE pattern. `top_n: 0` in the variable YAML opts out.
+        top_n = v.get("top_n", default_top_n)
+        if isinstance(top_n, int) and top_n > 0 and table and column:
+            derived = derive_strict_criteria(conn, schema, table, column, top_n)
+            if derived:
+                criteria = derived
         variable_name = v.get("variable") or column
         description = v.get("description") or ""
         extraction = v.get("extraction_type") or "Structured"

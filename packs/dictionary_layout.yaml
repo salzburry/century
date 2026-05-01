@@ -22,3 +22,13 @@ customer:
     - dv_tokenized_profile_data
 
 cohorts: {}
+
+# Variable Criteria auto-derivation. Replaces hand-written ILIKE
+# patterns with strict `column IN (...)` lists pulled from the actual
+# top-N values in the cohort data at build time.
+#
+# Per-variable override: set `top_n: <int>` directly in the variable
+# YAML entry. Set `top_n: 0` to disable auto-derivation for that
+# variable and keep the YAML's `criteria:` field as-is.
+criteria:
+  top_n: 50
