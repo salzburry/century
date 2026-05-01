@@ -533,11 +533,111 @@ def _confirm(prompt: str) -> bool:
         return False
 
 
+def _load_source_variable(source_pack: str, variable_name: str) -> dict[str, Any] | None:
+    """Read a variable's full definition straight from its source pack.
+
+    Returns the raw mapping (table/column/criteria/description/etc.)
+    or None if the pack or variable can't be found. Bypasses
+    load_variables_pack so we get the row exactly as authored,
+    without internal tags or include flattening.
+    """
+    path = PACKS_DIR / "variables" / f"{source_pack}.yaml"
+    if not path.is_file():
+        return None
+    data = _bd._yaml_load(path)
+    if not isinstance(data, dict):
+        return None
+    for row in data.get("variables") or []:
+        if (row.get("variable") or "").strip() == variable_name:
+            # Strip our in-memory provenance tag if it somehow leaked
+            # in. The disk copy never has it; this is belt-and-braces.
+            return {k: v for k, v in row.items() if not k.startswith("_")}
+    return None
+
+
+def _attach_stub_comment(row: Any, source_pack: str) -> None:
+    """Add a leading comment on a newly-stubbed cohort variable so
+    later readers can see this row was auto-copied from a shared
+    pack and ought to be reviewed before shipping. Best-effort:
+    silently no-ops if ruamel's comment API isn't reachable on
+    this row type (e.g. plain dict in tests).
+    """
+    msg = (
+        f" Auto-stubbed from packs/variables/{source_pack}.yaml via "
+        f"discover_exact_matches.py --auto-stub. Verify clinical "
+        f"fit before shipping."
+    )
+    try:
+        first_key = next(iter(row.keys()))
+        row.yaml_set_comment_before_after_key(
+            first_key, before=msg, indent=4,
+        )
+    except (AttributeError, StopIteration):
+        # Plain dict (in unit tests with stub data) — leave a marker
+        # field instead so the test can still assert provenance.
+        row.setdefault("_auto_stub_origin", source_pack)
+
+
+def _ask_per_variable(
+    action: str,
+    obs: VariableObservation,
+    dest_path: Path,
+) -> str:
+    """Prompt for one variable. Returns 'y', 'n', 'all', or 'q'.
+
+    Renders a structured block showing source / target / action /
+    reason so the reviewer can see at a glance whether they're
+    updating an existing row or copying a shared row into the
+    cohort pack as a per-cohort override.
+
+    `action` is "update" (existing row's match block changes) or
+    "stub" (a new cohort-override row is being added from source).
+    """
+    if action == "update":
+        action_label = "UPDATE variable"
+        reason = (
+            "row already exists in target pack; only the match: "
+            "block will change"
+        )
+    else:
+        action_label = "ADD cohort override"
+        reason = (
+            "row is inherited from shared pack; discovered values "
+            "came from one cohort only"
+        )
+
+    sample = ", ".join(f'"{v}"' for v, _ in obs.observed[:2])
+    if len(obs.observed) > 2:
+        sample += ", …"
+
+    block = (
+        f"\n  Variable: {obs.category} / {obs.variable}\n"
+        f"  Source:   packs/variables/{obs.source_pack}.yaml\n"
+        f"  Target:   packs/variables/{dest_path.stem}.yaml\n"
+        f"  Action:   {action_label}\n"
+        f"  Values:   {len(obs.observed)} ({sample})\n"
+        f"  Reason:   {reason}\n"
+        f"  Proceed?  [y]es / [n]o / [a]ll-remaining / [q]uit: "
+    )
+    try:
+        raw = input(block).strip().lower()
+    except EOFError:
+        return "n"
+    if raw in ("y", "yes"):
+        return "y"
+    if raw in ("a", "all"):
+        return "all"
+    if raw in ("q", "quit"):
+        return "q"
+    return "n"
+
+
 def apply_suggestions(
     observations: list[VariableObservation],
     target: str,
     cohort_slug: str | None = None,
     auto_yes: bool = False,
+    auto_stub: bool = False,
 ) -> tuple[int, int]:
     """Interactively (or with auto_yes) inject `match:` blocks back
     into pack files.
@@ -550,9 +650,18 @@ def apply_suggestions(
       - "cohort":  write to the cohort's own pack
                    (packs/variables/<cohort_slug>.yaml). Variables
                    that don't already exist in that file are skipped
-                   with a message — the cohort pack must explicitly
-                   override the shared row before per-cohort match
-                   values can land.
+                   with a message unless `auto_stub=True`, in which
+                   case the variable's full definition is copied from
+                   its source pack into the cohort pack first, then
+                   the match block is attached. Shared packs are never
+                   modified.
+
+    `auto_stub` is opt-in and only valid with target='cohort'. It
+    NEVER writes to shared packs.
+
+    Interactive mode (auto_yes=False) prompts per variable with
+    [update]/[stub] labels so each row is approved individually.
+    `auto_yes=True` skips prompts entirely.
 
     Returns (applied, skipped). Refuses to write if ruamel.yaml is
     not installed, since pyyaml round-trip would destroy comments.
@@ -561,6 +670,8 @@ def apply_suggestions(
         raise ValueError(f"target must be 'shared' or 'cohort', got {target!r}")
     if target == "cohort" and not cohort_slug:
         raise ValueError("target='cohort' requires cohort_slug")
+    if auto_stub and target != "cohort":
+        raise ValueError("auto_stub=True requires target='cohort'")
 
     eligible = [o for o in observations if _eligible_for_apply(o)]
     if not eligible:
@@ -578,97 +689,146 @@ def apply_suggestions(
         )
         return (0, len(eligible))
 
-    # Group eligible observations by destination file so each file is
-    # read+written once. With target=cohort everything lands in the
-    # cohort's own pack regardless of source; with target=shared it
-    # lands in each variable's source pack.
-    by_pack: dict[str, list[VariableObservation]] = {}
-    for o in eligible:
-        dest_pack = cohort_slug if target == "cohort" else o.source_pack
-        by_pack.setdefault(dest_pack, []).append(o)
-
-    if not auto_yes:
-        scope_label = (
-            f"cohort pack packs/variables/{cohort_slug}.yaml"
-            if target == "cohort"
-            else "the variable's source pack (shared definitions may be touched)"
-        )
-        print(
-            f"[apply] {len(eligible)} variable(s) have observations "
-            f"that can be written as `match:` blocks into {scope_label}:",
-            file=sys.stderr,
-        )
-        for dest, obs_list in by_pack.items():
-            print(
-                f"  → packs/variables/{dest}.yaml ({len(obs_list)} variable(s)):",
-                file=sys.stderr,
-            )
-            for o in obs_list:
-                print(
-                    f"      - {o.category} / {o.variable}  "
-                    f"({len(o.observed)} values, source={o.source_pack})",
-                    file=sys.stderr,
-                )
-        if not _confirm("[apply] proceed? [y/N]: "):
-            print("[apply] aborted.", file=sys.stderr)
-            return (0, len(eligible))
-
     yaml_rt = YAML(typ="rt")
     yaml_rt.preserve_quotes = True
     yaml_rt.width = 4096   # don't reflow long IN list lines
 
+    # Lazy-load each pack file at most once and keep a single mutable
+    # in-memory copy. Writes happen at the end so a `quit` mid-loop
+    # leaves untouched files on disk.
+    pack_cache: dict[Path, Any] = {}
+    touched_paths: set[Path] = set()
+
+    def _load_pack(path: Path) -> Any:
+        if path not in pack_cache:
+            with path.open("r", encoding="utf-8") as f:
+                pack_cache[path] = yaml_rt.load(f)
+        return pack_cache[path]
+
+    # Source-pack lookups for auto-stub. Cached per source-slug.
+    source_var_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
+
+    def _source_def(source_pack: str, variable: str) -> dict[str, Any] | None:
+        key = (source_pack, variable)
+        if key not in source_var_cache:
+            source_var_cache[key] = _load_source_variable(source_pack, variable)
+        return source_var_cache[key]
+
+    print(
+        f"[apply] {len(eligible)} candidate(s) — target={target}"
+        + (" auto-stub=on" if auto_stub else "")
+        + (" (auto-yes)" if auto_yes else " (per-variable prompts)"),
+        file=sys.stderr,
+    )
+
     applied = 0
     skipped = 0
-    for pack_slug, obs_list in by_pack.items():
-        path = PACKS_DIR / "variables" / f"{pack_slug}.yaml"
-        if not path.is_file():
+    accept_all = False   # set when user picks 'all' to skip remaining prompts
+
+    for o in eligible:
+        dest_pack = cohort_slug if target == "cohort" else o.source_pack
+        dest_path = PACKS_DIR / "variables" / f"{dest_pack}.yaml"
+        if not dest_path.is_file():
             print(
-                f"[apply] {path} not found; skipping {len(obs_list)} variable(s)",
+                f"[apply] {dest_path} not found; skipping {o.variable}",
                 file=sys.stderr,
             )
-            skipped += len(obs_list)
+            skipped += 1
             continue
 
-        with path.open("r", encoding="utf-8") as f:
-            data = yaml_rt.load(f)
-        rows = (data.get("variables") or []) if isinstance(data, dict) else []
+        data = _load_pack(dest_path)
+        if not isinstance(data, dict):
+            print(
+                f"[apply] {dest_path}: top-level YAML is not a mapping; "
+                f"skipping {o.variable}",
+                file=sys.stderr,
+            )
+            skipped += 1
+            continue
+        # Make sure variables: exists AND points at a mutable
+        # container we own. `data.get('variables') or []` would
+        # return a detached fresh list when the YAML had `[]`,
+        # which silently swallows append()s.
+        if data.get("variables") is None:
+            data["variables"] = []
+        rows = data["variables"]
         rows_by_name = {(r.get("variable") or "").strip(): r for r in rows}
+        existing = rows_by_name.get(o.variable)
 
-        for o in obs_list:
-            row = rows_by_name.get(o.variable)
-            if row is None:
-                if target == "cohort":
-                    # Refuse to invent a new variable definition in the
-                    # cohort pack. The reviewer must first copy the
-                    # variable's full definition from the shared pack
-                    # (table/column/criteria/description) before
-                    # per-cohort match values can land — otherwise a
-                    # bare `variable: + match:` row is unbuildable.
-                    print(
-                        f"[apply] target=cohort: variable {o.variable!r} "
-                        f"is not defined in {path.name}. Copy its base "
-                        f"definition from packs/variables/{o.source_pack}.yaml "
-                        f"into {path.name} first if you want a per-cohort "
-                        f"override; skipping.",
-                        file=sys.stderr,
-                    )
-                else:
-                    print(
-                        f"[apply] {pack_slug}: variable {o.variable!r} not "
-                        f"found in {path.name} (likely lives in a "
-                        f"different included pack); skipping",
-                        file=sys.stderr,
-                    )
+        # Decide what the action is: update (mutate existing row),
+        # stub (auto-copy from source pack), or skip.
+        if existing is not None:
+            action = "update"
+        elif target == "cohort" and auto_stub:
+            src = _source_def(o.source_pack, o.variable)
+            if src is None:
+                print(
+                    f"[apply] auto-stub: source definition for "
+                    f"{o.variable!r} not found in "
+                    f"packs/variables/{o.source_pack}.yaml; skipping",
+                    file=sys.stderr,
+                )
                 skipped += 1
                 continue
-            row["match"] = {
+            action = "stub"
+        else:
+            if target == "cohort":
+                print(
+                    f"[apply] target=cohort: variable {o.variable!r} "
+                    f"is not defined in {dest_path.name}. Pass "
+                    f"--auto-stub to copy its base definition from "
+                    f"packs/variables/{o.source_pack}.yaml; skipping.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"[apply] {dest_pack}: variable {o.variable!r} not "
+                    f"found in {dest_path.name} (likely lives in a "
+                    f"different included pack); skipping",
+                    file=sys.stderr,
+                )
+            skipped += 1
+            continue
+
+        # Per-variable confirmation, unless auto-yes / accept-all.
+        if not auto_yes and not accept_all:
+            answer = _ask_per_variable(action, o, dest_path)
+            if answer == "q":
+                print(
+                    "[apply] quit — pending changes discarded; "
+                    "no files written.",
+                    file=sys.stderr,
+                )
+                return (0, len(eligible))
+            if answer == "all":
+                accept_all = True
+            elif answer != "y":
+                skipped += 1
+                continue
+
+        # Mutate the in-memory pack.
+        if action == "update":
+            existing["match"] = {
                 "column": o.column,
                 "values": _suggested_values_for(o),
             }
-            applied += 1
+        else:   # stub: deep-copy the source row into the cohort pack
+            new_row = {k: v for k, v in (_source_def(o.source_pack, o.variable) or {}).items()}
+            new_row["match"] = {
+                "column": o.column,
+                "values": _suggested_values_for(o),
+            }
+            rows.append(new_row)
+            _attach_stub_comment(rows[-1], o.source_pack)
 
+        touched_paths.add(dest_path)
+        applied += 1
+
+    # Write all touched files atomically at the end so a `quit` or
+    # error mid-loop never half-applies.
+    for path in touched_paths:
         with path.open("w", encoding="utf-8") as f:
-            yaml_rt.dump(data, f)
+            yaml_rt.dump(pack_cache[path], f)
         print(f"[apply] updated {path}", file=sys.stderr)
 
     print(
@@ -707,12 +867,20 @@ def main(argv: list[str] | None = None) -> int:
                              "`shared` writes to each variable's source "
                              "pack — only use when the values are clinically "
                              "appropriate for every cohort that includes it.")
+    parser.add_argument("--auto-stub", action="store_true",
+                        help="when --target cohort encounters a variable "
+                             "that doesn't yet live in the cohort pack, "
+                             "copy its full base definition from the "
+                             "source pack into the cohort pack first, "
+                             "then attach the match: block. Shared packs "
+                             "are never modified. Only valid with "
+                             "--target cohort.")
     parser.add_argument("--dry-run", action="store_true",
                         help="skip DB; report config-only with no observations")
     args = parser.parse_args(argv)
 
-    # Validate the --apply contract before any DB work or report
-    # writing — a live run shouldn't spend time querying the
+    # Validate --apply / --auto-stub contracts before any DB work or
+    # report writing — a live run shouldn't spend time querying the
     # warehouse only to discover the CLI args were incomplete.
     if (args.apply or args.apply_yes) and not args.target:
         print(
@@ -721,6 +889,15 @@ def main(argv: list[str] | None = None) -> int:
             f"{args.cohort}.yaml only (safer), or `shared` to "
             "write to each variable's source pack (touches files "
             "that other cohorts include).",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.auto_stub and args.target != "cohort":
+        print(
+            "[apply] --auto-stub is only valid with --target cohort. "
+            "It would otherwise write inferred definitions into "
+            "shared packs, which the safety contract forbids.",
             file=sys.stderr,
         )
         return 2
@@ -781,6 +958,7 @@ def main(argv: list[str] | None = None) -> int:
             target=args.target,
             cohort_slug=args.cohort,
             auto_yes=args.apply_yes,
+            auto_stub=args.auto_stub,
         )
 
     return 0

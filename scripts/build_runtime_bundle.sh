@@ -180,24 +180,68 @@ python dictionary_v2/discover_exact_matches.py \
 Adds `Output/discovery/<cohort>/suggested.yaml` with a proposed
 `match:` block per variable, annotated with the source pack.
 
-### Write match: blocks back into packs (interactive)
+### Write match: blocks back into packs (interactive, per-variable)
 ```bash
 # Safer: writes ONLY into packs/variables/<cohort_slug>.yaml.
-# Variables that live solely in a shared pack are skipped (the cohort
-# pack must already define the variable to be overridable).
+# Variables that live solely in a shared pack are skipped (use
+# --auto-stub below to copy them over automatically).
 python dictionary_v2/discover_exact_matches.py \
     --cohort <cohort_slug> \
     --apply --target cohort
 
+# --auto-stub: when --target cohort hits a variable that isn't
+# in the cohort pack yet, copy its full base definition (table,
+# column, criteria, description, ...) from the source pack into
+# the cohort pack first, then attach the match: block. Shared
+# packs are NEVER modified. Each stubbed row gets a leading
+# YAML comment recording the source pack.
+python dictionary_v2/discover_exact_matches.py \
+    --cohort <cohort_slug> \
+    --apply --target cohort --auto-stub
+
 # Touches each variable's source pack — including shared
 # <disease>_common.yaml files. Use only when the values are
 # clinically appropriate for every cohort that includes the source.
+# (--auto-stub is rejected here; auto-stub is cohort-only.)
 python dictionary_v2/discover_exact_matches.py \
     --cohort <cohort_slug> \
     --apply --target shared
 ```
-Both prompt `[apply] proceed? [y/N]:` before writing. Add
-`--apply-yes` for non-interactive scripted runs.
+
+### Per-variable prompts
+Interactive `--apply` walks each candidate one at a time and shows a
+structured block so you can see source / target / action / reason
+before approving:
+
+```
+  Variable: Diagnosis / Alzheimer's
+  Source:   packs/variables/adrd_common.yaml
+  Target:   packs/variables/mtc_alzheimers.yaml
+  Action:   ADD cohort override
+  Values:   12 ("Alzheimer disease, late onset", "Mild cognitive impairment of uncertain etiology", …)
+  Reason:   row is inherited from shared pack; discovered values came from one cohort only
+  Proceed?  [y]es / [n]o / [a]ll-remaining / [q]uit:
+```
+
+- **UPDATE variable** — row already exists in the target pack; only its `match:` block changes.
+- **ADD cohort override** — row is inherited from a shared pack and `--auto-stub` is copying it into the cohort pack as a per-cohort override.
+- `all` accepts every remaining row without further prompts.
+- `quit` aborts the whole run; no files are written (changes are kept in memory until the loop completes).
+
+Add `--apply-yes` to skip the prompts entirely (for scripted runs).
+
+### Where should match values live? (pack-tier guidance)
+| Pack | Scope | When to put values here |
+|---|---|---|
+| `<cohort>.yaml` (e.g. `mtc_alzheimers.yaml`) | One cohort only | **Default** for newly-discovered values from a single cohort. `--target cohort --auto-stub` writes here. |
+| `<disease>_common.yaml` (e.g. `alzheimers_common.yaml`) | All cohorts of one disease | Promote here only after confirming the values are valid across every cohort that includes this pack (e.g. MTC Alzheimer's *and* RMN Alzheimer's). |
+| `<umbrella>_common.yaml` (e.g. `adrd_common.yaml`) | A whole disease family | Promote here only after confirming values are valid across the umbrella (e.g. all ADRD cohorts including MTC AAT, MTC Alzheimer's, RMN Alzheimer's). |
+
+The default discovery flow (`--target cohort --auto-stub`) keeps
+shared packs untouched. Promotion to a shared pack is a deliberate
+follow-up step (currently a manual edit; `--target shared` exists
+for the rare case where you've already validated that the values
+are universally appropriate).
 
 ### Other discovery flags
 ```bash

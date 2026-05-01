@@ -961,6 +961,213 @@ class DiscoveryApplyTests(unittest.TestCase):
             rc, 2, msg="--apply without --target should exit 2",
         )
 
+    def test_auto_stub_copies_full_definition_into_cohort_pack(self):
+        # Variable lives only in shared pack. With --auto-stub the
+        # full base definition (table, column, criteria, description)
+        # is copied into the cohort pack along with the match block.
+        cohort_slug = "_apply_test_cohort_stub"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "include: [_apply_test_pack]\nvariables: []\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        before_shared = self.pack_path.read_text()
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        applied, _ = self.mod.apply_suggestions(
+            observations, target="cohort",
+            cohort_slug=cohort_slug, auto_yes=True, auto_stub=True,
+        )
+        self.assertEqual(applied, 1)
+
+        cohort_text = cohort_path.read_text()
+        # Match block landed in cohort pack, not shared.
+        self.assertIn("Aspirin 81 MG", cohort_text)
+        self.assertEqual(
+            self.pack_path.read_text(), before_shared,
+            msg="shared pack must be untouched by --auto-stub",
+        )
+        # Base definition copied — not just `variable:` + `match:`.
+        for field in ("table:", "column:", "criteria:"):
+            self.assertIn(
+                field, cohort_text,
+                msg=f"auto-stub must copy {field} from source",
+            )
+        # Provenance comment / annotation present.
+        self.assertTrue(
+            "Auto-stubbed" in cohort_text or "_auto_stub_origin" in cohort_text,
+            msg="auto-stub must annotate provenance",
+        )
+
+    def test_auto_stub_does_not_duplicate_when_variable_already_in_cohort(self):
+        # Variable already overrides in cohort pack. Auto-stub mode
+        # MUST NOT add a duplicate row — falls through to the regular
+        # update path so the existing row gets the match block.
+        cohort_slug = "_apply_test_cohort_predefined"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "include: [_apply_test_pack]\n"
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: Aspirin\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%aspirin%'\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        applied, _ = self.mod.apply_suggestions(
+            observations, target="cohort",
+            cohort_slug=cohort_slug, auto_yes=True, auto_stub=True,
+        )
+        self.assertEqual(applied, 1)
+        text = cohort_path.read_text()
+        # Exactly one Aspirin row — count `variable: Aspirin` lines.
+        self.assertEqual(
+            text.count("variable: Aspirin"), 1,
+            msg="auto-stub must not duplicate an existing cohort row",
+        )
+
+    def test_auto_stub_requires_target_cohort(self):
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 1)])]
+        with self.assertRaises(ValueError):
+            self.mod.apply_suggestions(
+                observations, target="shared", auto_yes=True, auto_stub=True,
+            )
+
+    def test_auto_stub_leaves_shared_pack_unchanged(self):
+        # Re-runnable shared-pack-immutability check.
+        cohort_slug = "_apply_test_cohort_stubcheck"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "include: [_apply_test_pack]\nvariables: []\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+        original = self.pack_path.read_bytes()
+
+        observations = [
+            self._obs("Aspirin", [("Aspirin 81 MG", 100)]),
+            self._obs("Lisinopril", [("Lisinopril 10 MG", 80)]),
+        ]
+        self.mod.apply_suggestions(
+            observations, target="cohort",
+            cohort_slug=cohort_slug, auto_yes=True, auto_stub=True,
+        )
+        self.assertEqual(
+            self.pack_path.read_bytes(), original,
+            msg="shared pack bytes must be byte-identical after --auto-stub",
+        )
+
+    def test_main_auto_stub_with_shared_target_exits_nonzero(self):
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--cohort", "balboa_ckd",
+            "--out-dir", str(out_dir),
+            "--dry-run",
+            "--apply-yes",
+            "--target", "shared",
+            "--auto-stub",
+        ])
+        self.assertEqual(
+            rc, 2,
+            msg="--auto-stub with --target shared must exit 2",
+        )
+
+    def test_per_variable_prompt_renders_structured_block(self):
+        # The interactive prompt must show source/target/action/reason
+        # explicitly so reviewers can distinguish UPDATE from ADD
+        # cohort override at a glance.
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100), ("Aspirin 325 MG", 50)])]
+        captured: list[str] = []
+
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda prompt="": (captured.append(prompt) or "n")
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        # update path: variable already in shared pack.
+        self.mod.apply_suggestions(
+            observations, target="shared", auto_yes=False,
+        )
+        prompt = captured[-1]
+        for line in (
+            "Variable:", "Source:", "Target:",
+            "Action:", "UPDATE variable",
+            "Values:", "Aspirin 81 MG",
+            "Reason:", "match: block will change",
+            "Proceed?", "[y]es", "[a]ll", "[q]uit",
+        ):
+            self.assertIn(line, prompt, msg=f"missing: {line!r}")
+
+    def test_per_variable_prompt_labels_stub_as_add_cohort_override(self):
+        cohort_slug = "_apply_test_cohort_addlabel"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "include: [_apply_test_pack]\nvariables: []\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        captured: list[str] = []
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda prompt="": (captured.append(prompt) or "n")
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        self.mod.apply_suggestions(
+            observations, target="cohort", cohort_slug=cohort_slug,
+            auto_yes=False, auto_stub=True,
+        )
+        prompt = captured[-1]
+        self.assertIn("ADD cohort override", prompt)
+        self.assertIn("inherited from shared pack", prompt)
+
+    def test_per_variable_prompt_quit_aborts_without_writing(self):
+        # Interactive prompt: 'q' must abort the whole run and leave
+        # both packs unchanged on disk.
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        before = self.pack_path.read_bytes()
+
+        # Patch input() to return 'q'.
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda _prompt="": "q"
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        applied, _ = self.mod.apply_suggestions(
+            observations, target="shared", auto_yes=False,
+        )
+        self.assertEqual(applied, 0)
+        self.assertEqual(
+            self.pack_path.read_bytes(), before,
+            msg="quit must not write any pending changes",
+        )
+
+    def test_per_variable_prompt_all_accepts_remaining(self):
+        # 'all' on the first variable should commit the rest without
+        # further prompts.
+        observations = [
+            self._obs("Aspirin", [("Aspirin 81 MG", 100)]),
+            self._obs("Lisinopril", [("Lisinopril 10 MG", 80)]),
+        ]
+        responses = iter(["all"])
+
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda _prompt="": next(responses)
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        applied, _ = self.mod.apply_suggestions(
+            observations, target="shared", auto_yes=False,
+        )
+        # Both got applied off the single 'all' answer.
+        self.assertEqual(applied, 2)
+
     def test_main_apply_without_target_skips_discovery(self):
         # Contract failure must short-circuit before DB work or any
         # report files get written. The dry-run path is the cheap
