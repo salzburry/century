@@ -92,17 +92,19 @@ class VariableObservation:
         return [v for v in self.configured_values if v not in seen]
 
 
-def _pack_for_cohort(cohort: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return (cohort_pack, variables_pack) for a cohort slug."""
+def _pack_for_cohort(cohort: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Return (cohort_pack, variables_list) for a cohort slug.
+
+    Uses the same loader as build_dictionary so `include:` references
+    resolve — most cohort variable packs are placeholders that pull
+    everything from a shared `<disease>_common` pack.
+    """
     cohort_pack = _bd._yaml_load(PACKS_DIR / "cohorts" / f"{cohort}.yaml")
     if not cohort_pack:
         raise SystemExit(f"unknown cohort: {cohort}")
-    disease = cohort_pack.get("disease") or cohort
-    variables_path = PACKS_DIR / "variables" / f"{cohort}.yaml"
-    if not variables_path.is_file():
-        variables_path = PACKS_DIR / "variables" / f"{disease}_common.yaml"
-    variables_pack = _bd._yaml_load(variables_path) or {}
-    return cohort_pack, variables_pack
+    variables_pack_slug = cohort_pack.get("variables_pack") or ""
+    variables_list = _bd.load_variables_pack(variables_pack_slug)
+    return cohort_pack, variables_list
 
 
 def _resolve_configured_values(match_block: dict[str, Any] | None) -> list[str]:
@@ -121,29 +123,80 @@ def _resolve_configured_values(match_block: dict[str, Any] | None) -> list[str]:
     return out
 
 
+# Columns that hold values, not clinical concepts. Grouping by these
+# yields the value distribution, which is meaningless as a Criteria
+# matcher — e.g. Serum Creatinine with column=value_as_number would
+# enumerate 1.0, 1.1, 0.9, ... instead of "Creatinine [Mass/volume]
+# in Serum or Plasma". Discovery refuses to enumerate these unless
+# `match.column` redirects to a real matcher column.
+_VALUE_COLUMN_NAMES: frozenset[str] = frozenset({
+    "value_as_number", "value_as_string", "value_as_concept_id",
+    "value_as_datetime", "value_as_date",
+    "range_low", "range_high", "unit_concept_id", "unit_source_value",
+    "quantity", "days_supply", "refills",
+})
+
+
+def _resolve_matcher_column(v: dict[str, Any]) -> tuple[str, str]:
+    """Pick the column to GROUP BY for discovery.
+
+    Returns (matcher_column, reason). Empty matcher means discovery
+    should be skipped with `reason` shown in the report.
+
+    Priority:
+      1. `match.column` if present — the explicit clinical matcher.
+      2. Variable's `column` if it's not a value column.
+      3. Skip with a guidance message asking for `match.column`.
+    """
+    match = v.get("match")
+    if isinstance(match, dict) and (match.get("column") or "").strip():
+        return match["column"].strip(), ""
+    column = (v.get("column") or "").strip()
+    if not column:
+        return "", "missing column"
+    lowered = column.lower()
+    if lowered in _VALUE_COLUMN_NAMES or lowered.endswith("_date") \
+            or lowered.endswith("_datetime"):
+        return "", (
+            f"column `{column}` is a value/date column; configure "
+            f"`match.column` (e.g. measurement_concept_name) to enable "
+            f"discovery"
+        )
+    return column, ""
+
+
 def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
     """Run the variable's existing criteria against the cohort and dump
-    the distinct values it matches with row counts."""
+    the distinct values it matches with row counts.
+
+    Discovery groups by the *matcher* column (concept name), not the
+    variable's display/value column — see _resolve_matcher_column.
+    """
     table = v.get("table") or ""
-    column = v.get("column") or ""
+    display_column = v.get("column") or ""
+    matcher_column, skip_reason = _resolve_matcher_column(v)
     criteria = (v.get("criteria") or "").strip()
     obs = VariableObservation(
         category=v.get("category") or "",
-        variable=v.get("variable") or column,
-        table=table, column=column, criteria=criteria,
+        variable=v.get("variable") or display_column,
+        table=table, column=matcher_column or display_column,
+        criteria=criteria,
         configured_values=_resolve_configured_values(v.get("match")),
         observed=[],
     )
-    if not table or not column:
-        obs.error = "missing table or column"
+    if not table:
+        obs.error = "missing table"
+        return obs
+    if skip_reason:
+        obs.error = skip_reason
         return obs
 
     where = f"({criteria})" if criteria else "TRUE"
     sql = (
-        f'SELECT "{column}"::text, COUNT(*) AS n '
+        f'SELECT "{matcher_column}"::text, COUNT(*) AS n '
         f'FROM "{schema}"."{table}" '
-        f'WHERE {where} AND "{column}" IS NOT NULL '
-        f'GROUP BY "{column}" '
+        f'WHERE {where} AND "{matcher_column}" IS NOT NULL '
+        f'GROUP BY "{matcher_column}" '
         f'ORDER BY n DESC;'
     )
     try:
@@ -162,9 +215,9 @@ def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
 def discover(
     cohort: str, conn, only_variable: str | None = None,
 ) -> list[VariableObservation]:
-    cohort_pack, variables_pack = _pack_for_cohort(cohort)
-    schema = cohort_pack.get("schema") or cohort
-    rows = (variables_pack.get("variables") or [])
+    cohort_pack, variables_list = _pack_for_cohort(cohort)
+    schema = cohort_pack.get("schema_name") or cohort_pack.get("schema") or cohort
+    rows = list(variables_list)
     if only_variable:
         rows = [v for v in rows
                 if (v.get("variable") or "").lower() == only_variable.lower()]
@@ -291,22 +344,24 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.dry_run:
-        cohort_pack, variables_pack = _pack_for_cohort(args.cohort)
-        rows = variables_pack.get("variables") or []
+        cohort_pack, variables_list = _pack_for_cohort(args.cohort)
+        rows = list(variables_list)
         if args.variable:
             rows = [v for v in rows
                     if (v.get("variable") or "").lower() == args.variable.lower()]
-        observations = [
-            VariableObservation(
+        observations = []
+        for v in rows:
+            matcher, skip = _resolve_matcher_column(v)
+            observations.append(VariableObservation(
                 category=v.get("category") or "",
                 variable=v.get("variable") or v.get("column") or "",
-                table=v.get("table") or "", column=v.get("column") or "",
+                table=v.get("table") or "",
+                column=matcher or v.get("column") or "",
                 criteria=(v.get("criteria") or "").strip(),
                 configured_values=_resolve_configured_values(v.get("match")),
                 observed=[],
-            )
-            for v in rows
-        ]
+                error=skip,
+            ))
     else:
         psycopg = _require_psycopg()
         class _NS:

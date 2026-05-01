@@ -748,11 +748,12 @@ def _is_freetext_column(column: str) -> bool:
 #
 # which compiles to: "drug_concept_name" IN ('aspirin 81 MG Oral Tablet', ...)
 #
-# Values can also live in a separate file when the list is long:
+# Values can also live in a separate file when the list is long. The
+# path is resolved relative to packs/, so omit the `packs/` prefix:
 #
 #   match:
 #     column: drug_concept_name
-#     values_file: packs/value_sets/aspirin.yaml
+#     values_file: value_sets/aspirin.yaml   # → packs/value_sets/aspirin.yaml
 #
 # The build never derives matches from observed data — see
 # dictionary_v2/discover_exact_matches.py for the offline discovery
@@ -1160,6 +1161,13 @@ def build_model(
             extraction = v.get("extraction_type", "Structured")
             table = v.get("table", "")
             criteria = (v.get("criteria") or "").strip()
+            # Mirror the live path: a structured `match:` block compiles
+            # to strict `column IN (...)` and overrides any free-form
+            # `criteria:`. Without this, dry-run previews show stale
+            # fuzzy criteria while live builds emit strict IN clauses.
+            match_sql = compile_match_block(v.get("match"))
+            if match_sql:
+                criteria = match_sql
             variables_rows.append(VariableRow(
                 category=v.get("category", ""),
                 variable=v.get("variable", v.get("column", "")),
@@ -1343,12 +1351,20 @@ def _load_dictionary_layout() -> dict[str, Any]:
     return _yaml_load(DICTIONARY_LAYOUT_PATH)
 
 
-def customer_table_excludes(cohort: str | None = None) -> frozenset[str]:
+def customer_table_excludes(
+    cohort: str | list[str] | None = None,
+) -> frozenset[str]:
     """Resolve the customer-audience table exclude list for a cohort.
 
     Reads packs/dictionary_layout.yaml. Per-cohort `exclude_tables`
     replaces the global list; `extra_exclude_tables` adds to it.
     Falls back to the hard-coded PR-B list if the file is missing.
+
+    `cohort` accepts a single key or a list of candidate keys (e.g.
+    [slug, cohort_name, schema_name]). The first key with a
+    `cohorts.<key>.customer` entry wins, so callers don't have to
+    know which name the YAML was authored against. The CLI/filename
+    slug is the documented preferred key.
     """
     layout = _load_dictionary_layout()
     customer = layout.get("customer") or {}
@@ -1356,8 +1372,17 @@ def customer_table_excludes(cohort: str | None = None) -> frozenset[str]:
     if global_excludes is None:
         global_excludes = list(_CUSTOMER_TABLE_EXCLUDES_FALLBACK)
 
-    if cohort:
-        cohort_cfg = ((layout.get("cohorts") or {}).get(cohort) or {}).get("customer") or {}
+    candidates: list[str] = []
+    if isinstance(cohort, str):
+        candidates = [cohort]
+    elif isinstance(cohort, list):
+        candidates = [c for c in cohort if c]
+
+    cohorts_cfg = layout.get("cohorts") or {}
+    for key in candidates:
+        cohort_cfg = (cohorts_cfg.get(key) or {}).get("customer") or {}
+        if not cohort_cfg:
+            continue
         if "exclude_tables" in cohort_cfg:
             return frozenset(cohort_cfg["exclude_tables"] or [])
         extra = cohort_cfg.get("extra_exclude_tables") or []
@@ -1625,7 +1650,9 @@ def section_visible(audience: str, section: str) -> bool:
     return AUDIENCE_VISIBILITY.get(audience, AUDIENCE_VISIBILITY["technical"])[section]
 
 
-def filter_for_audience(model: CohortModel, audience: str) -> CohortModel:
+def filter_for_audience(
+    model: CohortModel, audience: str, cohort_slug: str | None = None,
+) -> CohortModel:
     if audience == "technical":
         return model
     # Drop PII rows from BOTH columns and variables for sales / pharma /
@@ -1639,9 +1666,15 @@ def filter_for_audience(model: CohortModel, audience: str) -> CohortModel:
     # all three lists so a hidden table doesn't leave dangling column or
     # variable rows pointing at a table the reader can't see. The
     # exclude list is per-cohort-aware and sourced from
-    # packs/dictionary_layout.yaml.
+    # packs/dictionary_layout.yaml. We pass the CLI/filename slug as
+    # well as model.cohort (which is the cohort_name like
+    # `balboa_ckd_cohort`) and schema_name as fallback keys, so the
+    # YAML can be authored against whichever name is most natural.
     if audience == "customer":
-        excluded = customer_table_excludes(model.cohort)
+        candidate_keys = [k for k in (
+            cohort_slug, model.cohort, model.schema_name,
+        ) if k]
+        excluded = customer_table_excludes(candidate_keys)
         filtered_tables   = [t for t in filtered_tables   if t.table_name not in excluded]
         filtered_columns  = [c for c in filtered_columns  if c.table      not in excluded]
         filtered_variables = [v for v in filtered_variables if v.table    not in excluded]
@@ -2028,7 +2061,7 @@ def main(argv: list[str] | None = None) -> int:
             conn.autocommit = True
             model = build_model(args.cohort, conn, dry_run=False)
 
-    model = filter_for_audience(model, args.audience)
+    model = filter_for_audience(model, args.audience, cohort_slug=args.cohort)
 
     stem = f"{model.schema_name}_dictionary"
     if args.audience != "technical":

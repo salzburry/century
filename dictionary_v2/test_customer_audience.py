@@ -481,6 +481,151 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue((out_dir / "balboa_ckd" / "report.md").is_file())
 
+    def test_dry_run_resolves_shared_variable_pack_includes(self):
+        # balboa_ckd's variables pack is a placeholder that pulls
+        # everything from ckd_common via `include:`. The previous
+        # discovery loader missed shared variables and produced an
+        # empty report.
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--cohort", "balboa_ckd",
+            "--out-dir", str(out_dir),
+            "--dry-run",
+        ])
+        self.assertEqual(rc, 0)
+        report = (out_dir / "balboa_ckd" / "report.md").read_text()
+        # Sanity-check that at least one CKD-shared variable appears
+        # under a headed section. ckd_common defines dozens of rows;
+        # the report should not be empty after the header.
+        self.assertGreater(
+            report.count("\n## "), 0,
+            msg="report should include shared-pack variables, got:\n" + report,
+        )
+
+    def test_resolve_matcher_column_prefers_match_block(self):
+        col, skip = self.mod._resolve_matcher_column({
+            "table": "measurement", "column": "value_as_number",
+            "match": {"column": "measurement_concept_name"},
+        })
+        self.assertEqual(col, "measurement_concept_name")
+        self.assertEqual(skip, "")
+
+    def test_resolve_matcher_column_skips_value_columns(self):
+        # value_as_number / value_as_string etc. would discover the
+        # value distribution, not the clinical matcher. Discovery
+        # should refuse and ask the pack to set match.column.
+        for col in ("value_as_number", "value_as_string", "measurement_date"):
+            matcher, skip = self.mod._resolve_matcher_column({
+                "table": "measurement", "column": col,
+            })
+            self.assertEqual(matcher, "", msg=f"{col} should be skipped")
+            self.assertIn("match.column", skip)
+
+    def test_resolve_matcher_column_uses_concept_name_directly(self):
+        # When `column` is already the matcher (concept_name), no
+        # match block is needed.
+        col, skip = self.mod._resolve_matcher_column({
+            "table": "drug_exposure", "column": "drug_concept_name",
+        })
+        self.assertEqual(col, "drug_concept_name")
+        self.assertEqual(skip, "")
+
+
+class DryRunMatchBlockTests(unittest.TestCase):
+    """Dry-run path must compile `match:` blocks the same way the live
+    build does, so review artifacts and offline previews don't show
+    stale fuzzy criteria once packs adopt strict matchers."""
+
+    def test_dry_run_uses_match_block_in_criteria(self):
+        # Patch load_variables_pack to return a single variable with
+        # an explicit match block, then drive build_model in dry-run.
+        original = bd.load_variables_pack
+        bd.load_variables_pack = lambda slug: [{
+            "category": "Labs",
+            "variable": "Aspirin",
+            "table": "drug_exposure",
+            "column": "drug_concept_name",
+            "criteria": "drug_concept_name ILIKE '%aspirin%'",
+            "match": {
+                "column": "drug_concept_name",
+                "values": ["Aspirin 81 MG", "Aspirin 325 MG"],
+            },
+        }]
+        try:
+            model = bd.build_model("balboa_ckd", conn=None, dry_run=True)
+        finally:
+            bd.load_variables_pack = original
+
+        self.assertEqual(len(model.variables), 1)
+        criteria = model.variables[0].criteria
+        self.assertEqual(
+            criteria,
+            "\"drug_concept_name\" IN ('Aspirin 81 MG', 'Aspirin 325 MG')",
+        )
+        self.assertNotIn("ILIKE", criteria)
+
+
+class CohortKeyResolutionTests(unittest.TestCase):
+    """Per-cohort layout overrides must work whether the YAML keys by
+    slug, cohort_name, or schema_name. The CLI/filename slug is the
+    documented preferred key."""
+
+    def _patch_layout(self, layout):
+        original = bd._load_dictionary_layout
+        bd._load_dictionary_layout = lambda: layout
+        self.addCleanup(lambda: setattr(bd, "_load_dictionary_layout", original))
+
+    def test_lookup_by_slug(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": []},
+            "cohorts": {"my_slug": {"customer": {"exclude_tables": ["X"]}}},
+        })
+        self.assertEqual(
+            bd.customer_table_excludes(["my_slug", "my_cohort_name"]),
+            frozenset({"X"}),
+        )
+
+    def test_lookup_falls_back_to_cohort_name(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": []},
+            "cohorts": {"my_cohort_name": {"customer": {"exclude_tables": ["Y"]}}},
+        })
+        self.assertEqual(
+            bd.customer_table_excludes(["my_slug", "my_cohort_name"]),
+            frozenset({"Y"}),
+        )
+
+    def test_first_matching_key_wins(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": []},
+            "cohorts": {
+                "my_slug":        {"customer": {"exclude_tables": ["A"]}},
+                "my_cohort_name": {"customer": {"exclude_tables": ["B"]}},
+            },
+        })
+        self.assertEqual(
+            bd.customer_table_excludes(["my_slug", "my_cohort_name"]),
+            frozenset({"A"}),
+        )
+
+    def test_filter_threads_slug_through(self):
+        # End-to-end: filter_for_audience must pass the CLI slug as
+        # the primary lookup key, not just model.cohort.
+        self._patch_layout({
+            "customer": {"exclude_tables": []},
+            "cohorts": {"my_slug": {"customer": {"exclude_tables": ["person"]}}},
+        })
+        tables = [_make_table("person"), _make_table("cohort_patients")]
+        columns = [_make_column("person")]
+        variables = [_make_variable("person")]
+        model = _make_model(tables, columns, variables)
+        # _make_model sets model.cohort = "c", which has no override.
+        # Without slug threading, the per-slug entry would be missed.
+        filtered = bd.filter_for_audience(model, "customer", cohort_slug="my_slug")
+        self.assertEqual(
+            {t.table_name for t in filtered.tables}, {"cohort_patients"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
