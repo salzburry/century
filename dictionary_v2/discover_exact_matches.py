@@ -240,61 +240,83 @@ def _resolve_matcher_column(v: dict[str, Any]) -> tuple[str, str]:
     return column, ""
 
 
+def _resolve_scope(
+    v: dict[str, Any],
+) -> tuple[str, str, str, str]:
+    """Compute the discovery scope for a variable.
+
+    Returns (matcher_column, scope_sql, displayed_criteria, error).
+    Empty `error` means the row is ready to query; non-empty means
+    discovery should skip with that reason. This is the single source
+    of truth shared by both the live `_observe_one()` query path and
+    the offline `--dry-run` reporter, so they can't drift on which
+    rows are skipped or why.
+
+    Skip reasons (mirrors the live build's logic):
+      - `_resolve_matcher_column()` refused to pick a matcher (value
+        column with no inference, missing column, etc.).
+      - The variable has neither `criteria:` nor `match:`. WHERE TRUE
+        would enumerate every concept in the table.
+    """
+    matcher_column, matcher_skip = _resolve_matcher_column(v)
+    raw_criteria = (v.get("criteria") or "").strip()
+    match_sql = _bd.compile_match_block(v.get("match"))
+    scope_sql = match_sql or raw_criteria
+    displayed_criteria = match_sql or raw_criteria
+
+    if not (v.get("table") or "").strip():
+        return matcher_column, scope_sql, displayed_criteria, "missing table"
+    if matcher_skip:
+        return matcher_column, scope_sql, displayed_criteria, matcher_skip
+    if not scope_sql:
+        return matcher_column, scope_sql, displayed_criteria, (
+            "no `criteria:` or `match:` block configured; cannot "
+            "scope discovery without redefining the variable"
+        )
+    return matcher_column, scope_sql, displayed_criteria, ""
+
+
+def _build_observation(
+    v: dict[str, Any],
+    matcher_column: str,
+    displayed_criteria: str,
+    error: str,
+) -> VariableObservation:
+    """Construct a VariableObservation header (no observed rows yet).
+
+    Shared between live discovery and dry-run so both paths stamp
+    the same fields and skip-reasons.
+    """
+    display_column = v.get("column") or ""
+    return VariableObservation(
+        category=v.get("category") or "",
+        variable=v.get("variable") or display_column,
+        table=v.get("table") or "",
+        column=matcher_column or display_column,
+        criteria=displayed_criteria,
+        configured_values=_resolve_configured_values(v.get("match")),
+        observed=[],
+        error=error,
+        source_pack=v.get("_source_pack") or "",
+    )
+
+
 def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
     """Run the variable's existing scope against the cohort and dump
     the distinct values it matches with row counts.
 
     Discovery groups by the *matcher* column (concept name), not the
     variable's display/value column — see _resolve_matcher_column.
-
-    The WHERE scope mirrors the live build's logic:
-      - `match:` block (compiles to strict `IN (...)`) takes priority;
-      - otherwise the free-form `criteria:` is used as-is;
-      - rows with neither are skipped, since `WHERE TRUE` would
-        enumerate every concept in the table and propose an exact-
-        match list that redefines the variable to whatever happens
-        to live there.
+    Scope rules live in _resolve_scope() and are shared with dry-run.
     """
-    table = v.get("table") or ""
-    display_column = v.get("column") or ""
-    matcher_column, skip_reason = _resolve_matcher_column(v)
-    raw_criteria = (v.get("criteria") or "").strip()
-    match_sql = _bd.compile_match_block(v.get("match"))
-    scope_sql = match_sql or raw_criteria
-    # Display the source the reviewer cares about — strict match if
-    # configured, otherwise the broad criteria currently driving the
-    # variable.
-    displayed_criteria = match_sql or raw_criteria
-
-    obs = VariableObservation(
-        category=v.get("category") or "",
-        variable=v.get("variable") or display_column,
-        table=table, column=matcher_column or display_column,
-        criteria=displayed_criteria,
-        configured_values=_resolve_configured_values(v.get("match")),
-        observed=[],
-        source_pack=v.get("_source_pack") or "",
-    )
-    if not table:
-        obs.error = "missing table"
-        return obs
-    if skip_reason:
-        obs.error = skip_reason
-        return obs
-    if not scope_sql:
-        # No criteria and no match block — refuse to enumerate the
-        # whole table. Discovery would otherwise propose every concept
-        # in the table as an exact match, redefining a generic row
-        # like "Diagnosis" to whatever happens to be most frequent.
-        obs.error = (
-            "no `criteria:` or `match:` block configured; cannot "
-            "scope discovery without redefining the variable"
-        )
+    matcher_column, scope_sql, displayed_criteria, error = _resolve_scope(v)
+    obs = _build_observation(v, matcher_column, displayed_criteria, error)
+    if error:
         return obs
 
     sql = (
         f'SELECT "{matcher_column}"::text, COUNT(*) AS n '
-        f'FROM "{schema}"."{table}" '
+        f'FROM "{schema}"."{obs.table}" '
         f'WHERE ({scope_sql}) AND "{matcher_column}" IS NOT NULL '
         f'GROUP BY "{matcher_column}" '
         f'ORDER BY n DESC;'
@@ -469,20 +491,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.variable:
             rows = [v for v in rows
                     if (v.get("variable") or "").lower() == args.variable.lower()]
+        # Reuse the live path's scope-resolution helper so dry-run
+        # previews show the same skip reasons (no `criteria:` /
+        # `match:`, value-column matcher, etc.) the live discovery
+        # would emit. Keeps offline review honest.
         observations = []
         for v in rows:
-            matcher, skip = _resolve_matcher_column(v)
-            observations.append(VariableObservation(
-                category=v.get("category") or "",
-                variable=v.get("variable") or v.get("column") or "",
-                table=v.get("table") or "",
-                column=matcher or v.get("column") or "",
-                criteria=(v.get("criteria") or "").strip(),
-                configured_values=_resolve_configured_values(v.get("match")),
-                observed=[],
-                error=skip,
-                source_pack=v.get("_source_pack") or "",
-            ))
+            matcher, _scope, displayed, error = _resolve_scope(v)
+            observations.append(
+                _build_observation(v, matcher, displayed, error)
+            )
     else:
         psycopg = _require_psycopg()
         class _NS:

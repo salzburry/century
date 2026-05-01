@@ -538,6 +538,25 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertEqual(matcher, "observation_concept_name")
         self.assertEqual(skip, "")
 
+    def test_dry_run_flags_unscoped_rows_as_skipped(self):
+        # Dry-run must mark a no-criteria / no-match row with the
+        # same skip reason live discovery would emit, so offline
+        # review reflects what the real DB run will do.
+        matcher, scope, displayed, error = self.mod._resolve_scope({
+            "table": "condition_occurrence",
+            "column": "condition_concept_name",
+        })
+        self.assertEqual(scope, "")
+        self.assertIn("no `criteria:` or `match:`", error)
+        # Live and dry-run share the same constructor, so the
+        # observation built from this resolution carries the error.
+        obs = self.mod._build_observation(
+            {"table": "condition_occurrence",
+             "column": "condition_concept_name"},
+            matcher, displayed, error,
+        )
+        self.assertIn("no `criteria:` or `match:`", obs.error)
+
     def test_observe_skips_unscoped_rows(self):
         # A variable with no `criteria:` and no `match:` block must NOT
         # be discovered against the whole table. WHERE TRUE would
