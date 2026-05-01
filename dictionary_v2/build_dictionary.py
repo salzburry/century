@@ -1638,8 +1638,10 @@ _TECHNICAL_VARIABLES_TAIL: list[tuple[str, Any]] = [
 ]
 
 # Customer Variables drops Coding Schema / Implemented / Data Source.
-# Completeness and % Patient stay separate here — PR-C will merge them
-# into a single `% Patients With Value` once the reviewer signs off.
+# `% Patient` is also dropped for customers — Completeness alone
+# answers the reviewer's "what fraction of patients have a value"
+# question in customer-facing form. The technical / sales / pharma
+# layouts still carry both metrics for internal review.
 _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
     ("Field Type",   lambda v: v.field_type),
     ("Example",      lambda v: v.example),
@@ -1647,7 +1649,6 @@ _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
     ("Distribution", lambda v: v.distribution),
     ("Median (IQR)", lambda v: v.median_iqr),
     ("Completeness", lambda v: _fmt_pct(v.completeness_pct)),
-    ("% Patient",    lambda v: _fmt_pct(v.patient_pct)),
     ("Notes",        lambda v: v.notes),
 ]
 

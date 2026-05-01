@@ -142,12 +142,26 @@ class CustomerLayoutTests(unittest.TestCase):
         for dropped in ("Coding Schema", "Implemented", "Data Source"):
             self.assertNotIn(dropped, headers)
 
+    def test_variables_drops_percent_patient_for_customer_keeps_completeness(self):
+        # Per reviewer instruction: customer audience shows
+        # Completeness only; % Patient is dropped to avoid surfacing
+        # two near-identical patient-coverage metrics.
+        headers = [label for label, _ in bd.variables_layout("customer")]
+        self.assertIn("Completeness", headers)
+        self.assertNotIn("% Patient", headers)
+
     def test_other_audiences_unaffected(self):
         for aud in ("technical", "sales", "pharma"):
             tables = [l for l, _ in bd.tables_layout(aud)]
             self.assertIn("Data Source", tables, msg=f"{aud} Tables should keep Data Source")
             cols = [l for l, _ in bd.columns_layout(aud)]
             self.assertIn("Coding Schema", cols, msg=f"{aud} Columns should keep Coding Schema")
+            # % Patient stays for non-customer audiences.
+            vars_layout = [l for l, _ in bd.variables_layout(aud)]
+            self.assertIn(
+                "% Patient", vars_layout,
+                msg=f"{aud} Variables should keep % Patient",
+            )
 
 
 class CustomerTableFilterTests(unittest.TestCase):
