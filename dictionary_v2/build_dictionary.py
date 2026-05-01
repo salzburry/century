@@ -168,8 +168,10 @@ class VariableRow:
         Values | Distribution | Median (IQR) | Completeness |
         Implemented | % Patient | Data Source | Notes
 
-    `criteria` (raw SQL) renders only for the technical audience; every
-    other audience sees `inclusion_criteria` (prose) instead.
+    `criteria` (raw SQL / configured matcher) renders for the
+    technical and customer audiences. Sales / pharma see only
+    `inclusion_criteria` (prose). Customer keeps both columns side
+    by side so reviewers can map prose to the underlying rule.
     """
     category: str
     variable: str
@@ -1237,15 +1239,18 @@ _CUSTOMER_TABLE_EXCLUDES: frozenset[str] = frozenset({
 
 
 # --------------------------------------------------------------------------- #
-# Sheet layouts — shared between write_xlsx and write_html so the two
-# renderers can't drift on column order or accessor logic. Each entry is
-# (display_label, accessor_callable). Adding/removing a column is a one-
-# line edit to the relevant list.
+# Sheet layouts — shared between write_xlsx, write_html, and the
+# customer JSON projection so all three renderers can't drift on column
+# order or accessor logic. Each entry is (display_label, accessor) for
+# Tables / Columns / Variables, or (xlsx_label, html_label, accessor)
+# for Summary (where the renderers genuinely diverge on labels).
 #
-# PR-A scope: this is a pure refactor. The lists below reproduce the
-# exact column sets and cell formatters that were previously inlined in
-# write_xlsx / write_html. No audience-specific layouts yet — that lands
-# in PR-B once the customer audience is approved.
+# Each sheet has a per-audience dispatcher: summary_layout(audience),
+# tables_layout(audience), columns_layout(audience), and
+# variables_layout(audience). technical / sales / pharma share the
+# original PR-A layouts; the customer audience (PR-B) gets its own
+# trimmed lists below. Adding a new audience is a single dict entry
+# in each *_BY_AUDIENCE map.
 # --------------------------------------------------------------------------- #
 
 # Summary layout. Each entry is (xlsx_label, html_label, accessor):
