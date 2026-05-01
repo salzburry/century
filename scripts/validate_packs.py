@@ -92,7 +92,16 @@ class CohortReport:
 def _resolve_variables(disease_slug: str, seen: set[str] | None = None,
                        findings: list[str] | None = None
                        ) -> list[dict[str, Any]]:
-    """Transitive include resolution. Logs missing packs into `findings`."""
+    """Transitive include resolution. Logs missing packs into `findings`.
+
+    Uses the same override semantics as
+    build_dictionary.load_variables_pack(): a local row replaces an
+    inherited row with the same (category, variable) key. Without
+    this, a cohort pack that legitimately overrides a shared
+    variable (e.g. an --auto-stub'd row carrying a strict match:
+    block) would be flagged as a duplicate variable here even
+    though the build correctly treats it as an override.
+    """
     seen = seen or set()
     findings = findings if findings is not None else []
     if disease_slug in seen:
@@ -104,10 +113,27 @@ def _resolve_variables(disease_slug: str, seen: set[str] | None = None,
         findings.append(f"variables pack not found: {path}")
         return []
     data = _yaml_load(path)
+
     out: list[dict[str, Any]] = []
     for inc in data.get("include") or []:
         out.extend(_resolve_variables(inc, seen, findings))
-    out.extend(data.get("variables") or [])
+
+    def _key(r: dict[str, Any]) -> tuple[str, str]:
+        return (
+            (r.get("category") or "").strip(),
+            (r.get("variable") or "").strip(),
+        )
+
+    index_by_key: dict[tuple[str, str], int] = {
+        _key(r): i for i, r in enumerate(out)
+    }
+    for local_row in (data.get("variables") or []):
+        key = _key(local_row)
+        if key in index_by_key:
+            out[index_by_key[key]] = local_row
+        else:
+            index_by_key[key] = len(out)
+            out.append(local_row)
     return out
 
 

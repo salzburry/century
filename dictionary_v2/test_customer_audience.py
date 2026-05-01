@@ -1386,6 +1386,59 @@ class VariablePackOverrideTests(unittest.TestCase):
         self.assertEqual(rows[0].get("variable"), "Aspirin")
         self.assertEqual(rows[1].get("variable"), "Lisinopril")
 
+    def test_discovery_loader_collapses_overrides_with_correct_source(self):
+        # Discovery's tagged loader must apply the same override
+        # semantics — otherwise the report can show both the
+        # inherited fuzzy row and the cohort match: row, even
+        # though the build collapses them correctly.
+        rows = discover_mod._load_variables_pack_tagged(self.cohort_slug)
+        aspirin_rows = [r for r in rows if r.get("variable") == "Aspirin"]
+        self.assertEqual(
+            len(aspirin_rows), 1,
+            msg="discovery must collapse overrides — got "
+                + str([r.get("_source_pack") for r in aspirin_rows]),
+        )
+        # Source-pack tag must point at the cohort pack, since the
+        # cohort row IS the surviving definition.
+        self.assertEqual(
+            aspirin_rows[0].get("_source_pack"), self.cohort_slug,
+            msg="overridden row's _source_pack must reflect the cohort pack",
+        )
+        self.assertIn("match", aspirin_rows[0])
+
+    def test_discovery_loader_keeps_inherited_source_for_non_overrides(self):
+        rows = discover_mod._load_variables_pack_tagged(self.cohort_slug)
+        lisinopril = next(r for r in rows if r.get("variable") == "Lisinopril")
+        # Lisinopril was only defined in the shared pack — its
+        # provenance should still point at the shared pack.
+        self.assertEqual(
+            lisinopril.get("_source_pack"), self.shared_slug,
+        )
+
+    def test_validator_loader_applies_override_semantics(self):
+        # validate_packs.py's resolver must also collapse overrides;
+        # otherwise --auto-stub'd cohort packs trigger a spurious
+        # "duplicate variable" error and the validator becomes
+        # unusable after applying exact-match work.
+        import importlib.util
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_under_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_under_test"] = vp
+        spec.loader.exec_module(vp)
+
+        # Patch its PACKS_DIR to point at the same one our test
+        # packs live in — they live in the canonical packs/.
+        rows = vp._resolve_variables(self.cohort_slug, findings=[])
+        aspirin_rows = [r for r in rows if r.get("variable") == "Aspirin"]
+        self.assertEqual(
+            len(aspirin_rows), 1,
+            msg="validator must collapse overrides too",
+        )
+        self.assertIn("match", aspirin_rows[0])
+
 
 if __name__ == "__main__":
     unittest.main()

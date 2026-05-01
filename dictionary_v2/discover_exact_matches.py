@@ -124,6 +124,14 @@ def _load_variables_pack_tagged(slug: str) -> list[dict[str, Any]]:
     Reviewers need that provenance when copying suggested `match:`
     blocks back into packs/variables/, so cohort-specific values
     don't accidentally land in shared <disease>_common files.
+
+    Override semantics match the build loader: a local row replaces
+    any inherited row with the same (category, variable). The
+    surviving row's `_source_pack` is updated to the local pack's
+    slug, so a cohort row that overrides a shared row is correctly
+    attributed to the cohort pack — and discovery won't double-
+    report the variable as both a fuzzy shared row and a strict
+    cohort row after --auto-stub.
     """
     if not slug:
         return []
@@ -132,13 +140,29 @@ def _load_variables_pack_tagged(slug: str) -> list[dict[str, Any]]:
         sys.stderr.write(f"[warn] variables pack not found: {path}\n")
         return []
     data = _bd._yaml_load(path)
+
     out: list[dict[str, Any]] = []
     for inc in data.get("include") or []:
         out.extend(_load_variables_pack_tagged(inc))
+
+    def _key(r: dict[str, Any]) -> tuple[str, str]:
+        return (
+            (r.get("category") or "").strip(),
+            (r.get("variable") or "").strip(),
+        )
+
+    index_by_key: dict[tuple[str, str], int] = {
+        _key(r): i for i, r in enumerate(out)
+    }
     for v in (data.get("variables") or []):
         tagged = dict(v)
         tagged["_source_pack"] = slug
-        out.append(tagged)
+        key = _key(tagged)
+        if key in index_by_key:
+            out[index_by_key[key]] = tagged
+        else:
+            index_by_key[key] = len(out)
+            out.append(tagged)
     return out
 
 
