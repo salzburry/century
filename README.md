@@ -143,7 +143,7 @@ Inclusion Criteria lead each table; observed-data signals follow.
 | Summary | ~17 key/value | provider, disease, patient_count, table_count, column_count, date coverage, years_of_data, generated_at, git_sha, schema_snapshot_digest |
 | Tables | one per warehouse table | Table, Category, Description, Inclusion Criteria, Data Source, Source Table, Rows, Columns, Patients |
 | Columns | one per physical column | Category, Table, Column, Description, Field Type, Nullable, Example, Coding Schema, Values, Distribution, Median (IQR), Completeness, % Patient, Data Source, PII, Notes |
-| Variables | one per clinical concept in the cohort's variable pack | Category, Variable, Description, Inclusion Criteria, Table(s), Column(s), [Criteria — technical only], Field Type, Example, Coding Schema, Values, Distribution, Median (IQR), Completeness, Implemented, % Patient, Data Source, Notes |
+| Variables | one per clinical concept in the cohort's variable pack | Category, Variable, Description, Inclusion Criteria, Table(s), Column(s), [Criteria — technical + customer], Field Type, Example, Coding Schema, Values, Distribution, Median (IQR), Completeness, Implemented, % Patient, Data Source, Notes |
 
 `Data Source` uses the Flatiron typology — Normalized / Derived /
 Abstracted / NLP / Enhanced — derived from each row's
@@ -151,9 +151,12 @@ Abstracted / NLP / Enhanced — derived from each row's
 `build_dictionary.derive_data_source`. Pack rows can override per-row
 with an explicit `data_source:` key.
 
-`Inclusion Criteria` (prose) renders for every audience; the raw SQL
-`Criteria` column is technical-only. See `packs/STYLE.md` for the
-prose-quality bar each customer-visible string must meet.
+`Inclusion Criteria` (prose) renders for every audience. The
+`Criteria` column (the SQL or `match: { values: [...] }` matcher)
+shows for `technical` and `customer` audiences — config-owned exact
+matches were the headline reviewer ask — and is hidden for `sales`
+and `pharma`. See `packs/STYLE.md` for the prose-quality bar each
+customer-visible string must meet.
 
 All fields populate from the canonical `CohortModel` — nothing is
 hardcoded-empty any more.

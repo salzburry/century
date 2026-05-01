@@ -10,10 +10,11 @@
 #
 # Workflow once unzipped:
 #     pip install -r requirements.txt
-#     # 1. Discover proposed match: blocks (with optional --apply
-#     #    interactive prompt to write straight into packs/variables/).
+#     # 1. Discover proposed match: blocks. --apply requires
+#     #    --target {cohort|shared}; --auto-stub copies inherited
+#     #    rows into the cohort pack as per-cohort overrides.
 #     python dictionary_v2/discover_exact_matches.py --cohort <slug> \
-#         --write-suggestions --apply
+#         --write-suggestions --apply --target cohort --auto-stub
 #     # 2. Build the customer-audience dictionary.
 #     python dictionary_v2/build_dictionary.py --cohort <slug> \
 #         --audience customer

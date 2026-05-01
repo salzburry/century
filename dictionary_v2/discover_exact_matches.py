@@ -83,11 +83,15 @@ class VariableObservation:
     variable: str
     table: str
     column: str
-    criteria: str
+    criteria: str                     # strict / displayed criteria (`match:` if any, else broad)
     configured_values: list[str]
-    observed: list[tuple[str, int]]   # (value, count) for criteria-matched rows
+    observed: list[tuple[str, int]]   # (value, count) for scope-matched rows
     error: str = ""
-    source_pack: str = ""             # disease/cohort slug the variable lives in
+    source_pack: str = ""              # disease/cohort slug the variable lives in
+    discovery_scope: str = ""          # the WHERE actually used for the GROUP BY query
+                                       # — usually the broad criteria when both
+                                       # are present, so reviewers can see how
+                                       # missing_from_config was derived
 
     @property
     def configured_set(self) -> set[str]:
@@ -309,6 +313,7 @@ def _build_observation(
     matcher_column: str,
     displayed_criteria: str,
     error: str,
+    discovery_scope: str = "",
 ) -> VariableObservation:
     """Construct a VariableObservation header (no observed rows yet).
 
@@ -326,6 +331,7 @@ def _build_observation(
         observed=[],
         error=error,
         source_pack=v.get("_source_pack") or "",
+        discovery_scope=discovery_scope,
     )
 
 
@@ -338,7 +344,10 @@ def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
     Scope rules live in _resolve_scope() and are shared with dry-run.
     """
     matcher_column, scope_sql, displayed_criteria, error = _resolve_scope(v)
-    obs = _build_observation(v, matcher_column, displayed_criteria, error)
+    obs = _build_observation(
+        v, matcher_column, displayed_criteria, error,
+        discovery_scope=scope_sql,
+    )
     if error:
         return obs
 
@@ -395,10 +404,19 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
             )
         out.append(f"- table: `{o.table}`")
         out.append(f"- column: `{o.column}`")
+        # Two SQL clauses are distinct and reviewers need to see
+        # both: the strict `match:` is what the dictionary's
+        # Criteria cell shows; the broader `discovery_scope` is
+        # the WHERE used to find candidate values, which drives
+        # `missing from config`.
         if o.criteria:
-            out.append(f"- broad criteria: `{o.criteria}`")
+            out.append(f"- displayed criteria (strict): `{o.criteria}`")
         else:
-            out.append(f"- broad criteria: _(none)_")
+            out.append(f"- displayed criteria (strict): _(none)_")
+        if o.discovery_scope and o.discovery_scope != o.criteria:
+            out.append(f"- discovery scope (broad):    `{o.discovery_scope}`")
+        elif not o.discovery_scope:
+            out.append(f"- discovery scope (broad):    _(none — row was skipped)_")
         if o.error:
             out.append(f"- **error:** {o.error}")
             out.append("")
@@ -533,24 +551,48 @@ def _confirm(prompt: str) -> bool:
         return False
 
 
-def _load_source_variable(source_pack: str, variable_name: str) -> dict[str, Any] | None:
+def _load_source_variable(
+    source_pack: str, variable_name: str, yaml_rt: Any = None,
+) -> Any:
     """Read a variable's full definition straight from its source pack.
 
     Returns the raw mapping (table/column/criteria/description/etc.)
     or None if the pack or variable can't be found. Bypasses
     load_variables_pack so we get the row exactly as authored,
     without internal tags or include flattening.
+
+    If `yaml_rt` is a ruamel YAML instance, the returned mapping is
+    a CommentedMap that can carry leading comments via
+    yaml_set_comment_before_after_key — needed so --auto-stub
+    annotates cohort packs with a real YAML comment instead of
+    persisting an `_auto_stub_origin` field. Without yaml_rt the
+    function falls back to pyyaml plain-dict loading (used by
+    callers that just want the field values).
     """
     path = PACKS_DIR / "variables" / f"{source_pack}.yaml"
     if not path.is_file():
         return None
-    data = _bd._yaml_load(path)
+
+    if yaml_rt is not None:
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml_rt.load(f)
+    else:
+        data = _bd._yaml_load(path)
     if not isinstance(data, dict):
         return None
+
     for row in data.get("variables") or []:
         if (row.get("variable") or "").strip() == variable_name:
-            # Strip our in-memory provenance tag if it somehow leaked
-            # in. The disk copy never has it; this is belt-and-braces.
+            if yaml_rt is not None:
+                # Deep-copy so the caller's mutations don't leak into
+                # any later read of the source pack within the same run.
+                import copy
+                clone = copy.deepcopy(row)
+                # Strip our in-memory provenance tag if it somehow
+                # leaked in. The disk copy never has it; defensive.
+                for k in [k for k in list(clone.keys()) if isinstance(k, str) and k.startswith("_")]:
+                    del clone[k]
+                return clone
             return {k: v for k, v in row.items() if not k.startswith("_")}
     return None
 
@@ -563,7 +605,7 @@ def _attach_stub_comment(row: Any, source_pack: str) -> None:
     this row type (e.g. plain dict in tests).
     """
     msg = (
-        f" Auto-stubbed from packs/variables/{source_pack}.yaml via "
+        f"Auto-stubbed from packs/variables/{source_pack}.yaml via "
         f"discover_exact_matches.py --auto-stub. Verify clinical "
         f"fit before shipping."
     )
@@ -706,12 +748,17 @@ def apply_suggestions(
         return pack_cache[path]
 
     # Source-pack lookups for auto-stub. Cached per source-slug.
-    source_var_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
+    # Loaded via the same yaml_rt as the destination so the returned
+    # row is a CommentedMap — required for the leading provenance
+    # comment on stubbed entries.
+    source_var_cache: dict[tuple[str, str], Any] = {}
 
-    def _source_def(source_pack: str, variable: str) -> dict[str, Any] | None:
+    def _source_def(source_pack: str, variable: str) -> Any:
         key = (source_pack, variable)
         if key not in source_var_cache:
-            source_var_cache[key] = _load_source_variable(source_pack, variable)
+            source_var_cache[key] = _load_source_variable(
+                source_pack, variable, yaml_rt=yaml_rt,
+            )
         return source_var_cache[key]
 
     print(
@@ -812,8 +859,11 @@ def apply_suggestions(
                 "column": o.column,
                 "values": _suggested_values_for(o),
             }
-        else:   # stub: deep-copy the source row into the cohort pack
-            new_row = {k: v for k, v in (_source_def(o.source_pack, o.variable) or {}).items()}
+        else:   # stub: copy the source row (CommentedMap) into the cohort pack
+            new_row = _source_def(o.source_pack, o.variable)
+            # _source_def already returned a deep-copy, but cache it
+            # away so the next iteration (if any) reads a fresh one.
+            source_var_cache.pop((o.source_pack, o.variable), None)
             new_row["match"] = {
                 "column": o.column,
                 "values": _suggested_values_for(o),
@@ -824,11 +874,32 @@ def apply_suggestions(
         touched_paths.add(dest_path)
         applied += 1
 
-    # Write all touched files atomically at the end so a `quit` or
-    # error mid-loop never half-applies.
+    # Write all touched files at the end so a `quit` or error
+    # mid-loop never half-applies. Each file write is atomic at the
+    # filesystem level: dump to a sibling temp file, fsync, then
+    # os.replace() onto the destination — that way a crash, disk
+    # error, or interruption mid-dump leaves the original pack
+    # intact rather than truncated.
+    import os
+    import tempfile
     for path in touched_paths:
-        with path.open("w", encoding="utf-8") as f:
-            yaml_rt.dump(pack_cache[path], f)
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            prefix=f"{path.stem}.", suffix=".yaml.tmp", dir=str(path.parent),
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                yaml_rt.dump(pack_cache[path], f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        except Exception:
+            # Best-effort cleanup of the temp file; never leak it.
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+            raise
         print(f"[apply] updated {path}", file=sys.stderr)
 
     print(
@@ -917,9 +988,12 @@ def main(argv: list[str] | None = None) -> int:
         # would emit. Keeps offline review honest.
         observations = []
         for v in rows:
-            matcher, _scope, displayed, error = _resolve_scope(v)
+            matcher, scope, displayed, error = _resolve_scope(v)
             observations.append(
-                _build_observation(v, matcher, displayed, error)
+                _build_observation(
+                    v, matcher, displayed, error,
+                    discovery_scope=scope,
+                )
             )
     else:
         psycopg = _require_psycopg()
