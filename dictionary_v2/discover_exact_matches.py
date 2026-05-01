@@ -579,23 +579,48 @@ def _attach_stub_comment(row: Any, source_pack: str) -> None:
 
 
 def _ask_per_variable(
-    action: str, obs: VariableObservation, dest_filename: str,
+    action: str,
+    obs: VariableObservation,
+    dest_path: Path,
 ) -> str:
     """Prompt for one variable. Returns 'y', 'n', 'all', or 'q'.
 
-    `action` is "update" (existing row gets a match block) or "stub"
-    (new row copied from source). The answer drives a single
-    apply / skip / accept-rest / abort decision.
+    Renders a structured block showing source / target / action /
+    reason so the reviewer can see at a glance whether they're
+    updating an existing row or copying a shared row into the
+    cohort pack as a per-cohort override.
+
+    `action` is "update" (existing row's match block changes) or
+    "stub" (a new cohort-override row is being added from source).
     """
-    label = "[update]" if action == "update" else "[stub]"
-    prompt = (
-        f"{label} {obs.category} / {obs.variable} "
-        f"({len(obs.observed)} values, source={obs.source_pack}) "
-        f"→ {dest_filename}\n"
-        f"        apply? [y]es / [n]o / [a]ll-remaining / [q]uit: "
+    if action == "update":
+        action_label = "UPDATE variable"
+        reason = (
+            "row already exists in target pack; only the match: "
+            "block will change"
+        )
+    else:
+        action_label = "ADD cohort override"
+        reason = (
+            "row is inherited from shared pack; discovered values "
+            "came from one cohort only"
+        )
+
+    sample = ", ".join(f'"{v}"' for v, _ in obs.observed[:2])
+    if len(obs.observed) > 2:
+        sample += ", …"
+
+    block = (
+        f"\n  Variable: {obs.category} / {obs.variable}\n"
+        f"  Source:   packs/variables/{obs.source_pack}.yaml\n"
+        f"  Target:   packs/variables/{dest_path.stem}.yaml\n"
+        f"  Action:   {action_label}\n"
+        f"  Values:   {len(obs.observed)} ({sample})\n"
+        f"  Reason:   {reason}\n"
+        f"  Proceed?  [y]es / [n]o / [a]ll-remaining / [q]uit: "
     )
     try:
-        raw = input(prompt).strip().lower()
+        raw = input(block).strip().lower()
     except EOFError:
         return "n"
     if raw in ("y", "yes"):
@@ -767,7 +792,7 @@ def apply_suggestions(
 
         # Per-variable confirmation, unless auto-yes / accept-all.
         if not auto_yes and not accept_all:
-            answer = _ask_per_variable(action, o, dest_path.name)
+            answer = _ask_per_variable(action, o, dest_path)
             if answer == "q":
                 print(
                     "[apply] quit — pending changes discarded; "

@@ -209,20 +209,39 @@ python dictionary_v2/discover_exact_matches.py \
 ```
 
 ### Per-variable prompts
-Interactive `--apply` walks each candidate one at a time:
-```
-[update] Drugs / Aspirin (8 values, source=ckd_common) → balboa_ckd.yaml
-        apply? [y]es / [n]o / [a]ll-remaining / [q]uit:
+Interactive `--apply` walks each candidate one at a time and shows a
+structured block so you can see source / target / action / reason
+before approving:
 
-[stub]   Drugs / Lisinopril (5 values, source=ckd_common) → balboa_ckd.yaml
-        apply? [y]es / [n]o / [a]ll-remaining / [q]uit:
 ```
-- `[update]` = the cohort pack already has this variable; the match block is overwritten.
-- `[stub]`   = `--auto-stub` mode created a new cohort row from the shared source.
+  Variable: Diagnosis / Alzheimer's
+  Source:   packs/variables/adrd_common.yaml
+  Target:   packs/variables/mtc_alzheimers.yaml
+  Action:   ADD cohort override
+  Values:   12 ("Alzheimer disease, late onset", "Mild cognitive impairment of uncertain etiology", …)
+  Reason:   row is inherited from shared pack; discovered values came from one cohort only
+  Proceed?  [y]es / [n]o / [a]ll-remaining / [q]uit:
+```
+
+- **UPDATE variable** — row already exists in the target pack; only its `match:` block changes.
+- **ADD cohort override** — row is inherited from a shared pack and `--auto-stub` is copying it into the cohort pack as a per-cohort override.
 - `all` accepts every remaining row without further prompts.
-- `quit` aborts the whole run; no files are written.
+- `quit` aborts the whole run; no files are written (changes are kept in memory until the loop completes).
 
 Add `--apply-yes` to skip the prompts entirely (for scripted runs).
+
+### Where should match values live? (pack-tier guidance)
+| Pack | Scope | When to put values here |
+|---|---|---|
+| `<cohort>.yaml` (e.g. `mtc_alzheimers.yaml`) | One cohort only | **Default** for newly-discovered values from a single cohort. `--target cohort --auto-stub` writes here. |
+| `<disease>_common.yaml` (e.g. `alzheimers_common.yaml`) | All cohorts of one disease | Promote here only after confirming the values are valid across every cohort that includes this pack (e.g. MTC Alzheimer's *and* RMN Alzheimer's). |
+| `<umbrella>_common.yaml` (e.g. `adrd_common.yaml`) | A whole disease family | Promote here only after confirming values are valid across the umbrella (e.g. all ADRD cohorts including MTC AAT, MTC Alzheimer's, RMN Alzheimer's). |
+
+The default discovery flow (`--target cohort --auto-stub`) keeps
+shared packs untouched. Promotion to a shared pack is a deliberate
+follow-up step (currently a manual edit; `--target shared` exists
+for the rare case where you've already validated that the values
+are universally appropriate).
 
 ### Other discovery flags
 ```bash

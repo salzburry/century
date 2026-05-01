@@ -1077,6 +1077,56 @@ class DiscoveryApplyTests(unittest.TestCase):
             msg="--auto-stub with --target shared must exit 2",
         )
 
+    def test_per_variable_prompt_renders_structured_block(self):
+        # The interactive prompt must show source/target/action/reason
+        # explicitly so reviewers can distinguish UPDATE from ADD
+        # cohort override at a glance.
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100), ("Aspirin 325 MG", 50)])]
+        captured: list[str] = []
+
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda prompt="": (captured.append(prompt) or "n")
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        # update path: variable already in shared pack.
+        self.mod.apply_suggestions(
+            observations, target="shared", auto_yes=False,
+        )
+        prompt = captured[-1]
+        for line in (
+            "Variable:", "Source:", "Target:",
+            "Action:", "UPDATE variable",
+            "Values:", "Aspirin 81 MG",
+            "Reason:", "match: block will change",
+            "Proceed?", "[y]es", "[a]ll", "[q]uit",
+        ):
+            self.assertIn(line, prompt, msg=f"missing: {line!r}")
+
+    def test_per_variable_prompt_labels_stub_as_add_cohort_override(self):
+        cohort_slug = "_apply_test_cohort_addlabel"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "include: [_apply_test_pack]\nvariables: []\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        captured: list[str] = []
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda prompt="": (captured.append(prompt) or "n")
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        self.mod.apply_suggestions(
+            observations, target="cohort", cohort_slug=cohort_slug,
+            auto_yes=False, auto_stub=True,
+        )
+        prompt = captured[-1]
+        self.assertIn("ADD cohort override", prompt)
+        self.assertIn("inherited from shared pack", prompt)
+
     def test_per_variable_prompt_quit_aborts_without_writing(self):
         # Interactive prompt: 'q' must abort the whole run and leave
         # both packs unchanged on disk.
