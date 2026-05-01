@@ -1,0 +1,24 @@
+# Per-audience dictionary layout overrides.
+#
+# Currently only the customer audience uses this file. Other audiences
+# (technical / sales / pharma) ship the full table list.
+#
+# Schema:
+#   customer:
+#     exclude_tables: [<table_name>, ...]   # global excludes
+#   cohorts:
+#     <cohort_slug>:
+#       customer:
+#         exclude_tables: [<table_name>, ...]   # replaces global list
+#         extra_exclude_tables: [<table_name>, ...]   # adds to global list
+
+customer:
+  # Internal scaffolding tables that should not appear in the
+  # customer-facing dictionary. These are OMOP-shell or pipeline
+  # bookkeeping tables, not clinical content.
+  exclude_tables:
+    - standard_profile_data_model
+    - cohort_patients
+    - dv_tokenized_profile_data
+
+cohorts: {}

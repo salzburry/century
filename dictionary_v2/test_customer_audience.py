@@ -287,5 +287,59 @@ class CustomerJsonSuppressionTests(_CustomerSmokeBase):
         self.assertTrue(any(f.endswith(".html") for f in files), msg=files)
 
 
+class CustomerLayoutConfigTests(unittest.TestCase):
+    """packs/dictionary_layout.yaml drives the customer table-exclude
+    list. Per-cohort overrides can replace or extend the global list."""
+
+    def test_yaml_drives_global_excludes(self):
+        excludes = bd.customer_table_excludes()
+        for name in ("standard_profile_data_model", "cohort_patients",
+                     "dv_tokenized_profile_data"):
+            self.assertIn(name, excludes,
+                          msg=f"{name} should be excluded by default")
+
+    def test_unknown_cohort_falls_back_to_global(self):
+        self.assertEqual(
+            bd.customer_table_excludes("nonexistent_cohort"),
+            bd.customer_table_excludes(),
+        )
+
+    def _patch_layout(self, layout):
+        original = bd._load_dictionary_layout
+        bd._load_dictionary_layout = lambda: layout
+        self.addCleanup(lambda: setattr(bd, "_load_dictionary_layout", original))
+
+    def test_per_cohort_exclude_tables_replaces_global(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": ["a", "b"]},
+            "cohorts": {"my_cohort": {"customer": {"exclude_tables": ["c"]}}},
+        })
+        self.assertEqual(bd.customer_table_excludes("my_cohort"), frozenset({"c"}))
+        self.assertEqual(bd.customer_table_excludes(), frozenset({"a", "b"}))
+
+    def test_per_cohort_extra_excludes_extends_global(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": ["a", "b"]},
+            "cohorts": {"my_cohort": {"customer": {"extra_exclude_tables": ["c"]}}},
+        })
+        self.assertEqual(
+            bd.customer_table_excludes("my_cohort"),
+            frozenset({"a", "b", "c"}),
+        )
+
+    def test_filter_for_audience_uses_cohort_specific_excludes(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": []},
+            "cohorts": {"c": {"customer": {"exclude_tables": ["person"]}}},
+        })
+        tables = [_make_table("person"), _make_table("cohort_patients")]
+        columns = [_make_column("person"), _make_column("cohort_patients")]
+        variables = [_make_variable("person"), _make_variable("cohort_patients")]
+        model = _make_model(tables, columns, variables)
+        # _make_model sets cohort="c", which the per-cohort override targets.
+        filtered = bd.filter_for_audience(model, "customer")
+        self.assertEqual({t.table_name for t in filtered.tables}, {"cohort_patients"})
+
+
 if __name__ == "__main__":
     unittest.main()

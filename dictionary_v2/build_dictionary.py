@@ -1229,13 +1229,48 @@ AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
 
 
 # Tables that are scaffolding / internal and should not appear in the
-# customer dictionary. Hard-coded for PR-B; PR-D moves this to
-# packs/dictionary_layout.yaml so per-cohort overrides are possible.
-_CUSTOMER_TABLE_EXCLUDES: frozenset[str] = frozenset({
+# customer dictionary. Sourced from packs/dictionary_layout.yaml
+# (customer.exclude_tables) with optional per-cohort overrides under
+# cohorts.<slug>.customer.{exclude_tables,extra_exclude_tables}.
+#
+# The hard-coded fallback below is the historical PR-B list and is
+# only used if the layout YAML is missing or malformed; tests pin the
+# config-driven path.
+_CUSTOMER_TABLE_EXCLUDES_FALLBACK: frozenset[str] = frozenset({
     "standard_profile_data_model",
     "cohort_patients",
     "dv_tokenized_profile_data",
 })
+
+DICTIONARY_LAYOUT_PATH = PACKS_DIR / "dictionary_layout.yaml"
+
+
+def _load_dictionary_layout() -> dict[str, Any]:
+    """Load packs/dictionary_layout.yaml, or {} if missing."""
+    return _yaml_load(DICTIONARY_LAYOUT_PATH)
+
+
+def customer_table_excludes(cohort: str | None = None) -> frozenset[str]:
+    """Resolve the customer-audience table exclude list for a cohort.
+
+    Reads packs/dictionary_layout.yaml. Per-cohort `exclude_tables`
+    replaces the global list; `extra_exclude_tables` adds to it.
+    Falls back to the hard-coded PR-B list if the file is missing.
+    """
+    layout = _load_dictionary_layout()
+    customer = layout.get("customer") or {}
+    global_excludes = customer.get("exclude_tables")
+    if global_excludes is None:
+        global_excludes = list(_CUSTOMER_TABLE_EXCLUDES_FALLBACK)
+
+    if cohort:
+        cohort_cfg = ((layout.get("cohorts") or {}).get(cohort) or {}).get("customer") or {}
+        if "exclude_tables" in cohort_cfg:
+            return frozenset(cohort_cfg["exclude_tables"] or [])
+        extra = cohort_cfg.get("extra_exclude_tables") or []
+        return frozenset(list(global_excludes) + list(extra))
+
+    return frozenset(global_excludes)
 
 
 # --------------------------------------------------------------------------- #
@@ -1509,9 +1544,11 @@ def filter_for_audience(model: CohortModel, audience: str) -> CohortModel:
 
     # Customer audience also strips internal/scaffolding tables. Affects
     # all three lists so a hidden table doesn't leave dangling column or
-    # variable rows pointing at a table the reader can't see.
+    # variable rows pointing at a table the reader can't see. The
+    # exclude list is per-cohort-aware and sourced from
+    # packs/dictionary_layout.yaml.
     if audience == "customer":
-        excluded = _CUSTOMER_TABLE_EXCLUDES
+        excluded = customer_table_excludes(model.cohort)
         filtered_tables   = [t for t in filtered_tables   if t.table_name not in excluded]
         filtered_columns  = [c for c in filtered_columns  if c.table      not in excluded]
         filtered_variables = [v for v in filtered_variables if v.table    not in excluded]
