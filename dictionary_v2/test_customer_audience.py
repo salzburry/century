@@ -287,5 +287,165 @@ class CustomerJsonSuppressionTests(_CustomerSmokeBase):
         self.assertTrue(any(f.endswith(".html") for f in files), msg=files)
 
 
+class CustomerLayoutConfigTests(unittest.TestCase):
+    """packs/dictionary_layout.yaml drives the customer table-exclude
+    list. Per-cohort overrides can replace or extend the global list."""
+
+    def test_yaml_drives_global_excludes(self):
+        excludes = bd.customer_table_excludes()
+        for name in ("standard_profile_data_model", "cohort_patients",
+                     "dv_tokenized_profile_data"):
+            self.assertIn(name, excludes,
+                          msg=f"{name} should be excluded by default")
+
+    def test_unknown_cohort_falls_back_to_global(self):
+        self.assertEqual(
+            bd.customer_table_excludes("nonexistent_cohort"),
+            bd.customer_table_excludes(),
+        )
+
+    def _patch_layout(self, layout):
+        original = bd._load_dictionary_layout
+        bd._load_dictionary_layout = lambda: layout
+        self.addCleanup(lambda: setattr(bd, "_load_dictionary_layout", original))
+
+    def test_per_cohort_exclude_tables_replaces_global(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": ["a", "b"]},
+            "cohorts": {"my_cohort": {"customer": {"exclude_tables": ["c"]}}},
+        })
+        self.assertEqual(bd.customer_table_excludes("my_cohort"), frozenset({"c"}))
+        self.assertEqual(bd.customer_table_excludes(), frozenset({"a", "b"}))
+
+    def test_per_cohort_extra_excludes_extends_global(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": ["a", "b"]},
+            "cohorts": {"my_cohort": {"customer": {"extra_exclude_tables": ["c"]}}},
+        })
+        self.assertEqual(
+            bd.customer_table_excludes("my_cohort"),
+            frozenset({"a", "b", "c"}),
+        )
+
+    def test_filter_for_audience_uses_cohort_specific_excludes(self):
+        self._patch_layout({
+            "customer": {"exclude_tables": []},
+            "cohorts": {"c": {"customer": {"exclude_tables": ["person"]}}},
+        })
+        tables = [_make_table("person"), _make_table("cohort_patients")]
+        columns = [_make_column("person"), _make_column("cohort_patients")]
+        variables = [_make_variable("person"), _make_variable("cohort_patients")]
+        model = _make_model(tables, columns, variables)
+        # _make_model sets cohort="c", which the per-cohort override targets.
+        filtered = bd.filter_for_audience(model, "customer")
+        self.assertEqual({t.table_name for t in filtered.tables}, {"cohort_patients"})
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = rows
+        self._calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql):
+        self._calls.append(sql)
+
+    def fetchall(self):
+        return [(r,) for r in self._rows]
+
+
+class _FakeConn:
+    def __init__(self, rows):
+        self._rows = rows
+        self.queries = []
+
+    def cursor(self):
+        cur = _FakeCursor(self._rows)
+        self.queries.append(cur)
+        return cur
+
+    def rollback(self):
+        pass
+
+
+class StrictCriteriaDerivationTests(unittest.TestCase):
+    """Auto-derive `column IN (...)` from the cohort's actual top-N
+    values. Replaces hand-written ILIKE patterns; the dictionary then
+    describes what's really in the data."""
+
+    def test_emits_in_list_from_top_values(self):
+        conn = _FakeConn(["Lecanemab", "Leqembi", "Donanemab"])
+        result = bd.derive_strict_criteria(
+            conn, "schema", "drug_exposure", "drug_concept_name", top_n=50,
+        )
+        self.assertEqual(
+            result,
+            "\"drug_concept_name\" IN ('Lecanemab', 'Leqembi', 'Donanemab')",
+        )
+
+    def test_escapes_single_quotes(self):
+        conn = _FakeConn(["O'Brien syndrome", "Plain value"])
+        result = bd.derive_strict_criteria(
+            conn, "schema", "condition", "concept_name", top_n=10,
+        )
+        self.assertIn("'O''Brien syndrome'", result)
+
+    def test_top_n_zero_opts_out(self):
+        conn = _FakeConn(["x"])
+        self.assertEqual(
+            bd.derive_strict_criteria(conn, "s", "t", "c", top_n=0),
+            "",
+        )
+
+    def test_skips_freetext_columns(self):
+        conn = _FakeConn(["anything"])
+        for col in ("note_text", "observation_source_value_text"):
+            self.assertEqual(
+                bd.derive_strict_criteria(conn, "s", "t", col, top_n=50),
+                "",
+                msg=f"freetext column {col} should be skipped",
+            )
+
+    def test_skips_surrogate_keys(self):
+        conn = _FakeConn(["1", "2", "3"])
+        # Surrogate-key heuristic catches *_concept_id / *_id columns —
+        # top-N of identifiers is meaningless.
+        result = bd.derive_strict_criteria(
+            conn, "s", "drug_exposure", "drug_concept_id", top_n=50,
+        )
+        self.assertEqual(result, "")
+
+    def test_empty_result_returns_blank(self):
+        conn = _FakeConn([])
+        self.assertEqual(
+            bd.derive_strict_criteria(conn, "s", "t", "concept_name", top_n=50),
+            "",
+        )
+
+    def test_query_failure_returns_blank(self):
+        class BoomConn:
+            def cursor(self):
+                raise RuntimeError("connection lost")
+            def rollback(self):
+                pass
+        self.assertEqual(
+            bd.derive_strict_criteria(
+                BoomConn(), "s", "t", "concept_name", top_n=50,
+            ),
+            "",
+        )
+
+    def test_top_n_default_is_configurable(self):
+        # Should match the value in packs/dictionary_layout.yaml.
+        n = bd.criteria_top_n_default()
+        self.assertIsInstance(n, int)
+        self.assertGreater(n, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

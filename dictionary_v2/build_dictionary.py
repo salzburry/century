@@ -735,6 +735,76 @@ def _is_freetext_column(column: str) -> bool:
     return any(p.search(column) for p in _TEXT_COLUMN_PATTERNS)
 
 
+# --------------------------------------------------------------------------- #
+# Strict-match Criteria derivation. Replaces hand-written ILIKE patterns
+# with `column IN (...)` lists sourced from the cohort's actual top-N
+# values. The dictionary is descriptive — the data itself is the source
+# of truth, so the Criteria cell is what's literally there, not a guess.
+# --------------------------------------------------------------------------- #
+
+DEFAULT_CRITERIA_TOP_N = 50
+
+
+def criteria_top_n_default() -> int:
+    """Global top-N value count, configurable via packs/dictionary_layout.yaml."""
+    layout = _load_dictionary_layout()
+    n = ((layout.get("criteria") or {}).get("top_n"))
+    if isinstance(n, int) and n >= 0:
+        return n
+    return DEFAULT_CRITERIA_TOP_N
+
+
+def _sql_quote(value: str) -> str:
+    """Escape a string for inclusion in single-quoted SQL literal."""
+    return value.replace("'", "''")
+
+
+def derive_strict_criteria(
+    conn, schema: str, table: str, column: str, top_n: int,
+) -> str:
+    """`column IN ('v1', 'v2', ...)` SQL built from the column's top-N
+    most frequent non-null values. Returns "" when:
+      - top_n <= 0 (caller opted out)
+      - the column is freetext / surrogate key (top-N is meaningless)
+      - the query fails or returns no rows
+
+    The returned string is suitable as both the displayed Criteria cell
+    and the WHERE clause used for Completeness / % Patient denominators.
+    """
+    if top_n <= 0:
+        return ""
+    if _is_freetext_column(column) or is_surrogate_key(column):
+        return ""
+
+    sql = (
+        f'SELECT "{column}"::text AS v '
+        f'FROM "{schema}"."{table}" '
+        f'WHERE "{column}" IS NOT NULL '
+        f'GROUP BY "{column}" '
+        f'ORDER BY COUNT(*) DESC '
+        f'LIMIT {int(top_n)};'
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            rows = [r[0] for r in cur.fetchall() if r[0] is not None]
+    except Exception as exc:
+        sys.stderr.write(
+            f"[warn] strict-criteria derivation failed for "
+            f"{table}.{column}: {exc}\n"
+        )
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return ""
+
+    if not rows:
+        return ""
+    quoted = ", ".join(f"'{_sql_quote(str(v))}'" for v in rows)
+    return f'"{column}" IN ({quoted})'
+
+
 def resolve_variables(
     conn, schema: str,
     variables_pack: list[dict[str, Any]],
@@ -774,12 +844,22 @@ def resolve_variables(
     column_types = column_types or {}
 
     out: list[VariableRow] = []
+    default_top_n = criteria_top_n_default()
     for v in variables_pack:
         table = v.get("table") or ""
         column = v.get("column") or ""
         expression = (v.get("expression") or "").strip() or f'"{column}"'
         criteria = (v.get("criteria") or "").strip()
         category = v.get("category") or ""
+        # Strict-match override: auto-derive `column IN (...)` from the
+        # cohort's top-N actual values. The dictionary's Criteria cell
+        # then reflects what's really in the data, not a hand-written
+        # ILIKE pattern. `top_n: 0` in the variable YAML opts out.
+        top_n = v.get("top_n", default_top_n)
+        if isinstance(top_n, int) and top_n > 0 and table and column:
+            derived = derive_strict_criteria(conn, schema, table, column, top_n)
+            if derived:
+                criteria = derived
         variable_name = v.get("variable") or column
         description = v.get("description") or ""
         extraction = v.get("extraction_type") or "Structured"
@@ -1229,13 +1309,48 @@ AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
 
 
 # Tables that are scaffolding / internal and should not appear in the
-# customer dictionary. Hard-coded for PR-B; PR-D moves this to
-# packs/dictionary_layout.yaml so per-cohort overrides are possible.
-_CUSTOMER_TABLE_EXCLUDES: frozenset[str] = frozenset({
+# customer dictionary. Sourced from packs/dictionary_layout.yaml
+# (customer.exclude_tables) with optional per-cohort overrides under
+# cohorts.<slug>.customer.{exclude_tables,extra_exclude_tables}.
+#
+# The hard-coded fallback below is the historical PR-B list and is
+# only used if the layout YAML is missing or malformed; tests pin the
+# config-driven path.
+_CUSTOMER_TABLE_EXCLUDES_FALLBACK: frozenset[str] = frozenset({
     "standard_profile_data_model",
     "cohort_patients",
     "dv_tokenized_profile_data",
 })
+
+DICTIONARY_LAYOUT_PATH = PACKS_DIR / "dictionary_layout.yaml"
+
+
+def _load_dictionary_layout() -> dict[str, Any]:
+    """Load packs/dictionary_layout.yaml, or {} if missing."""
+    return _yaml_load(DICTIONARY_LAYOUT_PATH)
+
+
+def customer_table_excludes(cohort: str | None = None) -> frozenset[str]:
+    """Resolve the customer-audience table exclude list for a cohort.
+
+    Reads packs/dictionary_layout.yaml. Per-cohort `exclude_tables`
+    replaces the global list; `extra_exclude_tables` adds to it.
+    Falls back to the hard-coded PR-B list if the file is missing.
+    """
+    layout = _load_dictionary_layout()
+    customer = layout.get("customer") or {}
+    global_excludes = customer.get("exclude_tables")
+    if global_excludes is None:
+        global_excludes = list(_CUSTOMER_TABLE_EXCLUDES_FALLBACK)
+
+    if cohort:
+        cohort_cfg = ((layout.get("cohorts") or {}).get(cohort) or {}).get("customer") or {}
+        if "exclude_tables" in cohort_cfg:
+            return frozenset(cohort_cfg["exclude_tables"] or [])
+        extra = cohort_cfg.get("extra_exclude_tables") or []
+        return frozenset(list(global_excludes) + list(extra))
+
+    return frozenset(global_excludes)
 
 
 # --------------------------------------------------------------------------- #
@@ -1509,9 +1624,11 @@ def filter_for_audience(model: CohortModel, audience: str) -> CohortModel:
 
     # Customer audience also strips internal/scaffolding tables. Affects
     # all three lists so a hidden table doesn't leave dangling column or
-    # variable rows pointing at a table the reader can't see.
+    # variable rows pointing at a table the reader can't see. The
+    # exclude list is per-cohort-aware and sourced from
+    # packs/dictionary_layout.yaml.
     if audience == "customer":
-        excluded = _CUSTOMER_TABLE_EXCLUDES
+        excluded = customer_table_excludes(model.cohort)
         filtered_tables   = [t for t in filtered_tables   if t.table_name not in excluded]
         filtered_columns  = [c for c in filtered_columns  if c.table      not in excluded]
         filtered_variables = [v for v in filtered_variables if v.table    not in excluded]
