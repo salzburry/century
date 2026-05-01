@@ -1489,14 +1489,22 @@ def customer_table_excludes(
 # genuinely diverge on labels).
 #
 # JSON is a full internal/debug dump (write_json) and intentionally
-# bypasses these layouts. The customer audience skips JSON entirely.
+# bypasses these layouts. The stakeholder-facing audiences — customer
+# and sales — skip JSON entirely so partner bundles never carry the
+# full CohortModel. The internal audiences (technical, pharma) keep
+# JSON for debugging.
 #
 # Each sheet has a per-audience dispatcher: summary_layout(audience),
 # tables_layout(audience), columns_layout(audience), and
-# variables_layout(audience). technical / sales / pharma share the
-# original PR-A layouts; the customer audience (PR-B) gets its own
-# trimmed lists below. Adding a new audience is a single dict entry
-# in each *_BY_AUDIENCE map.
+# variables_layout(audience). Current state:
+#   - technical / pharma share the original layouts (full sheets).
+#   - customer gets its own trimmed Summary / Tables / Columns and
+#     a customer-tail for Variables that drops debug fields.
+#   - sales has its own Tempus-style Variables layout
+#     (_SALES_VARIABLES_LAYOUT) plus the customer Summary, and the
+#     Tables / Columns sheets are hidden via AUDIENCE_VISIBILITY.
+# Adding a new audience is a single dict entry in each *_BY_AUDIENCE
+# map plus a visibility row.
 # --------------------------------------------------------------------------- #
 
 # Summary layout. Each entry is (xlsx_label, html_label, accessor):
