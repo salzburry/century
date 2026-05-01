@@ -1391,11 +1391,13 @@ def build_model(
 # the model filter and the renderer omits.
 AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
     "technical": {"summary": True, "tables": True, "columns": True, "variables": True},
-    # Sales ships four sheets — same set as customer, just with the
-    # Tempus-style Variables layout instead of the customer-trimmed
-    # one. Summary cover, Tables and Columns reuse the customer
-    # (trimmed) layouts since both audiences are stakeholder-facing.
-    "sales":     {"summary": True, "tables": True, "columns": True, "variables": True},
+    # Sales ships three sheets — Summary cover, Tables overview,
+    # and the Tempus-style Variables spec. Columns (schema map at
+    # the physical-column level) is dropped: a sales partner reads
+    # Variables for clinical content; the column-level schema map
+    # is mostly noise for that audience and can be served by the
+    # technical-audience output when an engineer needs it.
+    "sales":     {"summary": True, "tables": True, "columns": False, "variables": True},
     "pharma":    {"summary": True, "tables": False, "columns": False, "variables": True},
     # Customer audience (PR-B). Opt-in via `--audience customer`. Keeps
     # all four sheets visible but trims columns and filters internal

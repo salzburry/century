@@ -170,7 +170,7 @@ nimbus_copd, rmn_alzheimers, rvc_amd_curated, rvc_dr_curated.
 | `--audience` | Sheets | Notes |
 |---|---|---|
 | `technical` (default) | Summary + Tables + Columns + Variables | Full debug fields, raw SQL Criteria, PII visible. Writes xlsx + html + json. |
-| `sales` | Summary + Tables + Columns + Variables, all trimmed for stakeholder consumption. Variables uses the Tempus-style layout (Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness). Tables and Columns reuse the customer-trimmed layouts. | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
+| `sales` | Summary + Tables + Variables (no Columns sheet). Summary and Tables use the customer-trimmed layouts; Variables uses the Tempus-style spec (Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness). | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 | `pharma` | Summary + Variables | PII dropped. JSON kept. |
 | `customer` | Summary, Tables, Columns, Variables (all trimmed) | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 
@@ -300,10 +300,13 @@ Output/
 └── mtc__aat_cohort_dictionary_sales.html      ← same content, browsable
 ```
 
-Sheets in the xlsx:
+Sheets in the xlsx (three; Columns is intentionally not produced
+for sales — a partner reads Variables for clinical content, and an
+engineer who needs the column-level schema map can pull the
+technical-audience output instead):
+
 - **Summary** — cohort cover (provider, disease, patient count, date coverage).
 - **Tables** — customer-trimmed: `Table | Category | Description | Inclusion Criteria | Rows | Columns | Patients`. Internal scaffolding tables (`cohort_patients`, `standard_profile_data_model`, etc.) are filtered out via `packs/dictionary_layout.yaml`.
-- **Columns** — customer-trimmed: `Table(s) | Column | Description | Field Type`. Schema map for the cohort.
 - **Variables** — Tempus-style spec: `Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness`. Variables that have no data in the cohort (`Implemented = No`) are dropped automatically.
 
 JSON is intentionally not produced for the sales audience — the partner

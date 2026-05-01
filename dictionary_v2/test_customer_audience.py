@@ -248,11 +248,15 @@ class CustomerTableFilterTests(unittest.TestCase):
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(rendered["Value Sets"], "")
 
-    def test_sales_visibility_ships_all_four_sheets(self):
+    def test_sales_visibility_ships_three_sheets(self):
+        # Summary + Tables + Variables. Columns is dropped — a
+        # sales partner reads Variables for clinical content; the
+        # physical-column schema map is mostly noise for that
+        # audience.
         vis = bd.AUDIENCE_VISIBILITY["sales"]
         self.assertTrue(vis["summary"])
         self.assertTrue(vis["tables"])
-        self.assertTrue(vis["columns"])
+        self.assertFalse(vis["columns"], msg="sales must not ship Columns")
         self.assertTrue(vis["variables"])
 
     def test_sales_tables_uses_customer_trimmed_layout(self):
@@ -264,12 +268,6 @@ class CustomerTableFilterTests(unittest.TestCase):
         for kept in ("Table", "Description", "Inclusion Criteria",
                      "Rows", "Columns", "Patients"):
             self.assertIn(kept, headers)
-
-    def test_sales_columns_uses_customer_trimmed_layout(self):
-        headers = [label for label, _ in bd.columns_layout("sales")]
-        self.assertEqual(
-            headers, ["Table(s)", "Column", "Description", "Field Type"],
-        )
 
     def test_sales_summary_uses_trimmed_layout(self):
         # Sales is stakeholder-facing — Summary must NOT carry
