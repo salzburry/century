@@ -1219,7 +1219,21 @@ AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
     "technical": {"summary": True, "tables": True, "columns": True, "variables": True},
     "sales":     {"summary": True, "tables": True, "columns": False, "variables": True},
     "pharma":    {"summary": True, "tables": False, "columns": False, "variables": True},
+    # Customer audience (PR-B). Opt-in via `--audience customer`. Keeps
+    # all four sheets visible but trims columns and filters internal
+    # tables. See per-audience layouts below.
+    "customer":  {"summary": True, "tables": True, "columns": True, "variables": True},
 }
+
+
+# Tables that are scaffolding / internal and should not appear in the
+# customer dictionary. Hard-coded for PR-B; PR-D moves this to
+# packs/dictionary_layout.yaml so per-cohort overrides are possible.
+_CUSTOMER_TABLE_EXCLUDES: frozenset[str] = frozenset({
+    "standard_profile_data_model",
+    "cohort_patients",
+    "dv_tokenized_profile_data",
+})
 
 
 # --------------------------------------------------------------------------- #
@@ -1237,12 +1251,11 @@ AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
 # Summary layout. Each entry is (xlsx_label, html_label, accessor):
 #   - `xlsx_label is None` skips the row in the XLSX Summary sheet.
 #   - `html_label is None` skips the entry in the HTML <dl> block.
-# The two renderers historically diverged on this sheet — XLSX writes
-# 17 lowercase metric/value rows while HTML writes 15 title-case
-# entries that merge min/max/years into one "Date coverage" line.
-# Carrying both labels in one tuple lets PR-B add a customer-trimmed
-# layout in one place instead of editing both renderers.
-SUMMARY_LAYOUT: list[tuple[str | None, str | None, Any]] = [
+# Two renderers genuinely diverge: XLSX writes lowercase metric/value
+# rows; HTML writes title-case entries with a merged "Date coverage"
+# line. One tuple per entry carries both, so per-audience layouts are
+# a single edit.
+_TECHNICAL_SUMMARY_LAYOUT: list[tuple[str | None, str | None, Any]] = [
     ("cohort",                   "Cohort",             lambda m: m.cohort),
     ("provider",                 "Provider",           lambda m: m.provider),
     ("disease",                  "Disease",            lambda m: m.disease),
@@ -1270,24 +1283,59 @@ SUMMARY_LAYOUT: list[tuple[str | None, str | None, Any]] = [
     ("schema_snapshot_digest",   "Schema snapshot",    lambda m: m.schema_snapshot_digest),
 ]
 
+# Customer Summary drops implementation/debug-flavored fields:
+#   variant, column_count, status, git_sha, introspect_version,
+#   schema_snapshot_digest. Date coverage is still emitted as 3 XLSX
+#   rows + 1 merged HTML line so the renderer code path stays identical.
+_CUSTOMER_SUMMARY_LAYOUT: list[tuple[str | None, str | None, Any]] = [
+    ("cohort",         "Cohort",        lambda m: m.cohort),
+    ("provider",       "Provider",      lambda m: m.provider),
+    ("disease",        "Disease",       lambda m: m.disease),
+    ("display_name",   "Display name",  lambda m: m.display_name),
+    ("schema_name",    "Schema",        lambda m: m.schema_name),
+    ("patient_count",  "Patient count", lambda m: m.summary.patient_count),
+    ("table_count",    "Table count",   lambda m: m.summary.table_count),
+    ("min_date",       None,            lambda m: m.summary.date_coverage.min_date),
+    ("max_date",       None,            lambda m: m.summary.date_coverage.max_date),
+    ("years_of_data",  None,            lambda m: m.summary.date_coverage.years_of_data),
+    (None,             "Date coverage",
+        lambda m: (
+            f"{m.summary.date_coverage.min_date} → {m.summary.date_coverage.max_date}"
+            f" ({m.summary.date_coverage.years_of_data} years)"
+            if m.summary.date_coverage.min_date else "—"
+        )),
+    ("generated_at",   "Generated at",  lambda m: m.generated_at),
+]
 
-def summary_xlsx_rows(model: Any) -> list[dict[str, Any]]:
-    """Materialize SUMMARY_LAYOUT entries that opt in to the XLSX sheet."""
+_SUMMARY_LAYOUT_BY_AUDIENCE: dict[str, list[tuple[str | None, str | None, Any]]] = {
+    "technical": _TECHNICAL_SUMMARY_LAYOUT,
+    "sales":     _TECHNICAL_SUMMARY_LAYOUT,
+    "pharma":    _TECHNICAL_SUMMARY_LAYOUT,
+    "customer":  _CUSTOMER_SUMMARY_LAYOUT,
+}
+
+
+def summary_layout(audience: str) -> list[tuple[str | None, str | None, Any]]:
+    return _SUMMARY_LAYOUT_BY_AUDIENCE.get(audience, _TECHNICAL_SUMMARY_LAYOUT)
+
+
+def summary_xlsx_rows(model: Any, audience: str = "technical") -> list[dict[str, Any]]:
+    """Materialize summary layout entries that opt in to the XLSX sheet."""
     return [
         {"metric": xl_label, "value": fn(model)}
-        for xl_label, _, fn in SUMMARY_LAYOUT if xl_label is not None
+        for xl_label, _, fn in summary_layout(audience) if xl_label is not None
     ]
 
 
-def summary_html_pairs(model: Any) -> list[tuple[str, Any]]:
-    """Materialize SUMMARY_LAYOUT entries that opt in to the HTML <dl>."""
+def summary_html_pairs(model: Any, audience: str = "technical") -> list[tuple[str, Any]]:
+    """Materialize summary layout entries that opt in to the HTML <dl>."""
     return [
         (html_label, fn(model))
-        for _, html_label, fn in SUMMARY_LAYOUT if html_label is not None
+        for _, html_label, fn in summary_layout(audience) if html_label is not None
     ]
 
 
-TABLES_LAYOUT: list[tuple[str, Any]] = [
+_TECHNICAL_TABLES_LAYOUT: list[tuple[str, Any]] = [
     ("Table",              lambda t: t.table_name),
     ("Category",           lambda t: t.category),
     ("Description",        lambda t: t.description or t.purpose),
@@ -1300,7 +1348,31 @@ TABLES_LAYOUT: list[tuple[str, Any]] = [
                                        if t.patient_count_in_table is not None else "—"),
 ]
 
-COLUMNS_LAYOUT: list[tuple[str, Any]] = [
+# Customer Tables drops Data Source / Source Table.
+_CUSTOMER_TABLES_LAYOUT: list[tuple[str, Any]] = [
+    ("Table",              lambda t: t.table_name),
+    ("Category",           lambda t: t.category),
+    ("Description",        lambda t: t.description or t.purpose),
+    ("Inclusion Criteria", lambda t: t.inclusion_criteria),
+    ("Rows",               lambda t: t.row_count),
+    ("Columns",            lambda t: t.column_count),
+    ("Patients",           lambda t: t.patient_count_in_table
+                                       if t.patient_count_in_table is not None else "—"),
+]
+
+_TABLES_LAYOUT_BY_AUDIENCE: dict[str, list[tuple[str, Any]]] = {
+    "technical": _TECHNICAL_TABLES_LAYOUT,
+    "sales":     _TECHNICAL_TABLES_LAYOUT,
+    "pharma":    _TECHNICAL_TABLES_LAYOUT,
+    "customer":  _CUSTOMER_TABLES_LAYOUT,
+}
+
+
+def tables_layout(audience: str) -> list[tuple[str, Any]]:
+    return _TABLES_LAYOUT_BY_AUDIENCE.get(audience, _TECHNICAL_TABLES_LAYOUT)
+
+
+_TECHNICAL_COLUMNS_LAYOUT: list[tuple[str, Any]] = [
     ("Category",      lambda c: c.category),
     ("Table(s)",      lambda c: c.table),
     ("Column",        lambda c: c.column),
@@ -1319,8 +1391,30 @@ COLUMNS_LAYOUT: list[tuple[str, Any]] = [
     ("Notes",         lambda c: c.notes),
 ]
 
+# Customer Columns is a clean schema-description tab — only the four
+# fields the reviewer named. Statistics live in Variables instead.
+_CUSTOMER_COLUMNS_LAYOUT: list[tuple[str, Any]] = [
+    ("Table(s)",    lambda c: c.table),
+    ("Column",      lambda c: c.column),
+    ("Description", lambda c: c.description),
+    ("Field Type",  lambda c: c.data_type),
+]
+
+_COLUMNS_LAYOUT_BY_AUDIENCE: dict[str, list[tuple[str, Any]]] = {
+    "technical": _TECHNICAL_COLUMNS_LAYOUT,
+    "sales":     _TECHNICAL_COLUMNS_LAYOUT,
+    "pharma":    _TECHNICAL_COLUMNS_LAYOUT,
+    "customer":  _CUSTOMER_COLUMNS_LAYOUT,
+}
+
+
+def columns_layout(audience: str) -> list[tuple[str, Any]]:
+    return _COLUMNS_LAYOUT_BY_AUDIENCE.get(audience, _TECHNICAL_COLUMNS_LAYOUT)
+
+
 # Variables layout is split into head / criteria / tail so the
-# technical-only `Criteria` column slots in at the right position.
+# Criteria column slots in at the right position. Customer keeps both
+# `Inclusion Criteria` (prose) and `Criteria` (configured matcher).
 _VARIABLES_LAYOUT_HEAD: list[tuple[str, Any]] = [
     ("Category",           lambda v: v.category),
     ("Variable",           lambda v: v.variable),
@@ -1332,7 +1426,7 @@ _VARIABLES_LAYOUT_HEAD: list[tuple[str, Any]] = [
 
 _VARIABLES_LAYOUT_CRITERIA: tuple[str, Any] = ("Criteria", lambda v: v.criteria)
 
-_VARIABLES_LAYOUT_TAIL: list[tuple[str, Any]] = [
+_TECHNICAL_VARIABLES_TAIL: list[tuple[str, Any]] = [
     ("Field Type",    lambda v: v.field_type),
     ("Example",       lambda v: v.example),
     ("Coding Schema", lambda v: v.coding_schema),
@@ -1346,17 +1440,37 @@ _VARIABLES_LAYOUT_TAIL: list[tuple[str, Any]] = [
     ("Notes",         lambda v: v.notes),
 ]
 
+# Customer Variables drops Coding Schema / Implemented / Data Source.
+# Completeness and % Patient stay separate here — PR-C will merge them
+# into a single `% Patients With Value` once the reviewer signs off.
+_CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
+    ("Field Type",   lambda v: v.field_type),
+    ("Example",      lambda v: v.example),
+    ("Values",       lambda v: v.values),
+    ("Distribution", lambda v: v.distribution),
+    ("Median (IQR)", lambda v: v.median_iqr),
+    ("Completeness", lambda v: _fmt_pct(v.completeness_pct)),
+    ("% Patient",    lambda v: _fmt_pct(v.patient_pct)),
+    ("Notes",        lambda v: v.notes),
+]
+
 
 def variables_layout(audience: str) -> list[tuple[str, Any]]:
     """Variables sheet layout for the given audience.
 
-    The raw SQL `Criteria` column renders only for the technical
-    audience; sales / pharma get the prose `Inclusion Criteria` only.
+    Audience rules:
+      - technical: head + Criteria + technical tail (SQL Criteria visible)
+      - customer:  head + Criteria + customer tail (both prose Inclusion
+                   Criteria and configured Criteria visible side by side)
+      - sales / pharma: head + technical tail (no raw SQL)
     """
     layout = list(_VARIABLES_LAYOUT_HEAD)
-    if audience == "technical":
+    if audience in ("technical", "customer"):
         layout.append(_VARIABLES_LAYOUT_CRITERIA)
-    layout.extend(_VARIABLES_LAYOUT_TAIL)
+    if audience == "customer":
+        layout.extend(_CUSTOMER_VARIABLES_TAIL)
+    else:
+        layout.extend(_TECHNICAL_VARIABLES_TAIL)
     return layout
 
 
@@ -1378,15 +1492,26 @@ def section_visible(audience: str, section: str) -> bool:
 def filter_for_audience(model: CohortModel, audience: str) -> CohortModel:
     if audience == "technical":
         return model
-    # Drop PII rows from BOTH columns and variables for sales + pharma.
-    # Variables resolver tags `pii: true` whenever (table, column) hits the
-    # PII pack, so the same predicate applies to both lists.
+    # Drop PII rows from BOTH columns and variables for sales / pharma /
+    # customer. Variables resolver tags `pii: true` whenever (table,
+    # column) hits the PII pack, so the same predicate applies to both.
     filtered_columns = [c for c in model.columns if not c.pii]
     filtered_variables = [v for v in model.variables if not v.pii]
+    filtered_tables = list(model.tables)
+
+    # Customer audience also strips internal/scaffolding tables. Affects
+    # all three lists so a hidden table doesn't leave dangling column or
+    # variable rows pointing at a table the reader can't see.
+    if audience == "customer":
+        excluded = _CUSTOMER_TABLE_EXCLUDES
+        filtered_tables   = [t for t in filtered_tables   if t.table_name not in excluded]
+        filtered_columns  = [c for c in filtered_columns  if c.table      not in excluded]
+        filtered_variables = [v for v in filtered_variables if v.table    not in excluded]
+
     visibility = AUDIENCE_VISIBILITY[audience]
     return dataclasses.replace(
         model,
-        tables=model.tables if visibility["tables"] else [],
+        tables=filtered_tables if visibility["tables"] else [],
         columns=filtered_columns if visibility["columns"] else [],
         variables=filtered_variables,
     )
@@ -1410,16 +1535,27 @@ def write_xlsx(model: CohortModel, out_path: Path,
     except ImportError as exc:
         raise SystemExit("pandas is not installed: pip install pandas openpyxl") from exc
 
-    summary_df = pd.DataFrame(summary_xlsx_rows(model), columns=["metric", "value"])
+    summary_df = pd.DataFrame(
+        summary_xlsx_rows(model, audience), columns=["metric", "value"]
+    )
 
-    tables_df = _df_from_layout(pd, TABLES_LAYOUT, model.tables)
-    columns_df = _df_from_layout(pd, COLUMNS_LAYOUT, model.columns)
+    tables_df = _df_from_layout(pd, tables_layout(audience), model.tables)
+    columns_df = _df_from_layout(pd, columns_layout(audience), model.columns)
     variables_df = _df_from_layout(
         pd, variables_layout(audience), model.variables
     )
 
+    # Customer audience hides the literal "metric" / "value" header row
+    # on Summary — the reviewer flagged those words as not customer-
+    # facing. Other audiences keep the header for backward compatibility
+    # with existing tests / consumers.
+    summary_with_header = audience != "customer"
+
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        summary_df.to_excel(writer,   sheet_name="Summary",   index=False)
+        summary_df.to_excel(
+            writer, sheet_name="Summary", index=False,
+            header=summary_with_header,
+        )
         if section_visible(audience, "tables"):
             tables_df.to_excel(writer, sheet_name="Tables", index=False)
         if section_visible(audience, "columns"):
@@ -1563,21 +1699,26 @@ def write_html(model: CohortModel, out_path: Path,
 
     summary_html = "".join(
         f"<dt>{esc(k)}</dt><dd>{esc(str(v))}</dd>"
-        for k, v in summary_html_pairs(model)
+        for k, v in summary_html_pairs(model, audience)
     )
 
-    tables_headers = [label for label, _ in TABLES_LAYOUT]
-    tables_rows = _rows_from_layout(TABLES_LAYOUT, model.tables)
+    t_layout = tables_layout(audience)
+    tables_headers = [label for label, _ in t_layout]
+    tables_rows = _rows_from_layout(t_layout, model.tables)
     # HTML formats `Rows` with a thousands separator; XLSX leaves it
     # numeric. Apply that one formatter difference here so the shared
-    # layout stays renderer-agnostic.
-    _rows_idx = tables_headers.index("Rows")
-    for row in tables_rows:
-        if isinstance(row[_rows_idx], int):
-            row[_rows_idx] = f"{row[_rows_idx]:,}"
+    # layout stays renderer-agnostic. Customer Tables also has a `Rows`
+    # column, so the lookup is unconditional (skipped if the layout
+    # ever drops it).
+    if "Rows" in tables_headers:
+        _rows_idx = tables_headers.index("Rows")
+        for row in tables_rows:
+            if isinstance(row[_rows_idx], int):
+                row[_rows_idx] = f"{row[_rows_idx]:,}"
 
-    columns_headers = [label for label, _ in COLUMNS_LAYOUT]
-    columns_rows = _rows_from_layout(COLUMNS_LAYOUT, model.columns)
+    c_layout = columns_layout(audience)
+    columns_headers = [label for label, _ in c_layout]
+    columns_rows = _rows_from_layout(c_layout, model.columns)
 
     var_layout = variables_layout(audience)
     var_headers = [label for label, _ in var_layout]
@@ -1715,7 +1856,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cohort", required=True,
                         help="cohort slug, e.g. mtc_aat / mtc_alzheimers")
     parser.add_argument("--audience",
-                        choices=("technical", "sales", "pharma"),
+                        choices=("technical", "sales", "pharma", "customer"),
                         default="technical")
     parser.add_argument("--formats", nargs="+",
                         choices=("xlsx", "html", "json"),
