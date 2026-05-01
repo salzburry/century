@@ -183,7 +183,7 @@ Four audiences, each with a different section-visibility rule
 | Audience | Summary | Tables | Columns | Variables |
 |---|---|---|---|---|
 | technical | ✓ | ✓ | ✓ | ✓ |
-| sales | ✓ (trimmed) | — | — | ✓ (Tempus-style) |
+| sales | ✓ (trimmed) | ✓ (trimmed) | — | ✓ (Tempus-style) |
 | pharma | ✓ | — | — | ✓ |
 | customer | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) |
 
@@ -495,7 +495,7 @@ Minimum sections by audience:
 | Audience | Summary | Tables | Columns | Variables |
 |---|---|---|---|---|
 | technical | ✓ | ✓ | ✓ | ✓ |
-| sales | ✓ (trimmed) | — | — | ✓ (Tempus-style) |
+| sales | ✓ (trimmed) | ✓ (trimmed) | — | ✓ (Tempus-style) |
 | pharma | ✓ | — | — | ✓ |
 | customer | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) |
 

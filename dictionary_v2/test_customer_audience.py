@@ -6,6 +6,7 @@ build_dictionary.py module (which doesn't know about customer).
 """
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import shutil
 import sys
@@ -67,12 +68,15 @@ def _make_column(table: str, column: str = "year_of_birth") -> "bd.ColumnRow":
     )
 
 
-def _make_variable(table: str, column: str = "year_of_birth") -> "bd.VariableRow":
+def _make_variable(
+    table: str, column: str = "year_of_birth",
+    implemented: str = "Yes", variable: str = "Age",
+) -> "bd.VariableRow":
     return bd.VariableRow(
-        category="Demographics", variable="Age", description="Patient age",
+        category="Demographics", variable=variable, description="Patient age",
         table=table, column=column, criteria="year_of_birth IS NOT NULL",
         values="", distribution="", median_iqr="",
-        completeness_pct=100.0, implemented="Yes", patient_pct=100.0,
+        completeness_pct=100.0, implemented=implemented, patient_pct=100.0,
         extraction_type="Direct", pii=False, notes="",
         inclusion_criteria="Patients with a birth year on file.",
         field_type="integer", example="44", coding_schema="",
@@ -205,33 +209,65 @@ class CustomerTableFilterTests(unittest.TestCase):
              "Notes", "Type", "Proposal", "Completeness"],
         )
 
-    def test_sales_value_set_renders_newline_separated(self):
-        # Multi-value `value_set` lists render one-per-line so xlsx
-        # cells display the same way the reference Google sheet does.
+    def test_sales_value_sets_renders_observed_top_values(self):
+        # Value Sets is the observed top-N labels from `v.values`,
+        # newline-separated. No curation field; the data is the
+        # source of truth.
         row = bd.VariableRow(
-            category="Demographics", variable="Education level",
-            description="The patient's highest level of education received.",
-            table="observation", column="value_as_concept_name",
-            criteria="", values="", distribution="", median_iqr="",
-            completeness_pct=100.0, implemented="Yes", patient_pct=100.0,
-            extraction_type="Abstracted", notes="Yes",
-            value_set=["Less than high school", "Bachelor's degree"],
-            proposal="Custom",
+            category="Medications", variable="Anti-amyloid Therapy",
+            description="Anti-amyloid mAb administrations.",
+            table="drug_exposure", column="drug_concept_name",
+            criteria="", values="Lecanemab, Lecanemab-irmb, Leqembi, Donanemab-azbt, Kisunla",
+            distribution="ignored for sales", median_iqr="",
+            completeness_pct=87.5, implemented="Yes", patient_pct=80.0,
+            extraction_type="Structured", notes="",
+            proposal="Standard",
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(
-            rendered["Value Sets"], "Less than high school\nBachelor's degree",
+            rendered["Value Sets"],
+            "Lecanemab\nLecanemab-irmb\nLeqembi\nDonanemab-azbt\nKisunla",
         )
-        self.assertEqual(rendered["Type"], "Abstracted")
-        self.assertEqual(rendered["Proposal"], "Custom")
-        self.assertEqual(rendered["Completeness"], "100.0%")
+        self.assertEqual(rendered["Type"], "Structured")
+        self.assertEqual(rendered["Proposal"], "Standard")
+        self.assertEqual(rendered["Completeness"], "87.5%")
 
-    def test_sales_visibility_is_variables_only(self):
+    def test_sales_value_sets_empty_when_no_observed_values(self):
+        # Free-text columns / dry-run rows have v.values = "".
+        # Cell renders empty rather than "—" — there's no curation
+        # path to fall back to.
+        row = bd.VariableRow(
+            category="Demographics", variable="Notes",
+            description="Free text.", table="observation",
+            column="note_text", criteria="",
+            values="", distribution="", median_iqr="",
+            completeness_pct=None, implemented="No", patient_pct=None,
+            extraction_type="Unstructured", notes="",
+            proposal="",
+        )
+        rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
+        self.assertEqual(rendered["Value Sets"], "")
+
+    def test_sales_visibility_ships_three_sheets(self):
+        # Summary + Tables + Variables. Columns is dropped — a
+        # sales partner reads Variables for clinical content; the
+        # physical-column schema map is mostly noise for that
+        # audience.
         vis = bd.AUDIENCE_VISIBILITY["sales"]
+        self.assertTrue(vis["summary"])
+        self.assertTrue(vis["tables"])
+        self.assertFalse(vis["columns"], msg="sales must not ship Columns")
         self.assertTrue(vis["variables"])
-        self.assertTrue(vis["summary"], msg="summary cover stays for context")
-        self.assertFalse(vis["tables"])
-        self.assertFalse(vis["columns"])
+
+    def test_sales_tables_uses_customer_trimmed_layout(self):
+        # Sales is stakeholder-facing → reuses the customer-trimmed
+        # Tables layout (no Data Source / Source Table).
+        headers = [label for label, _ in bd.tables_layout("sales")]
+        self.assertNotIn("Data Source", headers)
+        self.assertNotIn("Source Table", headers)
+        for kept in ("Table", "Description", "Inclusion Criteria",
+                     "Rows", "Columns", "Patients"):
+            self.assertIn(kept, headers)
 
     def test_sales_summary_uses_trimmed_layout(self):
         # Sales is stakeholder-facing — Summary must NOT carry
@@ -245,43 +281,205 @@ class CustomerTableFilterTests(unittest.TestCase):
                      "table_count", "generated_at"):
             self.assertIn(kept, xl_keys)
 
-    def test_value_set_normalizer_handles_scalar_and_list(self):
-        # YAML list — used as-is.
-        self.assertEqual(
-            bd._normalize_value_set(["Yes", "No", "Unknown"]),
-            ["Yes", "No", "Unknown"],
-        )
-        # Scalar string with commas — split, never iterated by char.
-        self.assertEqual(
-            bd._normalize_value_set("Yes, No, Unknown"),
-            ["Yes", "No", "Unknown"],
-        )
-        # Single scalar string — one-element list, NOT 8 chars.
-        self.assertEqual(
-            bd._normalize_value_set("Hispanic"),
-            ["Hispanic"],
-        )
-        # Empty / None → empty list.
-        self.assertEqual(bd._normalize_value_set(None), [])
-        self.assertEqual(bd._normalize_value_set(""), [])
-        self.assertEqual(bd._normalize_value_set([]), [])
-        # Skip empty strings inside a list.
-        self.assertEqual(
-            bd._normalize_value_set(["A", "", "B"]),
-            ["A", "B"],
-        )
-        # Junk type — empty list, no crash.
-        self.assertEqual(bd._normalize_value_set(42), [])
-
-    def test_sales_audience_hides_tables_sheet(self):
-        # The Tempus-style sales layout is a single Variables sheet.
-        # Tables visibility is now off, so the filter empties out
-        # `model.tables` rather than passing them through.
+    def test_sales_audience_strips_internal_scaffolding_tables(self):
+        # Sales now ships a Tables sheet — but with the same
+        # internal-table excludes the customer audience uses
+        # (cohort_patients / standard_profile_data_model / etc.).
         tables = [_make_table("person"), _make_table("cohort_patients")]
         model = _make_model(tables, [_make_column("person")], [_make_variable("person")])
         filtered = bd.filter_for_audience(model, "sales")
-        self.assertEqual(filtered.tables, [],
-                         msg="sales must not ship a Tables sheet")
+        names = {t.table_name for t in filtered.tables}
+        self.assertEqual(names, {"person"})
+
+
+class StakeholderCoverTests(unittest.TestCase):
+    """Sales / customer audiences ship a styled cover Summary sheet
+    (title block, description, hero stats, coverage rollup) — not the
+    bare key/value layout. The helpers must be cohort-agnostic and
+    degrade gracefully when fields are missing."""
+
+    def test_coverage_rollup_groups_and_alphabetises_categories(self):
+        rows = [
+            _make_variable("person", variable="Sex"),
+            _make_variable("person", variable="Race"),
+            _make_variable("drug_exposure", variable="Aspirin"),
+        ]
+        rows[0].category = "Demographics"
+        rows[0].completeness_pct = 100.0
+        rows[1].category = "Demographics"
+        rows[1].completeness_pct = 90.0
+        rows[2].category = "Medications"
+        rows[2].completeness_pct = 60.0
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=rows,
+        )
+        rollup = bd._coverage_rollup(model)
+        self.assertEqual([r["category"] for r in rollup],
+                         ["Demographics", "Medications"])
+        demo = rollup[0]
+        self.assertEqual(demo["total"], 2)
+        self.assertEqual(demo["implemented"], 2)
+        self.assertEqual(demo["implemented_pct"], 100.0)
+        self.assertAlmostEqual(demo["avg_completeness"], 95.0)
+
+    def test_coverage_rollup_skips_avg_when_no_implemented_rows(self):
+        v = _make_variable("person", variable="X", implemented="No")
+        v.category = "Outcomes"
+        v.completeness_pct = None
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v],
+        )
+        rollup = bd._coverage_rollup(model)
+        self.assertEqual(rollup[0]["implemented"], 0)
+        self.assertIsNone(rollup[0]["avg_completeness"])
+
+    def test_hero_stats_degrade_on_dry_run(self):
+        # Dry-run model: patient_count is None and no implemented rows.
+        v = _make_variable("person", variable="X", implemented="No")
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v],
+        )
+        model = dataclasses.replace(
+            model,
+            summary=dataclasses.replace(model.summary, patient_count=None),
+        )
+        h = bd._hero_stats(model)
+        self.assertIsNone(h["patients"])
+        self.assertEqual(h["variables_total"], 1)
+        self.assertEqual(h["variables_implemented"], 0)
+        self.assertEqual(h["variables_implemented_pct"], 0.0)
+
+    def test_cover_renders_title_description_hero_and_rollup(self):
+        # Drive the cover renderer end-to-end via write_xlsx and
+        # spot-check the rendered cells. Asserts the helper is
+        # genuinely cohort-agnostic (it only reads model fields).
+        import openpyxl
+        v_demo = _make_variable("person", variable="Sex")
+        v_demo.category = "Demographics"
+        v_demo.completeness_pct = 100.0
+        v_meds = _make_variable("drug_exposure", variable="Aspirin")
+        v_meds.category = "Medications"
+        v_meds.completeness_pct = 60.0
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v_demo, v_meds],
+        )
+        # Pretend live model so hero stats + filter behave as in prod.
+        model = dataclasses.replace(
+            model,
+            description="A sample cohort for testing.",
+            summary=dataclasses.replace(model.summary, patient_count=42),
+        )
+
+        path = _output_dir(self.id()) / "cover.xlsx"
+        bd.write_xlsx(model, path, audience="sales")
+        wb = openpyxl.load_workbook(path)
+        ws = wb["Summary"]
+        text = "\n".join(
+            str(ws.cell(row=r, column=c).value or "")
+            for r in range(1, ws.max_row + 1)
+            for c in range(1, ws.max_column + 1)
+        )
+        # Title block carries display_name + disease.
+        self.assertIn("dn", text)   # display_name from _make_model
+        # Description paragraph is rendered.
+        self.assertIn("A sample cohort for testing.", text)
+        # Hero stats labels.
+        self.assertIn("Patients", text)
+        self.assertIn("Years of follow-up", text)
+        self.assertIn("Variables", text)
+        self.assertIn("With data", text)
+        # Coverage rollup section + categories.
+        self.assertIn("Coverage by category", text)
+        self.assertIn("Demographics", text)
+        self.assertIn("Medications", text)
+
+
+class StakeholderImplementedFilterTests(unittest.TestCase):
+    """Variables that have no data in the cohort (`implemented="No"`)
+    must not appear in stakeholder-facing audiences (customer, sales).
+    They'd otherwise render as 0% rows that add noise to the partner
+    artifact. Internal audiences (technical, pharma) keep them so QA
+    can see gaps."""
+
+    def _live_model(self, *variables):
+        # `patient_count > 0` puts the model in "live" (non-dry-run)
+        # mode so the implemented filter actually fires.
+        m = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=list(variables),
+        )
+        return dataclasses.replace(
+            m,
+            summary=dataclasses.replace(m.summary, patient_count=10),
+        )
+
+    def test_customer_drops_unimplemented_variables(self):
+        live = self._live_model(
+            _make_variable("person", variable="Has Data", implemented="Yes"),
+            _make_variable("person", variable="No Data Yet", implemented="No"),
+        )
+        filtered = bd.filter_for_audience(live, "customer")
+        names = [v.variable for v in filtered.variables]
+        self.assertEqual(names, ["Has Data"])
+
+    def test_sales_drops_unimplemented_variables(self):
+        live = self._live_model(
+            _make_variable("person", variable="Has Data", implemented="Yes"),
+            _make_variable("person", variable="No Data Yet", implemented="No"),
+        )
+        filtered = bd.filter_for_audience(live, "sales")
+        names = [v.variable for v in filtered.variables]
+        self.assertEqual(names, ["Has Data"])
+
+    def test_technical_keeps_unimplemented_variables(self):
+        live = self._live_model(
+            _make_variable("person", variable="Has Data", implemented="Yes"),
+            _make_variable("person", variable="No Data Yet", implemented="No"),
+        )
+        # Technical audience returns the model verbatim — no filter.
+        filtered = bd.filter_for_audience(live, "technical")
+        names = [v.variable for v in filtered.variables]
+        self.assertEqual(names, ["Has Data", "No Data Yet"])
+
+    def test_pharma_keeps_unimplemented_variables(self):
+        live = self._live_model(
+            _make_variable("person", variable="Has Data", implemented="Yes"),
+            _make_variable("person", variable="No Data Yet", implemented="No"),
+        )
+        filtered = bd.filter_for_audience(live, "pharma")
+        names = [v.variable for v in filtered.variables]
+        self.assertEqual(set(names), {"Has Data", "No Data Yet"})
+
+    def test_dry_run_skips_implemented_filter_for_customer(self):
+        # Dry-run model carries patient_count=None; every row is
+        # implemented="No" because no DB was open. The filter must
+        # NOT fire here or the offline preview becomes empty.
+        m = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[
+                _make_variable("person", variable="A", implemented="No"),
+                _make_variable("person", variable="B", implemented="No"),
+            ],
+        )
+        dry = dataclasses.replace(
+            m, summary=dataclasses.replace(m.summary, patient_count=None),
+        )
+        filtered = bd.filter_for_audience(dry, "customer")
+        self.assertEqual(
+            len(filtered.variables), 2,
+            msg="dry-run preview must keep all rows; the implemented "
+                "filter relies on live DB counts",
+        )
 
 
 class _CustomerSmokeBase(unittest.TestCase):
@@ -305,16 +503,27 @@ class CustomerXlsxSmokeTests(_CustomerSmokeBase):
             self.skipTest("openpyxl / pandas not installed")
         super().setUp()
 
-    def test_summary_has_no_metric_value_header(self):
+    def test_summary_renders_stakeholder_cover_for_customer(self):
+        # Customer Summary is a styled cover — title block + hero
+        # stats + coverage rollup — not a `metric / value` list.
+        # Row 1 is the merged title cell starting with the cohort's
+        # display_name (or "Cohort" fallback for the synthetic test
+        # model whose display_name is "dn"). Either way it must NOT
+        # be the literal labels "metric / value" and NOT be the
+        # first key/value pair from the old layout.
         import openpyxl
         path = _output_dir(self.id()) / "out.xlsx"
         bd.write_xlsx(self.filtered, path, audience="customer")
         wb = openpyxl.load_workbook(path)
         ws = wb["Summary"]
-        # Row 1 must be the first data row, not the literal labels.
-        row1 = [c.value for c in ws[1]]
-        self.assertEqual(row1, ["cohort", "c"])
-        self.assertNotEqual(row1, ["metric", "value"])
+        title = ws.cell(row=1, column=1).value
+        self.assertNotEqual([title, ws.cell(row=1, column=2).value],
+                            ["metric", "value"])
+        self.assertNotEqual([title, ws.cell(row=1, column=2).value],
+                            ["cohort", "c"])
+        self.assertIsInstance(title, str)
+        self.assertIn("cohort", title.lower(),
+                      msg=f"title row should announce the cohort, got {title!r}")
 
     def test_columns_sheet_has_exactly_four_headers(self):
         import openpyxl
@@ -1512,6 +1721,98 @@ class DiscoveryApplyTests(unittest.TestCase):
         )
 
 
+class CohortModelSortingTests(unittest.TestCase):
+    """build_model must sort tables/columns/variables a-z by
+    (category, name) so reviewers always see a stable, alphabetical
+    layout — independent of how the YAML packs are authored.
+    """
+
+    def setUp(self):
+        # Stage a deliberately mis-ordered variables pack: categories
+        # are clinically grouped (Vitals before Demographics) and
+        # variables within each category are not yet alphabetical.
+        slug = "_sort_test_pack"
+        path = bd.PACKS_DIR / "variables" / f"{slug}.yaml"
+        path.write_text(
+            "variables:\n"
+            "  - category: Vitals\n"
+            "    variable: Heart Rate\n"
+            "    table: measurement\n"
+            "    column: value_as_number\n"
+            "  - category: Vitals\n"
+            "    variable: Blood Pressure\n"
+            "    table: measurement\n"
+            "    column: value_as_number\n"
+            "  - category: Demographics\n"
+            "    variable: Sex\n"
+            "    table: person\n"
+            "    column: gender_concept_name\n"
+            "  - category: Demographics\n"
+            "    variable: Age\n"
+            "    table: person\n"
+            "    column: year_of_birth\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        # Wire up a synthetic cohort pack pointing at it.
+        cohort_path = bd.PACKS_DIR / "cohorts" / "_sort_test_cohort.yaml"
+        cohort_path.write_text(
+            "provider: TEST\n"
+            "disease: TEST\n"
+            "schema_name: _sort_test_schema\n"
+            "cohort_name: _sort_test_cohort\n"
+            "display_name: Sort Test\n"
+            "variables_pack: _sort_test_pack\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+    def test_variables_sorted_by_category_then_variable(self):
+        model = bd.build_model("_sort_test_cohort", conn=None, dry_run=True)
+        names = [(v.category, v.variable) for v in model.variables]
+        self.assertEqual(
+            names,
+            [("Demographics", "Age"),
+             ("Demographics", "Sex"),
+             ("Vitals", "Blood Pressure"),
+             ("Vitals", "Heart Rate")],
+        )
+
+    def test_sort_is_case_insensitive(self):
+        # A row authored with lowercase category must still cluster
+        # under the same group as the proper-cased category, not
+        # split off into its own bucket.
+        path = bd.PACKS_DIR / "variables" / "_sort_test_case.yaml"
+        path.write_text(
+            "variables:\n"
+            "  - category: demographics\n"
+            "    variable: Apple\n"
+            "    table: t\n"
+            "    column: c\n"
+            "  - category: Demographics\n"
+            "    variable: Banana\n"
+            "    table: t\n"
+            "    column: c\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        cohort = bd.PACKS_DIR / "cohorts" / "_sort_test_case_cohort.yaml"
+        cohort.write_text(
+            "provider: TEST\ndisease: TEST\nschema_name: x\n"
+            "cohort_name: _sort_test_case_cohort\n"
+            "display_name: x\nvariables_pack: _sort_test_case\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort.unlink(missing_ok=True))
+
+        model = bd.build_model("_sort_test_case_cohort", conn=None, dry_run=True)
+        cats = [v.category for v in model.variables]
+        self.assertEqual(cats, ["demographics", "Demographics"],
+                         msg="rows should cluster despite case mismatch")
+
+
 class VariablePackOverrideTests(unittest.TestCase):
     """A cohort pack's local row must replace any inherited row with
     the same (category, variable) key. Without this, --auto-stub's
@@ -1723,43 +2024,6 @@ class VariablePackOverrideTests(unittest.TestCase):
             msg="validator must collapse overrides too",
         )
         self.assertIn("match", aspirin_rows[0])
-
-    def test_validator_flags_value_set_scalar_as_error(self):
-        # Pack a value_set as a scalar string — validator must flag
-        # it as an error, since the renderer would otherwise iterate
-        # the string char-by-char in the Value Sets cell.
-        scalar_path = bd.PACKS_DIR / "variables" / "_validator_value_set_scalar.yaml"
-        scalar_path.write_text(
-            "variables:\n"
-            "  - category: Demographics\n"
-            "    variable: ScalarValueSetTest\n"
-            "    table: person\n"
-            "    column: gender_concept_name\n"
-            "    value_set: 'Yes, No, Unknown'\n",
-            encoding="utf-8",
-        )
-        self.addCleanup(lambda: scalar_path.unlink(missing_ok=True))
-
-        import importlib.util
-        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
-        spec = importlib.util.spec_from_file_location(
-            "validate_packs_value_set_test", vp_path,
-        )
-        vp = importlib.util.module_from_spec(spec)
-        sys.modules["validate_packs_value_set_test"] = vp
-        spec.loader.exec_module(vp)
-
-        rows = vp._resolve_variables("_validator_value_set_scalar", findings=[])
-        # Walk the row through the validator's checker.
-        msgs = []
-        for v in rows:
-            vs = v.get("value_set")
-            if vs is not None and not isinstance(vs, (list, tuple)):
-                msgs.append(str(type(vs).__name__))
-        self.assertEqual(
-            msgs, ["str"],
-            msg="validator should detect scalar value_set as a non-list type",
-        )
 
     def test_validator_flags_unknown_proposal_value(self):
         # Anything other than Standard / Custom (when proposal is set)

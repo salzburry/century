@@ -170,7 +170,7 @@ nimbus_copd, rmn_alzheimers, rvc_amd_curated, rvc_dr_curated.
 | `--audience` | Sheets | Notes |
 |---|---|---|
 | `technical` (default) | Summary + Tables + Columns + Variables | Full debug fields, raw SQL Criteria, PII visible. Writes xlsx + html + json. |
-| `sales` | Summary (trimmed) + Variables (Tempus-style: Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness) | PII dropped. JSON suppressed. Stakeholder spec. |
+| `sales` | Summary + Tables + Variables (no Columns sheet). Summary and Tables use the customer-trimmed layouts; Variables uses the Tempus-style spec (Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness). | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 | `pharma` | Summary + Variables | PII dropped. JSON kept. |
 | `customer` | Summary, Tables, Columns, Variables (all trimmed) | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 
@@ -259,8 +259,8 @@ The default flow keeps shared packs untouched. Promotion is a deliberate follow-
 python scripts/validate_packs.py --strict
 ```
 Lints every cohort's pack chain (cohort → variables_pack → includes)
-for missing fields, dangling refs, malformed `match:` / `value_set:`
-blocks, unknown `proposal:` values, etc. Exits non-zero on errors.
+for missing fields, dangling refs, malformed `match:` blocks,
+unknown `proposal:` values, etc. Exits non-zero on errors.
 
 ---
 
@@ -300,10 +300,14 @@ Output/
 └── mtc__aat_cohort_dictionary_sales.html      ← same content, browsable
 ```
 
-Sheets in the xlsx:
+Sheets in the xlsx (three; Columns is intentionally not produced
+for sales — a partner reads Variables for clinical content, and an
+engineer who needs the column-level schema map can pull the
+technical-audience output instead):
+
 - **Summary** — cohort cover (provider, disease, patient count, date coverage).
-- **Variables** — Tempus-style spec with these columns:
-  `Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness`
+- **Tables** — customer-trimmed: `Table | Category | Description | Inclusion Criteria | Rows | Columns | Patients`. Internal scaffolding tables (`cohort_patients`, `standard_profile_data_model`, etc.) are filtered out via `packs/dictionary_layout.yaml`.
+- **Variables** — Tempus-style spec: `Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness`. Variables that have no data in the cohort (`Implemented = No`) are dropped automatically.
 
 JSON is intentionally not produced for the sales audience — the partner
 bundle never carries the internal `CohortModel` dump.
@@ -357,9 +361,10 @@ exactly:
 Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness
 ```
 
-`Value Sets` and `Proposal` cells will be empty — those come from
-curated YAML fields (see Step 3 below). The dry-run skips
-DB-derived columns, so `Completeness` is `—`.
+`Value Sets` and `Completeness` are empty / `—` in dry-run because
+both are DB-derived. At runtime, `Value Sets` shows the cohort's
+observed top-N values for the variable's column, newline-separated.
+`Proposal` is YAML-only (see Step 3 below).
 
 ---
 
@@ -371,16 +376,21 @@ python dictionary_v2/build_dictionary.py \
     --audience sales
 ```
 
-`Completeness` is now populated from live cohort counts. Hand off
-the xlsx + html as the sales artifact.
+`Completeness` is now populated from live cohort counts. Variables
+the cohort doesn't actually carry data for (`Implemented = No`)
+are dropped automatically from the sales / customer artifacts —
+they'd otherwise render as 0% rows and add noise. Internal
+audiences (`technical`, `pharma`) keep them so QA can see gaps.
+
+Hand off the xlsx + html as the sales artifact.
 
 ---
 
-## Step 3 (optional) — populate `Value Sets` and `Proposal`
+## Step 3 (optional) — set `Proposal` per variable
 
-Both columns are authored in the cohort's variables YAML
-(`packs/variables/mtc_aat.yaml`) under each `variable:` row.
-Edit the file directly; the next `--audience sales` run picks them up.
+`Proposal` is the only column on the sales sheet authored from
+YAML. Set it on each variable in the cohort's pack
+(`packs/variables/mtc_aat.yaml`):
 
 ```yaml
 - category: Demographics
@@ -388,28 +398,16 @@ Edit the file directly; the next `--audience sales` run picks them up.
   description: The patient's highest level of education received.
   table: observation
   column: value_as_concept_name
-  value_set:                              # ← curated clinical reference values
-    - Less than high school
-    - High school diploma or equivalent
-    - Some college, no degree
-    - Associate degree
-    - Bachelor's degree
-    - Master's degree
-    - Doctoral or professional degree
   proposal: Custom                        # ← Standard | Custom
 ```
 
-The `value_set:` cell renders newline-separated in the workbook
-(matches the reference Google sheet). `proposal:` must be exactly
-`Standard` or `Custom` when set; the validator rejects anything
-else.
+Must be exactly `Standard` or `Custom` when set; the validator
+rejects anything else.
 
-If you accidentally write a scalar instead of a list:
-```yaml
-value_set: "Yes, No, Unknown"             # ← scalar; auto-split by builder
-```
-the renderer normalizes it to a 3-item list, but the validator
-will still flag it as an error so you fix the YAML.
+`Value Sets` is data-driven and not configurable — the cell
+always reflects what the cohort actually contains. A data
+dictionary that claims a value the cohort doesn't carry is wrong
+by definition.
 
 After editing:
 ```bash
