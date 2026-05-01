@@ -41,7 +41,6 @@ mkdir -p "$BUNDLE_DIR"
 FILES=(
   introspect_cohort.py
   requirements.txt
-  README.md
 )
 DIRS=(
   dictionary_v2
@@ -85,29 +84,54 @@ done
 # Drop the old, separate zips inside the bundle if any leaked in.
 rm -f "$BUNDLE_DIR"/*.zip
 
-# Bundle README so a stranger unzipping it knows what to do.
-cat > "$BUNDLE_DIR/BUNDLE_README.md" <<'EOF'
+# In-zip README — code-focused. No mention of the project's
+# reference PDFs or backlog docs; this is the runtime artifact.
+cat > "$BUNDLE_DIR/README.md" <<'README_EOF'
 # Century data dictionary — runtime bundle
 
-Single zip containing the v2 build path **and** the offline
-exact-match discovery tooling. Everything you need to generate a
-customer-facing data dictionary for any registered cohort.
+Single zip containing the v2 build path and the offline exact-match
+discovery tooling. Generates a customer- or sales-facing data
+dictionary for any registered cohort.
+
+For a worked end-to-end example (mtc_aat → sales spec), see
+[`run.md`](./run.md).
 
 ---
 
-## 1. One-time setup
+## 1. Folder layout
+
+```
+century-dictionary/
+├── README.md                            ← you are here
+├── run.md                               ← worked example: mtc_aat / sales
+├── requirements.txt
+├── introspect_cohort.py                 ← Postgres schema walker
+├── dictionary_v2/
+│   ├── build_dictionary.py              ← main build (audiences)
+│   └── discover_exact_matches.py        ← discovery + --apply / --auto-stub
+├── scripts/
+│   └── validate_packs.py                ← pack lint (no DB needed)
+└── packs/                               ← cohort + variable + descriptor packs
+    ├── categories.yaml                  ← table → Category map
+    ├── column_descriptions.yaml         ← OMOP column semantics
+    ├── pii.yaml                         ← PII allowlist + regex
+    ├── table_descriptions.yaml          ← table → purpose blurb
+    ├── dictionary_layout.yaml           ← per-audience layout overrides
+    ├── STYLE.md                         ← prose-quality bar for customer copy
+    ├── cohorts/                         ← per-cohort descriptors (13 cohorts)
+    └── variables/                       ← shared <disease>_common + per-cohort
+```
+
+---
+
+## 2. One-time setup
 
 ```bash
-# 1. Unzip wherever you want to run from.
 unzip century-dictionary.zip
 cd century-dictionary
-
-# 2. Install Python deps.
 pip install -r requirements.txt
 
-# 3. Configure DB credentials.
-#    Create a .env file with the warehouse connection (or export the
-#    same vars in your shell):
+# Warehouse credentials — fill these in:
 cat > .env <<'ENV'
 PGHOST=warehouse.example.com
 PGPORT=5432
@@ -122,50 +146,44 @@ ENV
 - `pandas`, `openpyxl` — XLSX writer.
 - `pyyaml` — pack parsing.
 - `psycopg[binary]` — Postgres driver (live runs only; `--dry-run`
-  skips it).
+  skips the DB connection).
 - `ruamel.yaml` — round-trips packs without destroying comments.
-  Only required when running `discover_exact_matches.py --apply`.
+  Required only when running `discover_exact_matches.py --apply`.
 
 ---
 
-## 2. Build a dictionary (the main thing)
+## 3. Build a dictionary
 
 ```bash
 python dictionary_v2/build_dictionary.py \
     --cohort <cohort_slug> \
-    --audience customer
+    --audience <audience>
 ```
 
-Output lands in `Output/<schema>_dictionary_<audience>.{xlsx,html}`.
-
-### Cohort slugs available
+### Cohort slugs
 balboa_ckd, drg_ckd, mtc_aat, mtc_alzheimers, newtown_ibd,
 newtown_mash, nimbus_asthma, nimbus_az_asthma, nimbus_az_copd,
-nimbus_copd, rmn_alzheimers, rvc_amd_curated, rvc_dr_curated
+nimbus_copd, rmn_alzheimers, rvc_amd_curated, rvc_dr_curated.
 
-### Audience choices
-| `--audience` | What ships | When to use |
+### Audiences
+
+| `--audience` | Sheets | Notes |
 |---|---|---|
-| `technical` (default) | Full Summary + Tables + Columns + Variables, all debug fields, raw SQL Criteria, PII visible. | Internal review. |
-| `sales` | Tempus-style spec: Summary cover + single Variables sheet (`Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness`). Tables + Columns sheets dropped. PII rows dropped. `Value Sets` and `Proposal` come from curated YAML fields (`value_set:`, `proposal:`). | Sales / pharma-partner spec. |
-| `pharma` | Only Summary + Variables; Tables & Columns hidden; PII dropped. | Pharma partner outputs. |
-| `customer` | All four sheets but trimmed (drops debug fields like git_sha / variant / column_count, drops internal scaffolding tables, drops PII rows). Keeps the configured `Criteria` column side-by-side with `Inclusion Criteria` per reviewer feedback. JSON not produced. | Customer-facing dictionary — what the reviewer signs off on. |
+| `technical` (default) | Summary + Tables + Columns + Variables | Full debug fields, raw SQL Criteria, PII visible. Writes xlsx + html + json. |
+| `sales` | Summary (trimmed) + Variables (Tempus-style: Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness) | PII dropped. JSON suppressed. Stakeholder spec. |
+| `pharma` | Summary + Variables | PII dropped. JSON kept. |
+| `customer` | Summary, Tables, Columns, Variables (all trimmed) | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 
 ### Other build flags
 ```bash
-# Pick which formats get written (default = all three).
---formats xlsx html json
-
-# Custom output directory.
---out-dir /path/to/somewhere
-
-# Skip DB; emit pack-only skeleton (sanity-check the packs offline).
---dry-run
+--formats xlsx html json   # pick formats (default = all three)
+--out-dir /path/to/dir
+--dry-run                  # skip DB; pack-only smoke test
 ```
 
 ---
 
-## 3. Exact-match discovery (optional, for tightening Criteria)
+## 4. Exact-match discovery (optional, for tightening Criteria)
 
 The dictionary ships best when each variable's Criteria is a strict
 `column IN ('val1', 'val2', ...)` list instead of a fuzzy `ILIKE`
@@ -174,195 +192,64 @@ warehouse holds for each variable and proposes a `match:` block.
 
 ### Read-only report
 ```bash
-python dictionary_v2/discover_exact_matches.py \
-    --cohort <cohort_slug>
+python dictionary_v2/discover_exact_matches.py --cohort <slug>
+# → Output/discovery/<slug>/report.md
 ```
-Writes `Output/discovery/<cohort>/report.md` listing per variable:
-- configured & observed (exact matches that show up in the data)
-- missing from config (observed but not yet curated)
-- stale in config (curated but never observed)
 
 ### Read-only report + suggestions YAML
 ```bash
-python dictionary_v2/discover_exact_matches.py \
-    --cohort <cohort_slug> \
+python dictionary_v2/discover_exact_matches.py --cohort <slug> \
     --write-suggestions
+# → Output/discovery/<slug>/{report.md, suggested.yaml}
 ```
-Adds `Output/discovery/<cohort>/suggested.yaml` with a proposed
-`match:` block per variable, annotated with the source pack.
 
-### Write match: blocks back into packs (interactive, per-variable)
+### Apply match blocks back into packs (interactive, per-variable)
 ```bash
-# Safer: writes ONLY into packs/variables/<cohort_slug>.yaml.
-# Variables that live solely in a shared pack are skipped (use
-# --auto-stub below to copy them over automatically).
-python dictionary_v2/discover_exact_matches.py \
-    --cohort <cohort_slug> \
+# Safer: writes ONLY into packs/variables/<slug>.yaml.
+# Inherited rows are skipped unless --auto-stub is passed.
+python dictionary_v2/discover_exact_matches.py --cohort <slug> \
     --apply --target cohort
 
-# --auto-stub: when --target cohort hits a variable that isn't
-# in the cohort pack yet, copy its full base definition (table,
-# column, criteria, description, ...) from the source pack into
-# the cohort pack first, then attach the match: block. Shared
-# packs are NEVER modified. Each stubbed row gets a leading
-# YAML comment recording the source pack.
-python dictionary_v2/discover_exact_matches.py \
-    --cohort <cohort_slug> \
+# --auto-stub: when --target cohort hits a variable that isn't in
+# the cohort pack yet, copy its full base definition from the
+# source pack into the cohort pack first, then attach the match
+# block. Shared packs are NEVER modified.
+python dictionary_v2/discover_exact_matches.py --cohort <slug> \
     --apply --target cohort --auto-stub
 
 # Touches each variable's source pack — including shared
-# <disease>_common.yaml files. Use only when the values are
+# <disease>_common.yaml files. Only use when the values are
 # clinically appropriate for every cohort that includes the source.
-# (--auto-stub is rejected here; auto-stub is cohort-only.)
-python dictionary_v2/discover_exact_matches.py \
-    --cohort <cohort_slug> \
+python dictionary_v2/discover_exact_matches.py --cohort <slug> \
     --apply --target shared
 ```
 
-### Per-variable prompts
-Interactive `--apply` walks each candidate one at a time and shows a
-structured block so you can see source / target / action / reason
-before approving:
-
+Interactive `--apply` prompts per variable:
 ```
   Variable: Diagnosis / Alzheimer's
   Source:   packs/variables/adrd_common.yaml
   Target:   packs/variables/mtc_alzheimers.yaml
   Action:   ADD cohort override
-  Values:   12 ("Alzheimer disease, late onset", "Mild cognitive impairment of uncertain etiology", …)
+  Values:   12 ("Alzheimer disease, late onset", …)
   Reason:   row is inherited from shared pack; discovered values came from one cohort only
   Proceed?  [y]es / [n]o / [a]ll-remaining / [q]uit:
 ```
 
-- **UPDATE variable** — row already exists in the target pack; only its `match:` block changes.
-- **ADD cohort override** — row is inherited from a shared pack and `--auto-stub` is copying it into the cohort pack as a per-cohort override.
-- `all` accepts every remaining row without further prompts.
-- `quit` aborts the whole run; no files are written (changes are kept in memory until the loop completes).
+- **UPDATE variable** — row already in target pack; only the `match:` block changes.
+- **ADD cohort override** — `--auto-stub` is copying a shared row into the cohort pack.
+- `all` accepts every remaining row; `quit` aborts (no files written).
 
-Add `--apply-yes` to skip the prompts entirely (for scripted runs).
+Add `--apply-yes` to skip prompts entirely (scripted runs).
 
-### Where should match values live? (pack-tier guidance)
+### Where should match values live?
+
 | Pack | Scope | When to put values here |
 |---|---|---|
-| `<cohort>.yaml` (e.g. `mtc_alzheimers.yaml`) | One cohort only | **Default** for newly-discovered values from a single cohort. `--target cohort --auto-stub` writes here. |
-| `<disease>_common.yaml` (e.g. `alzheimers_common.yaml`) | All cohorts of one disease | Promote here only after confirming the values are valid across every cohort that includes this pack (e.g. MTC Alzheimer's *and* RMN Alzheimer's). |
-| `<umbrella>_common.yaml` (e.g. `adrd_common.yaml`) | A whole disease family | Promote here only after confirming values are valid across the umbrella (e.g. all ADRD cohorts including MTC AAT, MTC Alzheimer's, RMN Alzheimer's). |
+| `<cohort>.yaml` (e.g. `mtc_aat.yaml`) | One cohort only | **Default** for newly-discovered values. `--target cohort --auto-stub` writes here. |
+| `<disease>_common.yaml` (e.g. `aat_common.yaml`) | All cohorts of one disease | Promote here only after confirming values are valid across every cohort that includes the pack. |
+| Umbrella `<x>_common.yaml` (e.g. `adrd_common.yaml`) | A whole disease family | Promote here only after confirming values are valid across the umbrella. |
 
-The default discovery flow (`--target cohort --auto-stub`) keeps
-shared packs untouched. Promotion to a shared pack is a deliberate
-follow-up step (currently a manual edit; `--target shared` exists
-for the rare case where you've already validated that the values
-are universally appropriate).
-
-### Other discovery flags
-```bash
-# Restrict to a single variable (case-insensitive name match).
---variable "Aspirin"
-
-# Offline preview (no DB) — same skip reasons live discovery would emit.
---dry-run
-
-# Custom output directory.
---out-dir /path/to/somewhere
-```
-
----
-
-## 4. End-to-end workflow — worked example: `mtc_aat`
-
-`mtc_aat` is the MTC cohort of patients on anti-amyloid therapies
-(Leqembi / Kisunla / Aduhelm). Its variables pack inherits everything
-from the shared `aat_common` → `adrd_common` chain, so on a fresh
-clone every variable lives in a shared pack — a perfect case for
-`--auto-stub`.
-
-### A. Quickest path (no discovery, just build)
-
-```bash
-# Sanity-check: dry-run uses no DB and proves the packs load.
-python dictionary_v2/build_dictionary.py --cohort mtc_aat --dry-run
-
-# Real build against the warehouse — writes
-# Output/mtc__aat_cohort_dictionary_customer.{xlsx,html}.
-python dictionary_v2/build_dictionary.py \
-    --cohort mtc_aat \
-    --audience customer
-```
-
-That's it for the basic case. Skip to step C if the existing
-`criteria: ILIKE '%...%'` matchers are good enough for this round.
-
-### B. Tighten Criteria with discovery (one-time per cohort)
-
-If you want the dictionary's `Criteria` cells to be exact
-`column IN ('Lecanemab', 'Lecanemab-irmb', ...)` lists drawn
-from the cohort's actual data instead of fuzzy ILIKE:
-
-```bash
-# B1. Read-only report — what the cohort actually contains for
-#     every variable's existing broad criteria. Writes
-#     Output/discovery/mtc_aat/report.md.
-python dictionary_v2/discover_exact_matches.py --cohort mtc_aat
-
-# B2. Same plus a YAML proposal file you can copy from manually.
-python dictionary_v2/discover_exact_matches.py \
-    --cohort mtc_aat \
-    --write-suggestions
-
-# B3. Apply observed values directly into packs/variables/mtc_aat.yaml,
-#     auto-stubbing each shared row into the cohort pack first.
-#     Walks one variable at a time with [UPDATE]/[ADD cohort override]
-#     prompts; answer y / n / all / quit.
-python dictionary_v2/discover_exact_matches.py \
-    --cohort mtc_aat \
-    --apply --target cohort --auto-stub
-
-# B4. (Scripted CI runs) skip the prompt entirely.
-python dictionary_v2/discover_exact_matches.py \
-    --cohort mtc_aat \
-    --apply-yes --target cohort --auto-stub
-```
-
-After step B3/B4, `git diff packs/variables/mtc_aat.yaml` shows
-exactly what was stubbed in. Each new row carries a leading
-`# Auto-stubbed from packs/variables/aat_common.yaml ...` comment.
-
-### C. Build the customer-facing dictionary
-
-```bash
-python dictionary_v2/build_dictionary.py \
-    --cohort mtc_aat \
-    --audience customer
-```
-
-Output:
-```
-Output/mtc__aat_cohort_dictionary_customer.xlsx
-Output/mtc__aat_cohort_dictionary_customer.html
-```
-
-(JSON is not produced for the `customer` audience by design.)
-
-### D. Hand-off
-The `.xlsx` is what the reviewer signs off on. The `.html` is the
-same content in a single-page browsable form.
-
-### Other audiences for the same cohort
-```bash
-# Internal (debug fields, raw SQL Criteria, PII visible). Writes
-# xlsx + html + json (json is the full debug CohortModel dump).
-python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience technical
-
-# Sales — Tempus-style stakeholder spec. Writes xlsx + html only;
-# json is suppressed so the partner bundle never carries the
-# internal CohortModel dump. Sheets shipped: Summary cover (trimmed)
-# + Variables (Category, Variable, Description, Value Sets, Notes,
-# Type, Proposal, Completeness). Tables + Columns sheets dropped.
-python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales
-
-# Pharma — Summary + Variables only, drops PII. xlsx + html + json.
-python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience pharma
-```
+The default flow keeps shared packs untouched. Promotion is a deliberate follow-up.
 
 ---
 
@@ -372,71 +259,242 @@ python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience pharma
 python scripts/validate_packs.py --strict
 ```
 Lints every cohort's pack chain (cohort → variables_pack → includes)
-for missing fields, dangling table refs, etc. Exits non-zero on
-errors. Safe to wire into CI.
+for missing fields, dangling refs, malformed `match:` / `value_set:`
+blocks, unknown `proposal:` values, etc. Exits non-zero on errors.
 
 ---
 
-## 6. What's in this bundle
-
-```
-century-dictionary/
-├── BUNDLE_README.md                    ← you are here
-├── README.md                           ← full project guide (architecture, audiences)
-├── requirements.txt
-├── introspect_cohort.py                ← Postgres schema walker
-├── dictionary_v2/
-│   ├── build_dictionary.py             ← main build (audiences, customer)
-│   └── discover_exact_matches.py       ← discovery + --apply / --auto-stub
-├── scripts/
-│   └── validate_packs.py               ← pack lint (no DB needed)
-└── packs/                              ← cohort + variable + descriptor packs
-    ├── categories.yaml
-    ├── column_descriptions.yaml
-    ├── pii.yaml
-    ├── table_descriptions.yaml
-    ├── dictionary_layout.yaml          ← per-audience layout overrides
-    ├── STYLE.md
-    ├── cohorts/                        ← per-cohort descriptors (13 cohorts)
-    └── variables/                      ← shared <disease>_common + per-cohort
-```
-
-Excluded from the runtime bundle (live in the source repo):
-- `tests/` and `dictionary_v2/test_*.py` — run from a source checkout.
-- The legacy root `build_dictionary.py` — superseded by the v2 module.
-- `scripts/dump_new_schemas.py` — only used to onboard new cohorts.
-- `scripts/build_runtime_bundle.sh` — only used to rebuild this zip.
-
----
-
-## 7. Troubleshooting
+## 6. Troubleshooting
 
 - **`ModuleNotFoundError: psycopg`** — install deps:
-  `pip install -r requirements.txt`. Or use `--dry-run` if you
-  just want to validate the packs.
-- **`--apply` says "ruamel.yaml is not installed"** — install it:
+  `pip install -r requirements.txt`. Or use `--dry-run` to skip DB.
+- **`--apply` says "ruamel.yaml is not installed"** —
   `pip install ruamel.yaml`. The script refuses to write without
   it because pyyaml round-trip would destroy comments.
-- **`--apply` exits 2 with "requires --target"** — pick one:
-  `--target cohort` (safer, per-cohort only) or `--target shared`
-  (touches shared packs).
-- **`--apply --target cohort` skips most variables** — they live in
-  shared packs (`*_common.yaml`) and the cohort pack doesn't have
-  them yet. Pass `--auto-stub` to copy each shared row into the
-  cohort pack as a per-cohort override before applying the match block.
-- **Empty Variables sheet** — your cohort's variables pack is
-  probably a placeholder pulling from `<disease>_common.yaml`.
-  That's normal; the build resolves `include:` chains automatically.
+- **`--apply` exits 2 with "requires --target"** — pick
+  `--target cohort` (safer) or `--target shared`.
+- **`--apply --target cohort` skips most variables** — they live
+  in shared packs and the cohort pack doesn't have them yet.
+  Pass `--auto-stub` to copy each shared row into the cohort
+  pack as a per-cohort override before applying the match block.
+- **Empty Variables sheet** — your cohort's variables pack is a
+  placeholder pulling from `<disease>_common.yaml`. That's normal;
+  the build resolves `include:` chains automatically.
+README_EOF
+
+# Worked example: generate the sales dictionary for mtc_aat.
+cat > "$BUNDLE_DIR/run.md" <<'RUN_EOF'
+# Walkthrough: generate the **sales** data dictionary for `mtc_aat`
+
+End-to-end example. Produces the Tempus-style sales spec for the
+MTC AAT cohort (anti-amyloid therapy patients): a single-sheet
+workbook with the columns the partner reviewer asked for.
 
 ---
 
-## 8. Rebuild this zip from a source checkout
+## What you'll end up with
+
+```
+Output/
+├── mtc__aat_cohort_dictionary_sales.xlsx      ← hand this to the reviewer
+└── mtc__aat_cohort_dictionary_sales.html      ← same content, browsable
+```
+
+Sheets in the xlsx:
+- **Summary** — cohort cover (provider, disease, patient count, date coverage).
+- **Variables** — Tempus-style spec with these columns:
+  `Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness`
+
+JSON is intentionally not produced for the sales audience — the partner
+bundle never carries the internal `CohortModel` dump.
+
+---
+
+## Step 0 — prerequisites
+
+You only need to do this once per environment.
 
 ```bash
-bash scripts/build_runtime_bundle.sh
-# wrote century-dictionary.zip — N files, M bytes
+unzip century-dictionary.zip
+cd century-dictionary
+
+pip install -r requirements.txt
+
+# Warehouse credentials:
+cat > .env <<'ENV'
+PGHOST=warehouse.example.com
+PGPORT=5432
+PGDATABASE=century
+PGUSER=readonly_user
+PGPASSWORD=********
+PGSSLMODE=require
+ENV
 ```
-EOF
+
+---
+
+## Step 1 — sanity-check offline (no DB needed)
+
+Confirms the packs load and the layout is correct without touching
+the warehouse:
+
+```bash
+python dictionary_v2/build_dictionary.py \
+    --cohort mtc_aat \
+    --audience sales \
+    --dry-run
+```
+
+Expect to see:
+```
+Wrote Output/mtc__aat_cohort_dictionary_sales.xlsx
+Wrote Output/mtc__aat_cohort_dictionary_sales.html
+```
+
+If you open the xlsx, the `Variables` sheet header row will read
+exactly:
+```
+Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness
+```
+
+`Value Sets` and `Proposal` cells will be empty — those come from
+curated YAML fields (see Step 3 below). The dry-run skips
+DB-derived columns, so `Completeness` is `—`.
+
+---
+
+## Step 2 — real build against the warehouse
+
+```bash
+python dictionary_v2/build_dictionary.py \
+    --cohort mtc_aat \
+    --audience sales
+```
+
+`Completeness` is now populated from live cohort counts. Hand off
+the xlsx + html as the sales artifact.
+
+---
+
+## Step 3 (optional) — populate `Value Sets` and `Proposal`
+
+Both columns are authored in the cohort's variables YAML
+(`packs/variables/mtc_aat.yaml`) under each `variable:` row.
+Edit the file directly; the next `--audience sales` run picks them up.
+
+```yaml
+- category: Demographics
+  variable: Education level
+  description: The patient's highest level of education received.
+  table: observation
+  column: value_as_concept_name
+  value_set:                              # ← curated clinical reference values
+    - Less than high school
+    - High school diploma or equivalent
+    - Some college, no degree
+    - Associate degree
+    - Bachelor's degree
+    - Master's degree
+    - Doctoral or professional degree
+  proposal: Custom                        # ← Standard | Custom
+```
+
+The `value_set:` cell renders newline-separated in the workbook
+(matches the reference Google sheet). `proposal:` must be exactly
+`Standard` or `Custom` when set; the validator rejects anything
+else.
+
+If you accidentally write a scalar instead of a list:
+```yaml
+value_set: "Yes, No, Unknown"             # ← scalar; auto-split by builder
+```
+the renderer normalizes it to a 3-item list, but the validator
+will still flag it as an error so you fix the YAML.
+
+After editing:
+```bash
+# Lint the packs (no DB required):
+python scripts/validate_packs.py --strict
+
+# Re-run the build:
+python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales
+```
+
+---
+
+## Step 4 (optional) — tighten Criteria with discovery
+
+This addresses the reviewer's "Criteria should be exact matches,
+not ILIKE" feedback. Replaces fuzzy `criteria: drug_concept_name
+ILIKE '%lecanemab%'` with strict `match: { column, values }` blocks
+populated from the live cohort.
+
+The sales sheet doesn't show a `Criteria` column directly, but
+tightening Criteria still affects which rows feed `Completeness`
+and the underlying value distributions, so it's worth doing once
+per cohort.
+
+```bash
+# 4a. Read-only report — what does mtc_aat actually contain for
+#     each variable's existing broad criteria?
+python dictionary_v2/discover_exact_matches.py --cohort mtc_aat
+# → Output/discovery/mtc_aat/report.md
+
+# 4b. Apply observed values into packs/variables/mtc_aat.yaml.
+#     --auto-stub copies each inherited row from the shared
+#     aat_common pack into mtc_aat.yaml first, then attaches the
+#     match block. Walks one variable at a time with a
+#     [UPDATE]/[ADD cohort override] prompt.
+python dictionary_v2/discover_exact_matches.py \
+    --cohort mtc_aat \
+    --apply --target cohort --auto-stub
+```
+
+After step 4b, `git diff packs/variables/mtc_aat.yaml` shows the
+exact rows that were added/updated. Each new row carries a
+provenance comment:
+
+```yaml
+  # Auto-stubbed from packs/variables/aat_common.yaml via discover_exact_matches.py --auto-stub. Verify clinical fit before shipping.
+  - category: Medications
+    variable: Anti-amyloid Therapy (Administration)
+    table: drug_exposure
+    column: drug_concept_name
+    criteria: drug_concept_name ILIKE '%lecanemab%' OR ...
+    match:
+      column: drug_concept_name
+      values:
+        - Lecanemab
+        - Lecanemab-irmb
+        - Leqembi
+        - Donanemab-azbt
+        - Kisunla
+```
+
+For non-interactive (CI) use:
+```bash
+python dictionary_v2/discover_exact_matches.py \
+    --cohort mtc_aat \
+    --apply-yes --target cohort --auto-stub
+```
+
+Re-run the build to pick up the new match blocks:
+```bash
+python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales
+```
+
+---
+
+## Quick reference
+
+| Task | Command |
+|---|---|
+| Sanity-check (no DB) | `python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales --dry-run` |
+| Build sales dictionary | `python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales` |
+| Read-only discovery | `python dictionary_v2/discover_exact_matches.py --cohort mtc_aat` |
+| Apply match blocks | `python dictionary_v2/discover_exact_matches.py --cohort mtc_aat --apply --target cohort --auto-stub` |
+| Validate packs | `python scripts/validate_packs.py --strict` |
+RUN_EOF
 
 # zip from the parent so the archive contains a single
 # `century-dictionary/` top-level directory.
