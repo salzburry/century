@@ -809,6 +809,45 @@ def _sql_quote(value: str) -> str:
     return value.replace("'", "''")
 
 
+# Allowed values for the sales spec's `proposal:` field. Empty is
+# also OK (un-curated row); anything else is a typo.
+SALES_PROPOSAL_VALUES = ("Standard", "Custom")
+
+
+def _normalize_value_set(raw: Any) -> list[str]:
+    """Coerce a YAML `value_set:` value into a list[str].
+
+    Authors sometimes paste a scalar string copied from the
+    reference sheet (e.g. `value_set: Yes, No, Unknown`) instead
+    of a proper YAML list. Without normalization the renderer
+    iterates the string character-by-character and the Value Sets
+    cell ships as
+        Y
+        e
+        s
+        ,
+        ...
+    Normalize:
+      - list / tuple → str() of each non-empty element
+      - scalar str with commas → split on commas, strip
+      - scalar str without commas → single-element list
+      - None / empty → []
+      - anything else → []
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(v) for v in raw if str(v).strip()]
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        if "," in s:
+            return [part.strip() for part in s.split(",") if part.strip()]
+        return [s]
+    return []
+
+
 def _load_match_values_file(rel_path: str) -> list[str]:
     """Load `values:` list from a YAML file referenced by `values_file:`.
 
@@ -1100,7 +1139,7 @@ def resolve_variables(
             example=example,
             coding_schema=coding_schema,
             data_source=derive_data_source(extraction, table, explicit_data_source),
-            value_set=[str(x) for x in (v.get("value_set") or [])],
+            value_set=_normalize_value_set(v.get("value_set")),
             proposal=(v.get("proposal") or "").strip(),
         ))
     return out
@@ -1239,7 +1278,7 @@ def build_model(
                 data_source=derive_data_source(
                     extraction, table, (v.get("data_source") or "").strip(),
                 ),
-                value_set=[str(x) for x in (v.get("value_set") or [])],
+                value_set=_normalize_value_set(v.get("value_set")),
                 proposal=(v.get("proposal") or "").strip(),
             ))
     else:
@@ -1521,7 +1560,12 @@ _CUSTOMER_SUMMARY_LAYOUT: list[tuple[str | None, str | None, Any]] = [
 
 _SUMMARY_LAYOUT_BY_AUDIENCE: dict[str, list[tuple[str | None, str | None, Any]]] = {
     "technical": _TECHNICAL_SUMMARY_LAYOUT,
-    "sales":     _TECHNICAL_SUMMARY_LAYOUT,
+    # Sales targets a stakeholder-facing Tempus-style spec, so the
+    # Summary cover sheet uses the trimmed customer layout —
+    # variant / column_count / git_sha / introspect_version /
+    # schema_snapshot_digest are internal-only and don't belong in
+    # a sales workbook.
+    "sales":     _CUSTOMER_SUMMARY_LAYOUT,
     "pharma":    _TECHNICAL_SUMMARY_LAYOUT,
     "customer":  _CUSTOMER_SUMMARY_LAYOUT,
 }

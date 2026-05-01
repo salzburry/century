@@ -468,6 +468,27 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                 "warning", slug, f"{cat}/{var}: {catch_all}",
             ))
 
+        # Sales-spec field shape checks. value_set: must be a list
+        # (a scalar string would render character-by-character in the
+        # Value Sets cell — see _normalize_value_set salvage path).
+        # proposal: must be one of the allowed tags when present.
+        vs = v.get("value_set")
+        if vs is not None and not isinstance(vs, (list, tuple)):
+            report.findings.append(Finding(
+                "error", slug,
+                f"{cat}/{var}: `value_set:` must be a YAML list, got "
+                f"{type(vs).__name__}. Use the block form:\n"
+                f"  value_set:\n    - Yes\n    - No\n    - Unknown",
+            ))
+        prop = v.get("proposal")
+        if prop is not None and isinstance(prop, str) and prop.strip():
+            if prop.strip() not in ("Standard", "Custom"):
+                report.findings.append(Finding(
+                    "error", slug,
+                    f"{cat}/{var}: `proposal:` must be 'Standard' or "
+                    f"'Custom' when present, got {prop!r}.",
+                ))
+
         # ID column rendered under a non-ID-named variable
         id_mismatch = _check_id_column_name_mismatch(v)
         if id_mismatch:
