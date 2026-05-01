@@ -457,15 +457,22 @@ Every heuristic fill is logged so the config can absorb it later.
 
 ### 10.1 Presets
 - **technical** — Summary + Tables + Columns + Variables. No redaction. Raw SQL `Criteria` shown.
-- **sales** — Tempus-style single-sheet spec. Summary cover plus
-  a Variables sheet with exactly:
+- **sales** — Tempus-style three-sheet spec: Summary cover (styled
+  with title block, description paragraph, hero stats and a
+  coverage-by-category rollup) + Tables (customer-trimmed) +
+  Variables. Variables has exactly:
   `Category | Variable | Description | Value Sets | Notes | Type |
-  Proposal | Completeness`. Tables and Columns sheets are not
-  produced. PII rows dropped. `Value Sets` (newline-separated
-  clinical reference values) and `Proposal` (Standard / Custom)
-  are authored per row in the variables YAML
-  (`value_set:`, `proposal:`); rows that aren't curated yet
-  render those cells empty.
+  Proposal | Completeness`. Columns sheet is intentionally not
+  produced — partners read Variables for clinical content. PII
+  rows dropped, internal scaffolding tables filtered, JSON
+  suppressed. `Value Sets` is data-driven (observed top-10
+  values for the variable's column, newline-separated, no
+  curation field). `Proposal` is the only YAML-authored sales
+  field — set `proposal: Standard` or `proposal: Custom` per
+  variable; the validator rejects anything else. Variables with
+  no data in the cohort (`Implemented = No`) are dropped from
+  the rendered sheet so the partner artifact only shows what's
+  deliverable.
 - **pharma** — Summary + Variables. PII dropped; no raw column inventory. SQL `Criteria` hidden.
 - **customer** — All four sheets but trimmed (drops debug summary
   fields, internal scaffolding tables, PII; trims Columns to
@@ -599,7 +606,7 @@ The program is good enough when:
 
 - Each audience ships its agreed-on sheet set (see the audience
   matrix in §4.3 / §11): `technical` carries all four sheets,
-  `sales` carries Summary + Variables (Tempus-style spec),
+  `sales` carries Summary + Tables + Variables (Tempus-style spec),
   `pharma` carries Summary + Variables, and `customer` carries
   trimmed versions of all four.
 - `provider`, `disease`, `years_of_data`, `% Patient` (or

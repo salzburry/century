@@ -193,6 +193,13 @@ class VariableRow:
     example: str = ""
     coding_schema: str = ""
     data_source: str = ""
+    # Structured top-10 observed labels for the variable's column.
+    # Populated alongside `values` (comma-joined) so the sales
+    # Value Sets cell can render labels verbatim — even when a
+    # label itself contains a comma (e.g. an OMOP concept name).
+    # Splitting `values` on commas would silently fragment such
+    # labels into bogus cell entries.
+    top_value_labels: list[str] = field(default_factory=list)
     # Tempus-style sales-spec metadata. `proposal` is the
     # Standard / Custom tag, authored in the variables YAML.
     # Defaults to empty so un-curated rows still build. (Value Sets
@@ -754,16 +761,30 @@ def compute_date_coverage(columns: list[ColumnInfo]) -> DateCoverage:
 # --------------------------------------------------------------------------- #
 
 
-def _format_top_values_from_rows(rows: list[tuple[str, int]], total: int) -> tuple[str, str]:
-    """(values_cell, distribution_cell) from SQL top-N rows."""
+def _format_top_values_from_rows(
+    rows: list[tuple[str, int]], total: int,
+) -> tuple[str, str, list[str]]:
+    """(values_cell, distribution_cell, labels) from SQL top-N rows.
+
+    Returns three projections of the same data:
+      - values_cell:  comma-joined top-10 labels (legacy display in
+                      the technical / customer Variables sheets).
+      - distribution_cell:  semicolon-joined `label: count (pct%)`.
+      - labels:       the structured top-10 label list, preserved
+                      verbatim. Sales Value Sets reads this so a
+                      label that itself contains a comma (e.g. an
+                      OMOP concept name with a comma) renders as
+                      one cell entry, not two.
+    """
     if not rows or total <= 0:
-        return "", ""
-    values = ", ".join(r[0] if r[0] else "(null)" for r in rows[:10])
+        return "", "", []
+    labels = [r[0] if r[0] else "(null)" for r in rows[:10]]
+    values = ", ".join(labels)
     distribution = "; ".join(
         f"{r[0] if r[0] else '(null)'}: {r[1]} ({100.0 * r[1] / total:.1f}%)"
         for r in rows
     )
-    return values, distribution
+    return values, distribution, labels
 
 
 _TEXT_COLUMN_PATTERNS = (
@@ -928,6 +949,7 @@ def resolve_variables(
 
         values_cell = ""
         distribution_cell = ""
+        top_value_labels: list[str] = []
         median_iqr_cell = ""
         completeness_pct: float | None = None
         implemented = "No"
@@ -1016,8 +1038,8 @@ def resolve_variables(
                             f'GROUP BY {expression} ORDER BY n DESC LIMIT 10;'
                         )
                         rows = [(str(r[0]), int(r[1])) for r in cur.fetchall()]
-                    values_cell, distribution_cell = _format_top_values_from_rows(
-                        rows, total_nonnull
+                    values_cell, distribution_cell, top_value_labels = (
+                        _format_top_values_from_rows(rows, total_nonnull)
                     )
                 except Exception as exc:
                     sys.stderr.write(
@@ -1090,6 +1112,7 @@ def resolve_variables(
             criteria=criteria,
             values=values_cell,
             distribution=distribution_cell,
+            top_value_labels=top_value_labels,
             median_iqr=median_iqr_cell,
             completeness_pct=completeness_pct,
             implemented=implemented,
@@ -1487,9 +1510,15 @@ def customer_table_excludes(
 #   - technical / pharma share the original layouts (full sheets).
 #   - customer gets its own trimmed Summary / Tables / Columns and
 #     a customer-tail for Variables that drops debug fields.
-#   - sales has its own Tempus-style Variables layout
-#     (_SALES_VARIABLES_LAYOUT) plus the customer Summary, and the
-#     Tables / Columns sheets are hidden via AUDIENCE_VISIBILITY.
+#   - sales ships Summary + Tables + Variables (no Columns).
+#     Tables uses the customer-trimmed layout, Variables uses the
+#     Tempus-style _SALES_VARIABLES_LAYOUT, and Summary is the
+#     customer-trimmed key/value rows that the cover renderer
+#     replaces at write_xlsx time with a styled cover sheet.
+#     Columns is hidden via AUDIENCE_VISIBILITY['sales']['columns']
+#     = False — partners read Variables for clinical content, and
+#     an engineer who needs the column-level schema map can pull
+#     the technical-audience output instead.
 # Adding a new audience is a single dict entry in each *_BY_AUDIENCE
 # map plus a visibility row.
 # --------------------------------------------------------------------------- #
@@ -1719,17 +1748,21 @@ _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
 #
 # `Value Sets` is purely data-driven: the observed top-N value
 # labels for the variable's column, newline-separated, no counts /
-# percentages. Same data already in `v.values` (comma-joined for
-# the technical sheet), just reformatted. Empty for free-text
-# columns and dry-run rows where there are no observed values.
+# percentages. Reads `v.top_value_labels` — the structured list
+# captured at build time alongside the comma-joined `values` cell —
+# so a label that itself contains a comma (e.g. an OMOP concept
+# name like "Cancer, malignant") renders verbatim instead of
+# fragmenting. Empty for free-text columns and dry-run rows where
+# no top-N query ran.
+#
 # A data dictionary that claims a value the cohort doesn't carry
 # is wrong — so there's no curation override; if it's not in the
 # data, it doesn't appear.
 # `Proposal` comes from the curated YAML field. Type maps directly
 # to extraction_type.
 def _sales_value_sets_cell(v: Any) -> str:
-    if (v.values or "").strip():
-        return "\n".join(s.strip() for s in v.values.split(",") if s.strip())
+    if v.top_value_labels:
+        return "\n".join(v.top_value_labels)
     return ""
 
 

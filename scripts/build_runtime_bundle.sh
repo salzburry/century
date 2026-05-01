@@ -287,8 +287,9 @@ cat > "$BUNDLE_DIR/run.md" <<'RUN_EOF'
 # Walkthrough: generate the **sales** data dictionary for `mtc_aat`
 
 End-to-end example. Produces the Tempus-style sales spec for the
-MTC AAT cohort (anti-amyloid therapy patients): a single-sheet
-workbook with the columns the partner reviewer asked for.
+MTC AAT cohort (anti-amyloid therapy patients) — a three-sheet
+workbook (Summary cover, Tables overview, Variables spec) with
+the columns the partner reviewer asked for.
 
 ---
 
