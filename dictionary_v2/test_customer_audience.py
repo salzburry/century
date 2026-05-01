@@ -646,6 +646,26 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertIn("Aspirin 81 MG", captured["sql"])
         self.assertNotIn("WHERE TRUE", captured["sql"])
 
+    def test_report_distinguishes_displayed_criteria_from_discovery_scope(self):
+        # When a variable has both broad criteria: and strict match:,
+        # the report must show both — the strict one as the
+        # displayed (dictionary) Criteria, the broad one as the
+        # actual scope used to find candidate values.
+        o = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin",
+            table="drug_exposure", column="drug_concept_name",
+            criteria='"drug_concept_name" IN (\'Aspirin 81 MG\')',
+            configured_values=["Aspirin 81 MG"],
+            observed=[("Aspirin 81 MG", 100), ("Aspirin 325 MG", 50)],
+            source_pack="ckd_common",
+            discovery_scope="drug_concept_name ILIKE '%aspirin%'",
+        )
+        md = self.mod._fmt_md([o], "balboa_ckd")
+        self.assertIn("displayed criteria (strict)", md)
+        self.assertIn("IN ('Aspirin 81 MG')", md)
+        self.assertIn("discovery scope (broad)", md)
+        self.assertIn("ILIKE '%aspirin%'", md)
+
     def test_report_shows_source_pack(self):
         o = self.mod.VariableObservation(
             category="Conditions", variable="CKD",
@@ -1167,6 +1187,80 @@ class DiscoveryApplyTests(unittest.TestCase):
         )
         # Both got applied off the single 'all' answer.
         self.assertEqual(applied, 2)
+
+    def test_auto_stub_writes_real_yaml_comment_not_marker_field(self):
+        # Source rows must be loaded via ruamel so the stubbed row
+        # is a CommentedMap. _attach_stub_comment then writes a
+        # leading YAML comment instead of falling back to the
+        # _auto_stub_origin marker field.
+        cohort_slug = "_apply_test_cohort_realcomment"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "include: [_apply_test_pack]\nvariables: []\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        applied, _ = self.mod.apply_suggestions(
+            observations, target="cohort",
+            cohort_slug=cohort_slug, auto_yes=True, auto_stub=True,
+        )
+        self.assertEqual(applied, 1)
+        text = cohort_path.read_text()
+        self.assertIn(
+            "# Auto-stubbed from packs/variables/_apply_test_pack.yaml",
+            text,
+            msg="provenance must be a YAML comment, not a hidden field",
+        )
+        self.assertNotIn(
+            "_auto_stub_origin", text,
+            msg="internal marker must not leak into source-of-truth YAML",
+        )
+
+    def test_apply_writes_atomically_via_temp_file(self):
+        # File mtime must change exactly once per touched pack;
+        # midstream errors must not leave a half-written file.
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+        before_size = self.pack_path.stat().st_size
+        applied, _ = self.mod.apply_suggestions(
+            observations, target="shared", auto_yes=True,
+        )
+        self.assertEqual(applied, 1)
+        # No leftover .tmp files in packs/variables/.
+        leftovers = list(bd.PACKS_DIR.glob("variables/*.yaml.tmp"))
+        self.assertEqual(leftovers, [], msg=f"orphaned temp files: {leftovers}")
+        # Final file is non-empty (and different from before — match was added).
+        self.assertGreater(self.pack_path.stat().st_size, before_size // 2)
+        self.assertIn("Aspirin 81 MG", self.pack_path.read_text())
+
+    def test_apply_temp_file_cleaned_up_on_dump_failure(self):
+        # If yaml_rt.dump raises mid-write, the temp file must be
+        # removed and the original pack must remain untouched.
+        observations = [self._obs("Aspirin", [("Aspirin 81 MG", 100)])]
+
+        # Patch yaml_rt's dump indirectly by patching the dump on
+        # the YAML class. ruamel's YAML.dump is the chosen seam.
+        original_text = self.pack_path.read_bytes()
+        from ruamel.yaml import YAML
+        original_dump = YAML.dump
+        def _boom(self, *a, **kw):
+            raise RuntimeError("simulated disk error")
+        YAML.dump = _boom
+        self.addCleanup(lambda: setattr(YAML, "dump", original_dump))
+
+        with self.assertRaises(RuntimeError):
+            self.mod.apply_suggestions(
+                observations, target="shared", auto_yes=True,
+            )
+        # Original pack survived intact.
+        self.assertEqual(
+            self.pack_path.read_bytes(), original_text,
+            msg="dump failure must not corrupt the original pack",
+        )
+        # No orphaned temp file.
+        leftovers = list(bd.PACKS_DIR.glob("variables/*.yaml.tmp"))
+        self.assertEqual(leftovers, [], msg=f"orphaned temp files: {leftovers}")
 
     def test_main_apply_without_target_skips_discovery(self):
         # Contract failure must short-circuit before DB work or any
