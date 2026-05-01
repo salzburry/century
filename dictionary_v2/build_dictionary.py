@@ -1239,11 +1239,14 @@ _CUSTOMER_TABLE_EXCLUDES: frozenset[str] = frozenset({
 
 
 # --------------------------------------------------------------------------- #
-# Sheet layouts — shared between write_xlsx, write_html, and the
-# customer JSON projection so all three renderers can't drift on column
-# order or accessor logic. Each entry is (display_label, accessor) for
-# Tables / Columns / Variables, or (xlsx_label, html_label, accessor)
-# for Summary (where the renderers genuinely diverge on labels).
+# Sheet layouts — shared between write_xlsx and write_html so the two
+# renderers can't drift on column order or accessor logic. Each entry
+# is (display_label, accessor) for Tables / Columns / Variables, or
+# (xlsx_label, html_label, accessor) for Summary (where the renderers
+# genuinely diverge on labels).
+#
+# JSON is a full internal/debug dump (write_json) and intentionally
+# bypasses these layouts. The customer audience skips JSON entirely.
 #
 # Each sheet has a per-audience dispatcher: summary_layout(audience),
 # tables_layout(audience), columns_layout(audience), and
