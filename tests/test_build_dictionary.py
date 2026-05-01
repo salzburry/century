@@ -863,8 +863,21 @@ def _load_yaml(relpath: str) -> dict:
 
 
 def _all_variables_for(pack_slug: str) -> list[dict]:
-    """Resolve a variables pack's transitive include list."""
+    """Resolve a variables pack's transitive include list.
+
+    Mirrors build_dictionary.load_variables_pack override semantics:
+    a local row replaces an inherited row with the same
+    (category, variable) key. Without this, _find_variable_in()
+    can return the inherited fuzzy ILIKE row even when a cohort
+    pack has an auto-stubbed override carrying a strict match: block.
+    """
     seen: set[str] = set()
+
+    def _key(r: dict) -> tuple[str, str]:
+        return (
+            (r.get("category") or "").strip(),
+            (r.get("variable") or "").strip(),
+        )
 
     def _resolve(slug: str) -> list[dict]:
         if slug in seen:
@@ -874,7 +887,17 @@ def _all_variables_for(pack_slug: str) -> list[dict]:
         out: list[dict] = []
         for inc in data.get("include") or []:
             out.extend(_resolve(inc))
-        out.extend(data.get("variables") or [])
+
+        index_by_key: dict[tuple[str, str], int] = {
+            _key(r): i for i, r in enumerate(out)
+        }
+        for local_row in (data.get("variables") or []):
+            key = _key(local_row)
+            if key in index_by_key:
+                out[index_by_key[key]] = local_row
+            else:
+                index_by_key[key] = len(out)
+                out.append(local_row)
         return out
 
     return _resolve(pack_slug)
@@ -2768,6 +2791,62 @@ def _trivial_model() -> CohortModel:
             coding_schema="", data_source="Normalized",
         )],
     )
+
+
+class TestHelperOverrideSemanticsTests(unittest.TestCase):
+    """`_find_variable_in()` must mirror the production loader's
+    override semantics. After --auto-stub copies a shared variable
+    into a cohort pack with a strict match: block, the helper must
+    return the cohort row — not the inherited fuzzy ILIKE row.
+    Without this, real CI assertions can pass against the wrong
+    row and reviewers see false "still using ILIKE" symptoms.
+    """
+
+    def setUp(self):
+        self.shared_path = REPO_ROOT / "packs" / "variables" / "_helper_test_shared.yaml"
+        self.shared_path.write_text(
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: HelperTestVar\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%helper%'\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: self.shared_path.unlink(missing_ok=True))
+
+        self.cohort_path = REPO_ROOT / "packs" / "variables" / "_helper_test_cohort.yaml"
+        self.cohort_path.write_text(
+            "include: [_helper_test_shared]\n"
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: HelperTestVar\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%helper%'\n"
+            "    match:\n"
+            "      column: drug_concept_name\n"
+            "      values: ['Helper exact value']\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: self.cohort_path.unlink(missing_ok=True))
+
+    def test_find_variable_in_returns_cohort_override_not_shared_row(self):
+        row = _find_variable_in("_helper_test_cohort", "HelperTestVar")
+        self.assertIn(
+            "match", row,
+            msg="helper returned the inherited shared row instead of "
+                "the cohort override; got: " + str(row),
+        )
+        self.assertEqual(row["match"]["values"], ["Helper exact value"])
+
+    def test_find_variable_in_no_duplicate_after_override(self):
+        rows = _all_variables_for("_helper_test_cohort")
+        matches = [r for r in rows if r.get("variable") == "HelperTestVar"]
+        self.assertEqual(
+            len(matches), 1,
+            msg="override must collapse to one row, got: " + str(matches),
+        )
 
 
 if __name__ == "__main__":
