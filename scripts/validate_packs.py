@@ -179,20 +179,45 @@ _CONCEPT_SPECIFIC_NAME_PATTERNS = [
 ]
 
 
+def _match_block_compiles(match: Any) -> bool:
+    """Mirror dictionary_v2.build_dictionary.compile_match_block()'s
+    accept contract: a match block compiles to a real strict-IN
+    clause only when `column` is set AND the union of `values:`
+    and any loaded `values_file:` is non-empty. Anything looser
+    would let a malformed block pass validation while rendering
+    as unscoped at build time.
+    """
+    if not isinstance(match, dict):
+        return False
+    if not (match.get("column") or "").strip():
+        return False
+    values = list(match.get("values") or [])
+    values_file = (match.get("values_file") or "").strip()
+    if values:
+        return True
+    if values_file:
+        # Resolve relative to packs/ to match _load_match_values_file.
+        path = (PACKS_DIR / values_file).resolve()
+        if not path.is_file():
+            return False
+        data = _yaml_load(path)
+        if isinstance(data, list):
+            return any(str(v).strip() for v in data)
+        if isinstance(data, dict):
+            return any(str(v).strip() for v in (data.get("values") or []))
+    return False
+
+
 def _has_scope(v: dict[str, Any]) -> bool:
     """A variable is scoped if it has any matcher — free-form
-    `criteria:` (legacy) OR a structured `match:` block (the v2
-    schema's strict-IN form). Both checks below previously keyed
-    off only `criteria:`, which means a future match-only row
-    would have looked unscoped and triggered false warnings.
+    `criteria:` (legacy) OR a structured `match:` block that
+    actually compiles to a strict-IN clause. The match-block
+    check mirrors compile_match_block() so the validator and
+    build agree on which rows count as scoped.
     """
     if (v.get("criteria") or "").strip():
         return True
-    match = v.get("match")
-    if isinstance(match, dict):
-        if (match.get("values") or []) or (match.get("values_file") or "").strip():
-            return True
-    return False
+    return _match_block_compiles(v.get("match"))
 
 
 def _check_missing_criteria(v: dict[str, Any]) -> str | None:

@@ -142,12 +142,26 @@ class CustomerLayoutTests(unittest.TestCase):
         for dropped in ("Coding Schema", "Implemented", "Data Source"):
             self.assertNotIn(dropped, headers)
 
+    def test_variables_drops_percent_patient_for_customer_keeps_completeness(self):
+        # Per reviewer instruction: customer audience shows
+        # Completeness only; % Patient is dropped to avoid surfacing
+        # two near-identical patient-coverage metrics.
+        headers = [label for label, _ in bd.variables_layout("customer")]
+        self.assertIn("Completeness", headers)
+        self.assertNotIn("% Patient", headers)
+
     def test_other_audiences_unaffected(self):
         for aud in ("technical", "sales", "pharma"):
             tables = [l for l, _ in bd.tables_layout(aud)]
             self.assertIn("Data Source", tables, msg=f"{aud} Tables should keep Data Source")
             cols = [l for l, _ in bd.columns_layout(aud)]
             self.assertIn("Coding Schema", cols, msg=f"{aud} Columns should keep Coding Schema")
+            # % Patient stays for non-customer audiences.
+            vars_layout = [l for l, _ in bd.variables_layout(aud)]
+            self.assertIn(
+                "% Patient", vars_layout,
+                msg=f"{aud} Variables should keep % Patient",
+            )
 
 
 class CustomerTableFilterTests(unittest.TestCase):
@@ -469,6 +483,26 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertIn("column: c", y)
         # Header line warns this is for review only.
         self.assertIn("Review and copy", y)
+
+    def test_report_labels_match_only_row_as_strict(self):
+        # Match-only row: criteria == discovery_scope (both compile
+        # to the same IN(...)) AND configured_values is non-empty.
+        # Report must NOT say "no match: block configured yet".
+        in_sql = "\"drug_concept_name\" IN ('Aspirin 81 MG')"
+        o = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin",
+            table="drug_exposure", column="drug_concept_name",
+            criteria=in_sql,
+            configured_values=["Aspirin 81 MG"],
+            observed=[("Aspirin 81 MG", 100)],
+            source_pack="ckd_common",
+            discovery_scope=in_sql,
+        )
+        md = self.mod._fmt_md([o], "balboa_ckd")
+        self.assertIn("displayed criteria (strict)", md,
+                      msg="match-only row must be labelled strict")
+        self.assertIn("match-only row", md)
+        self.assertNotIn("no `match:` block configured yet", md)
 
     def test_dry_run_writes_report_without_db(self):
         # End-to-end: --dry-run must not require psycopg / a DB.
@@ -967,6 +1001,58 @@ class DiscoveryApplyTests(unittest.TestCase):
         self.assertIn("Aspirin 81 MG", cohort_path.read_text())
         self.assertNotIn("Aspirin 81 MG", self.pack_path.read_text())
 
+    def test_apply_uses_category_variable_key_for_lookup(self):
+        # Pack with the same variable label under two different
+        # categories. apply must find the right one by (category,
+        # variable), matching the loaders' override key.
+        cohort_slug = "_apply_test_dup_label"
+        cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
+        cohort_path.write_text(
+            "variables:\n"
+            "  - category: Diagnosis\n"
+            "    variable: Coverage\n"
+            "    table: condition_occurrence\n"
+            "    column: condition_concept_name\n"
+            "    criteria: condition_concept_name ILIKE '%cov%'\n"
+            "  - category: Insurance\n"
+            "    variable: Coverage\n"
+            "    table: payer_plan_period\n"
+            "    column: payer_concept_name\n"
+            "    criteria: payer_concept_name ILIKE '%cov%'\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        # Observation targets the Insurance row only.
+        obs = self.mod.VariableObservation(
+            category="Insurance", variable="Coverage",
+            table="payer_plan_period", column="payer_concept_name",
+            criteria="payer_concept_name ILIKE '%cov%'",
+            configured_values=[],
+            observed=[("Aetna PPO", 100)],
+            source_pack=cohort_slug,
+        )
+        applied, _ = self.mod.apply_suggestions(
+            [obs], target="shared", auto_yes=True,
+        )
+        self.assertEqual(applied, 1)
+        text = cohort_path.read_text()
+        # The Insurance row got the match block; the Diagnosis row
+        # did NOT.
+        diag_idx = text.index("category: Diagnosis")
+        ins_idx = text.index("category: Insurance")
+        # Match block must appear after the Insurance line.
+        match_idx = text.find("match:")
+        self.assertGreater(
+            match_idx, ins_idx,
+            msg="match: should be attached to the Insurance row",
+        )
+        # And NOT attached to the Diagnosis row (i.e. between the
+        # Diagnosis category line and the Insurance category line).
+        between_diag = text[diag_idx:ins_idx]
+        self.assertNotIn("match:", between_diag,
+                         msg="Diagnosis row must not be touched")
+
     def test_apply_target_cohort_skips_inherited_only_variables(self):
         cohort_slug = "_apply_test_cohort_empty"
         cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
@@ -1458,16 +1544,36 @@ class VariablePackOverrideTests(unittest.TestCase):
         sys.modules["validate_packs_scope_test"] = vp
         spec.loader.exec_module(vp)
 
+        # Positive: criteria string scopes the row.
         self.assertTrue(vp._has_scope({"criteria": "x ILIKE '%y%'"}))
+        # Positive: match block with column + inline values.
         self.assertTrue(vp._has_scope({
             "match": {"column": "c", "values": ["a"]},
         }))
-        self.assertTrue(vp._has_scope({
-            "match": {"column": "c", "values_file": "value_sets/x.yaml"},
-        }))
+        # Positive: match block with values_file pointing at a real
+        # loadable list. Stage a temp file under packs/.
+        rel = "_scope_test_values.yaml"
+        path = bd.PACKS_DIR / rel
+        path.write_text("- foo\n- bar\n", encoding="utf-8")
+        try:
+            self.assertTrue(vp._has_scope({
+                "match": {"column": "c", "values_file": rel},
+            }))
+        finally:
+            path.unlink()
+
+        # Negatives — rows the BUILDER would compile to "" and so
+        # the validator must also treat as unscoped:
         self.assertFalse(vp._has_scope({}))
-        self.assertFalse(vp._has_scope({"match": {"column": "c"}}))   # no values
+        self.assertFalse(vp._has_scope({"match": {"column": "c"}}))   # no values, no file
         self.assertFalse(vp._has_scope({"match": {"column": "c", "values": []}}))
+        # Missing values: column omitted — values can't compile.
+        self.assertFalse(vp._has_scope({"match": {"values": ["a"]}}))
+        # Missing values_file on disk — must NOT pass validation
+        # because compile_match_block would return "".
+        self.assertFalse(vp._has_scope({
+            "match": {"column": "c", "values_file": "_does_not_exist.yaml"},
+        }))
 
     def test_validator_loader_applies_override_semantics(self):
         # validate_packs.py's resolver must also collapse overrides;

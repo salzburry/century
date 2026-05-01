@@ -428,18 +428,31 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
             )
         out.append(f"- table: `{o.table}`")
         out.append(f"- column: `{o.column}`")
-        # The "criteria" field is only strict when it actually came
-        # from a `match:` block (i.e. it differs from the broader
-        # discovery_scope). Otherwise it's the same fuzzy ILIKE
-        # used to find candidates — labelling that as "strict" would
-        # mislead reviewers into thinking the variable has already
-        # been converted to exact matches.
-        has_strict_criteria = (
+        # Three real shapes the row can be in:
+        #   1. broad criteria: + match: block — criteria and scope
+        #      differ; criteria is the strict IN(...), scope is the
+        #      broader ILIKE used to find candidates.
+        #   2. match: only — criteria == scope (both compile to the
+        #      same IN(...)) AND configured_values is non-empty.
+        #      The row IS strict but there's no broader scope to
+        #      contrast it against.
+        #   3. broad criteria: only (no match) — criteria == scope
+        #      and configured_values is empty. Variable hasn't
+        #      been converted to exact matches yet.
+        #   4. neither — row was skipped or unscoped.
+        has_match_block = bool(o.configured_values)
+        criteria_and_scope_differ = (
             bool(o.criteria) and o.criteria != o.discovery_scope
         )
-        if has_strict_criteria:
+        if criteria_and_scope_differ:
             out.append(f"- displayed criteria (strict): `{o.criteria}`")
             out.append(f"- discovery scope (broad):    `{o.discovery_scope}`")
+        elif has_match_block and o.criteria:
+            out.append(f"- displayed criteria (strict): `{o.criteria}`")
+            out.append(
+                f"- discovery scope: same as criteria "
+                f"(match-only row — no broad criteria to widen with)"
+            )
         elif o.criteria:
             out.append(f"- criteria: `{o.criteria}`")
             out.append(
@@ -586,6 +599,7 @@ def _confirm(prompt: str) -> bool:
 
 def _load_source_variable(
     source_pack: str, variable_name: str, yaml_rt: Any = None,
+    category: str | None = None,
 ) -> Any:
     """Read a variable's full definition straight from its source pack.
 
@@ -593,6 +607,12 @@ def _load_source_variable(
     or None if the pack or variable can't be found. Bypasses
     load_variables_pack so we get the row exactly as authored,
     without internal tags or include flattening.
+
+    If `category` is provided, the lookup uses (category, variable)
+    — matching the override key the loaders use, so packs with the
+    same variable label under two categories pick the right row.
+    Falling back to variable-name-only when `category` is None
+    keeps the behaviour callers without category context expect.
 
     If `yaml_rt` is a ruamel YAML instance, the returned mapping is
     a CommentedMap that can carry leading comments via
@@ -614,19 +634,23 @@ def _load_source_variable(
     if not isinstance(data, dict):
         return None
 
+    target_cat = (category or "").strip()
     for row in data.get("variables") or []:
-        if (row.get("variable") or "").strip() == variable_name:
-            if yaml_rt is not None:
-                # Deep-copy so the caller's mutations don't leak into
-                # any later read of the source pack within the same run.
-                import copy
-                clone = copy.deepcopy(row)
-                # Strip our in-memory provenance tag if it somehow
-                # leaked in. The disk copy never has it; defensive.
-                for k in [k for k in list(clone.keys()) if isinstance(k, str) and k.startswith("_")]:
-                    del clone[k]
-                return clone
-            return {k: v for k, v in row.items() if not k.startswith("_")}
+        if (row.get("variable") or "").strip() != variable_name:
+            continue
+        if target_cat and (row.get("category") or "").strip() != target_cat:
+            continue
+        if yaml_rt is not None:
+            # Deep-copy so the caller's mutations don't leak into
+            # any later read of the source pack within the same run.
+            import copy
+            clone = copy.deepcopy(row)
+            # Strip our in-memory provenance tag if it somehow
+            # leaked in. The disk copy never has it; defensive.
+            for k in [k for k in list(clone.keys()) if isinstance(k, str) and k.startswith("_")]:
+                del clone[k]
+            return clone
+        return {k: v for k, v in row.items() if not k.startswith("_")}
     return None
 
 
@@ -780,17 +804,20 @@ def apply_suggestions(
                 pack_cache[path] = yaml_rt.load(f)
         return pack_cache[path]
 
-    # Source-pack lookups for auto-stub. Cached per source-slug.
+    # Source-pack lookups for auto-stub. Cached by
+    # (source_pack, category, variable) so packs with the same
+    # variable label under two categories pull the right row.
     # Loaded via the same yaml_rt as the destination so the returned
     # row is a CommentedMap — required for the leading provenance
     # comment on stubbed entries.
-    source_var_cache: dict[tuple[str, str], Any] = {}
+    source_var_cache: dict[tuple[str, str, str], Any] = {}
 
-    def _source_def(source_pack: str, variable: str) -> Any:
-        key = (source_pack, variable)
+    def _source_def(source_pack: str, category: str, variable: str) -> Any:
+        key = (source_pack, category, variable)
         if key not in source_var_cache:
             source_var_cache[key] = _load_source_variable(
-                source_pack, variable, yaml_rt=yaml_rt,
+                source_pack, variable,
+                yaml_rt=yaml_rt, category=category,
             )
         return source_var_cache[key]
 
@@ -832,15 +859,28 @@ def apply_suggestions(
         if data.get("variables") is None:
             data["variables"] = []
         rows = data["variables"]
-        rows_by_name = {(r.get("variable") or "").strip(): r for r in rows}
-        existing = rows_by_name.get(o.variable)
+        # The loaders override by (category, variable) — apply must
+        # use the same key so packs with the same variable name
+        # under two categories don't get the wrong row updated.
+        target_key = (
+            (o.category or "").strip(),
+            (o.variable or "").strip(),
+        )
+        rows_by_key = {
+            (
+                (r.get("category") or "").strip(),
+                (r.get("variable") or "").strip(),
+            ): r
+            for r in rows
+        }
+        existing = rows_by_key.get(target_key)
 
         # Decide what the action is: update (mutate existing row),
         # stub (auto-copy from source pack), or skip.
         if existing is not None:
             action = "update"
         elif target == "cohort" and auto_stub:
-            src = _source_def(o.source_pack, o.variable)
+            src = _source_def(o.source_pack, o.category, o.variable)
             if src is None:
                 print(
                     f"[apply] auto-stub: source definition for "
@@ -893,10 +933,10 @@ def apply_suggestions(
                 "values": _suggested_values_for(o),
             }
         else:   # stub: copy the source row (CommentedMap) into the cohort pack
-            new_row = _source_def(o.source_pack, o.variable)
-            # _source_def already returned a deep-copy, but cache it
-            # away so the next iteration (if any) reads a fresh one.
-            source_var_cache.pop((o.source_pack, o.variable), None)
+            new_row = _source_def(o.source_pack, o.category, o.variable)
+            # _source_def already returned a deep-copy, but evict the
+            # cache entry so the next iteration (if any) reads a fresh one.
+            source_var_cache.pop((o.source_pack, o.category, o.variable), None)
             new_row["match"] = {
                 "column": o.column,
                 "values": _suggested_values_for(o),
