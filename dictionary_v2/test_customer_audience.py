@@ -1415,6 +1415,60 @@ class VariablePackOverrideTests(unittest.TestCase):
             lisinopril.get("_source_pack"), self.shared_slug,
         )
 
+    def test_validator_treats_match_only_row_as_scoped(self):
+        # _check_missing_criteria must NOT flag a row that has only
+        # a `match:` block (no legacy criteria:) as catch-all.
+        import importlib.util
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_match_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_match_test"] = vp
+        spec.loader.exec_module(vp)
+
+        # Variable name matches a clinically-specific pattern
+        # (APOE) so _check_missing_criteria *would* fire if the
+        # row looked unscoped.
+        match_only_row = {
+            "variable": "APOE Genotype",
+            "column": "value_as_string",
+            "match": {
+                "column": "observation_concept_name",
+                "values": ["APOE genotype"],
+            },
+        }
+        self.assertIsNone(
+            vp._check_missing_criteria(match_only_row),
+            msg="match-only row must count as scoped — no missing-criteria warning",
+        )
+
+        # Sanity: a row that's truly unscoped (no criteria, no match)
+        # still triggers the warning, so we know the check still works.
+        unscoped_row = {"variable": "APOE Genotype", "column": "value_as_string"}
+        self.assertIsNotNone(vp._check_missing_criteria(unscoped_row))
+
+    def test_validator_has_scope_helper_recognizes_match_block(self):
+        import importlib.util
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_scope_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_scope_test"] = vp
+        spec.loader.exec_module(vp)
+
+        self.assertTrue(vp._has_scope({"criteria": "x ILIKE '%y%'"}))
+        self.assertTrue(vp._has_scope({
+            "match": {"column": "c", "values": ["a"]},
+        }))
+        self.assertTrue(vp._has_scope({
+            "match": {"column": "c", "values_file": "value_sets/x.yaml"},
+        }))
+        self.assertFalse(vp._has_scope({}))
+        self.assertFalse(vp._has_scope({"match": {"column": "c"}}))   # no values
+        self.assertFalse(vp._has_scope({"match": {"column": "c", "values": []}}))
+
     def test_validator_loader_applies_override_semantics(self):
         # validate_packs.py's resolver must also collapse overrides;
         # otherwise --auto-stub'd cohort packs trigger a spurious
