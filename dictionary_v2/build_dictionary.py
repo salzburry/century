@@ -2130,9 +2130,13 @@ def write_html(model: CohortModel, out_path: Path,
 def write_json(model: CohortModel, out_path: Path) -> None:
     """Write a full-dump JSON sidecar.
 
-    JSON is an internal/debug artifact — stakeholders read XLSX or HTML.
-    The customer audience skips JSON entirely (see main()); the other
-    audiences get the full CohortModel for debugging.
+    JSON is an internal/debug artifact — stakeholders read XLSX or
+    HTML. The stakeholder-facing audiences (customer and sales) skip
+    JSON entirely (see main()) so partner bundles never carry the
+    full CohortModel (which still includes criteria, coding_schema,
+    implemented, patient_pct, data_source even when the rendered
+    sheets intentionally hide them). The internal audiences
+    (technical, pharma) keep JSON for debugging.
     """
     out_path.write_text(
         json.dumps(model.to_dict(), indent=2, default=str), encoding="utf-8",

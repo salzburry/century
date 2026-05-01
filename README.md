@@ -123,11 +123,15 @@ site-specific and shift between pulls.
 per cohort. `--formats` accepts any combination of `xlsx`, `html`,
 `json` (default = all three):
 
-- `Output/<schema>_dictionary.xlsx` — four-sheet workbook
+- `Output/<schema>_dictionary.xlsx` — workbook (sheet set varies
+  by audience, see §4.3 / §11)
 - `Output/<schema>_dictionary.html` — single-page HTML, same shape
-- `Output/<schema>_dictionary.json` — canonical model dump
-  (suppressed for `--audience customer` — JSON is an internal
-  debug artifact, customers consume xlsx/html)
+- `Output/<schema>_dictionary.json` — canonical model dump.
+  Suppressed for the stakeholder-facing audiences `--audience customer`
+  and `--audience sales` so partner bundles never accidentally ship
+  the full internal CohortModel (which still carries fields the
+  trimmed sheets intentionally hide). Internal audiences `technical`
+  and `pharma` get JSON for debugging.
 
 PDF output is not currently produced by the generator; the WeasyPrint
 renderer is tracked in §5.3.

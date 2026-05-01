@@ -409,7 +409,10 @@ class CustomerJsonSuppressionTests(_CustomerSmokeBase):
         # Don't accidentally widen the suppression to internal
         # audiences — they need the JSON for debugging.
         for aud in ("technical", "pharma"):
-            out_dir = _output_dir(self.id() + ":" + aud)
+            # `_` separator instead of `:` — colons are illegal in
+            # Windows path components and tripped NotADirectoryError
+            # in the reviewer's sandbox.
+            out_dir = _output_dir(self.id() + "_" + aud)
             rc = bd.main([
                 "--cohort", "balboa_ckd",
                 "--audience", aud,
