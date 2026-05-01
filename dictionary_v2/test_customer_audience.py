@@ -7,8 +7,9 @@ build_dictionary.py module (which doesn't know about customer).
 from __future__ import annotations
 
 import importlib.util
+import json
+import shutil
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -21,6 +22,30 @@ _spec = importlib.util.spec_from_file_location("build_dictionary", _V2_PATH)
 bd = importlib.util.module_from_spec(_spec)
 sys.modules["build_dictionary"] = bd
 _spec.loader.exec_module(bd)
+
+
+# Repo-local output dir for file-writing smoke tests. Replaces
+# tempfile.TemporaryDirectory() which has been unreliable in the
+# Windows reviewer sandbox (PermissionError when openpyxl tries to
+# write into the OS temp tree). Lives next to the test file and is
+# gitignored.
+_TEST_OUTPUT_ROOT = Path(__file__).resolve().parent / ".test_outputs"
+
+
+def _output_dir(test_id: str) -> Path:
+    """Return a stable, repo-local directory for one test's artifacts.
+
+    `test_id` is `self.id()` (something like
+    `dictionary_v2.test_customer_audience.CustomerXlsxSmokeTests.
+    test_summary_has_no_metric_value_header`). The directory is
+    cleared at the start of each call so tests start from a known
+    empty state.
+    """
+    out = _TEST_OUTPUT_ROOT / test_id
+    if out.exists():
+        shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 
 def _make_table(name: str) -> "bd.TableRow":
@@ -94,7 +119,6 @@ class CustomerLayoutTests(unittest.TestCase):
         for dropped in ("variant", "column_count", "status", "git_sha",
                         "introspect_version", "schema_snapshot_digest"):
             self.assertNotIn(dropped, xl_keys)
-        # Customer-relevant fields stay.
         for kept in ("cohort", "provider", "disease", "patient_count",
                      "table_count", "generated_at"):
             self.assertIn(kept, xl_keys)
@@ -103,7 +127,6 @@ class CustomerLayoutTests(unittest.TestCase):
         headers = [label for label, _ in bd.tables_layout("customer")]
         self.assertNotIn("Data Source", headers)
         self.assertNotIn("Source Table", headers)
-        # Keep what the reviewer left in.
         for kept in ("Table", "Description", "Inclusion Criteria",
                      "Rows", "Columns", "Patients"):
             self.assertIn(kept, headers)
@@ -117,12 +140,10 @@ class CustomerLayoutTests(unittest.TestCase):
         headers = [label for label, _ in bd.variables_layout("customer")]
         self.assertIn("Inclusion Criteria", headers)
         self.assertIn("Criteria", headers)
-        # Reviewer said remove these three.
         for dropped in ("Coding Schema", "Implemented", "Data Source"):
             self.assertNotIn(dropped, headers)
 
     def test_other_audiences_unaffected(self):
-        # PR-A baseline shape preserved for technical / sales / pharma.
         for aud in ("technical", "sales", "pharma"):
             tables = [l for l, _ in bd.tables_layout(aud)]
             self.assertIn("Data Source", tables, msg=f"{aud} Tables should keep Data Source")
@@ -146,7 +167,6 @@ class CustomerTableFilterTests(unittest.TestCase):
         filtered = bd.filter_for_audience(model, "customer")
         names = {t.table_name for t in filtered.tables}
         self.assertEqual(names, {"person"})
-        # Columns and variables tied to excluded tables also drop.
         self.assertEqual({c.table for c in filtered.columns}, {"person"})
         self.assertEqual({v.table for v in filtered.variables}, {"person"})
 
@@ -161,8 +181,6 @@ class CustomerTableFilterTests(unittest.TestCase):
         self.assertEqual(names, {"person", "cohort_patients"})
 
     def test_sales_keeps_internal_tables(self):
-        # Sales is for the existing internal-sales workbook and was
-        # never asked to drop these tables.
         tables = [_make_table("person"), _make_table("cohort_patients")]
         model = _make_model(tables, [_make_column("person")], [_make_variable("person")])
         filtered = bd.filter_for_audience(model, "sales")
@@ -170,10 +188,18 @@ class CustomerTableFilterTests(unittest.TestCase):
         self.assertEqual(names, {"person", "cohort_patients"})
 
 
-class CustomerXlsxSmokeTests(unittest.TestCase):
-    """End-to-end XLSX checks: Summary has no metric/value header row,
-    sheet column counts match the per-audience layouts, and excluded
-    tables don't appear."""
+class _CustomerSmokeBase(unittest.TestCase):
+    """Shared setUp for the file-writing smoke tests."""
+
+    def setUp(self):
+        tables = [_make_table("person"), _make_table("cohort_patients")]
+        columns = [_make_column("person"), _make_column("cohort_patients")]
+        variables = [_make_variable("person"), _make_variable("cohort_patients")]
+        self.model = _make_model(tables, columns, variables)
+        self.filtered = bd.filter_for_audience(self.model, "customer")
+
+
+class CustomerXlsxSmokeTests(_CustomerSmokeBase):
 
     def setUp(self):
         try:
@@ -181,63 +207,47 @@ class CustomerXlsxSmokeTests(unittest.TestCase):
             import pandas    # noqa: F401
         except ImportError:
             self.skipTest("openpyxl / pandas not installed")
-
-        tables = [_make_table("person"), _make_table("cohort_patients")]
-        columns = [_make_column("person"), _make_column("cohort_patients")]
-        variables = [_make_variable("person"), _make_variable("cohort_patients")]
-        model = _make_model(tables, columns, variables)
-        self.filtered = bd.filter_for_audience(model, "customer")
+        super().setUp()
 
     def test_summary_has_no_metric_value_header(self):
         import openpyxl
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "out.xlsx"
-            bd.write_xlsx(self.filtered, path, audience="customer")
-            wb = openpyxl.load_workbook(path)
-            ws = wb["Summary"]
-            # Row 1 must be the first data row, not the literal labels.
-            row1 = [c.value for c in ws[1]]
-            self.assertEqual(row1, ["cohort", "c"])
-            self.assertNotEqual(row1, ["metric", "value"])
+        path = _output_dir(self.id()) / "out.xlsx"
+        bd.write_xlsx(self.filtered, path, audience="customer")
+        wb = openpyxl.load_workbook(path)
+        ws = wb["Summary"]
+        # Row 1 must be the first data row, not the literal labels.
+        row1 = [c.value for c in ws[1]]
+        self.assertEqual(row1, ["cohort", "c"])
+        self.assertNotEqual(row1, ["metric", "value"])
 
     def test_columns_sheet_has_exactly_four_headers(self):
         import openpyxl
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "out.xlsx"
-            bd.write_xlsx(self.filtered, path, audience="customer")
-            wb = openpyxl.load_workbook(path)
-            ws = wb["Columns"]
-            headers = [c.value for c in ws[1]]
-            self.assertEqual(headers,
-                             ["Table(s)", "Column", "Description", "Field Type"])
+        path = _output_dir(self.id()) / "out.xlsx"
+        bd.write_xlsx(self.filtered, path, audience="customer")
+        wb = openpyxl.load_workbook(path)
+        ws = wb["Columns"]
+        headers = [c.value for c in ws[1]]
+        self.assertEqual(headers,
+                         ["Table(s)", "Column", "Description", "Field Type"])
 
     def test_excluded_tables_absent_from_xlsx(self):
         import openpyxl
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "out.xlsx"
-            bd.write_xlsx(self.filtered, path, audience="customer")
-            wb = openpyxl.load_workbook(path)
-            ws = wb["Tables"]
-            names = [ws.cell(row=r, column=1).value
-                     for r in range(2, ws.max_row + 1)]
-            self.assertNotIn("cohort_patients", names)
-            self.assertEqual(names, ["person"])
+        path = _output_dir(self.id()) / "out.xlsx"
+        bd.write_xlsx(self.filtered, path, audience="customer")
+        wb = openpyxl.load_workbook(path)
+        ws = wb["Tables"]
+        names = [ws.cell(row=r, column=1).value
+                 for r in range(2, ws.max_row + 1)]
+        self.assertNotIn("cohort_patients", names)
+        self.assertEqual(names, ["person"])
 
 
-class CustomerHtmlSmokeTests(unittest.TestCase):
-
-    def setUp(self):
-        tables = [_make_table("person"), _make_table("cohort_patients")]
-        columns = [_make_column("person"), _make_column("cohort_patients")]
-        variables = [_make_variable("person"), _make_variable("cohort_patients")]
-        model = _make_model(tables, columns, variables)
-        self.filtered = bd.filter_for_audience(model, "customer")
+class CustomerHtmlSmokeTests(_CustomerSmokeBase):
 
     def test_html_omits_debug_summary_fields(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "out.html"
-            bd.write_html(self.filtered, path, audience="customer")
-            html = path.read_text()
+        path = _output_dir(self.id()) / "out.html"
+        bd.write_html(self.filtered, path, audience="customer")
+        html = path.read_text()
         self.assertNotIn("<dt>Variant</dt>", html)
         self.assertNotIn("<dt>Git SHA</dt>", html)
         self.assertNotIn("<dt>Schema snapshot</dt>", html)
@@ -245,12 +255,80 @@ class CustomerHtmlSmokeTests(unittest.TestCase):
         self.assertIn("<dt>Date coverage</dt>", html)
 
     def test_html_variables_includes_both_criteria_columns(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "out.html"
-            bd.write_html(self.filtered, path, audience="customer")
-            html = path.read_text()
+        path = _output_dir(self.id()) / "out.html"
+        bd.write_html(self.filtered, path, audience="customer")
+        html = path.read_text()
         self.assertIn("<th>Inclusion Criteria</th>", html)
         self.assertIn("<th>Criteria</th>", html)
+
+
+class CustomerJsonContractTests(_CustomerSmokeBase):
+    """write_json was previously dumping the full CohortModel for every
+    audience, leaking debug fields the customer XLSX/HTML had already
+    dropped. The customer projection mirrors the workbook contract."""
+
+    def _write_and_load(self, audience: str) -> dict:
+        path = _output_dir(f"{self.id()}-{audience}") / f"{audience}.json"
+        # write_json signature is (model, path, audience). For customer we
+        # pass the already-filtered model; for technical we want the full
+        # model so the regression assertion checks the unprojected dump.
+        model = self.filtered if audience == "customer" else self.model
+        bd.write_json(model, path, audience=audience)
+        return json.loads(path.read_text())
+
+    def test_customer_json_omits_debug_top_level_fields(self):
+        payload = self._write_and_load("customer")
+        # Customer JSON must not carry the dataclass top-level metadata
+        # the reviewer flagged; nor should the summary block.
+        for leak in ("variant", "status", "git_sha", "introspect_version",
+                     "schema_snapshot_digest"):
+            self.assertNotIn(leak, payload)
+            self.assertNotIn(leak, payload.get("summary", {}))
+        self.assertNotIn("column_count", payload.get("summary", {}))
+
+    def test_customer_json_variables_drop_coding_implemented_data_source(self):
+        payload = self._write_and_load("customer")
+        self.assertGreater(len(payload["variables"]), 0)
+        for var in payload["variables"]:
+            for leak in ("coding_schema", "implemented", "data_source"):
+                self.assertNotIn(leak, var,
+                    msg=f"customer JSON variable should not contain {leak!r}")
+
+    def test_customer_json_keeps_both_criteria_fields(self):
+        payload = self._write_and_load("customer")
+        var = payload["variables"][0]
+        self.assertIn("inclusion_criteria", var)
+        self.assertIn("criteria", var)
+
+    def test_customer_json_columns_are_only_four_fields(self):
+        payload = self._write_and_load("customer")
+        self.assertGreater(len(payload["columns"]), 0)
+        for col in payload["columns"]:
+            self.assertEqual(set(col.keys()),
+                             {"tables", "column", "description", "field_type"})
+
+    def test_customer_json_tables_drop_data_source_and_source_table(self):
+        payload = self._write_and_load("customer")
+        for tbl in payload["tables"]:
+            self.assertNotIn("data_source", tbl)
+            self.assertNotIn("source_table", tbl)
+
+    def test_customer_json_excludes_internal_tables(self):
+        payload = self._write_and_load("customer")
+        names = [t["table"] for t in payload["tables"]]
+        self.assertNotIn("cohort_patients", names)
+
+    def test_technical_json_keeps_full_dataclass_shape(self):
+        # Regression: non-customer JSON path is unchanged. Top-level
+        # debug fields and full variable shape stay intact.
+        payload = self._write_and_load("technical")
+        for kept in ("variant", "status", "git_sha", "introspect_version",
+                     "schema_snapshot_digest"):
+            self.assertIn(kept, payload)
+        # First variable still carries the full dataclass keys.
+        var = payload["variables"][0]
+        for kept in ("coding_schema", "implemented", "data_source"):
+            self.assertIn(kept, var)
 
 
 if __name__ == "__main__":
