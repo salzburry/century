@@ -404,19 +404,28 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
             )
         out.append(f"- table: `{o.table}`")
         out.append(f"- column: `{o.column}`")
-        # Two SQL clauses are distinct and reviewers need to see
-        # both: the strict `match:` is what the dictionary's
-        # Criteria cell shows; the broader `discovery_scope` is
-        # the WHERE used to find candidate values, which drives
-        # `missing from config`.
-        if o.criteria:
+        # The "criteria" field is only strict when it actually came
+        # from a `match:` block (i.e. it differs from the broader
+        # discovery_scope). Otherwise it's the same fuzzy ILIKE
+        # used to find candidates — labelling that as "strict" would
+        # mislead reviewers into thinking the variable has already
+        # been converted to exact matches.
+        has_strict_criteria = (
+            bool(o.criteria) and o.criteria != o.discovery_scope
+        )
+        if has_strict_criteria:
             out.append(f"- displayed criteria (strict): `{o.criteria}`")
-        else:
-            out.append(f"- displayed criteria (strict): _(none)_")
-        if o.discovery_scope and o.discovery_scope != o.criteria:
             out.append(f"- discovery scope (broad):    `{o.discovery_scope}`")
-        elif not o.discovery_scope:
-            out.append(f"- discovery scope (broad):    _(none — row was skipped)_")
+        elif o.criteria:
+            out.append(f"- criteria: `{o.criteria}`")
+            out.append(
+                f"- discovery scope: same as criteria "
+                f"(no `match:` block configured yet)"
+            )
+        else:
+            out.append(f"- criteria: _(none)_")
+            if o.discovery_scope:
+                out.append(f"- discovery scope: `{o.discovery_scope}`")
         if o.error:
             out.append(f"- **error:** {o.error}")
             out.append("")

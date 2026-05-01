@@ -646,6 +646,25 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertIn("Aspirin 81 MG", captured["sql"])
         self.assertNotIn("WHERE TRUE", captured["sql"])
 
+    def test_report_does_not_label_fuzzy_criteria_as_strict(self):
+        # When there is no match: block, criteria == discovery_scope.
+        # The report must NOT call that "(strict)" — reviewers would
+        # think the variable has been converted to exact matches.
+        o = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin",
+            table="drug_exposure", column="drug_concept_name",
+            criteria="drug_concept_name ILIKE '%aspirin%'",
+            configured_values=[],
+            observed=[("Aspirin 81 MG", 100)],
+            source_pack="ckd_common",
+            discovery_scope="drug_concept_name ILIKE '%aspirin%'",
+        )
+        md = self.mod._fmt_md([o], "balboa_ckd")
+        self.assertNotIn("(strict)", md,
+                         msg="fuzzy ILIKE must not be labeled strict")
+        self.assertIn("ILIKE '%aspirin%'", md)
+        self.assertIn("no `match:` block configured yet", md)
+
     def test_report_distinguishes_displayed_criteria_from_discovery_scope(self):
         # When a variable has both broad criteria: and strict match:,
         # the report must show both — the strict one as the
