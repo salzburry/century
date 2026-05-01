@@ -2189,11 +2189,13 @@ def main(argv: list[str] | None = None) -> int:
         write_xlsx(model, out_dir / f"{stem}.xlsx", audience=args.audience)
     if "html" in args.formats:
         write_html(model, out_dir / f"{stem}.html", audience=args.audience)
-    # JSON is an internal/debug artifact (technical / sales / pharma).
-    # Customer audience targets external stakeholders who read XLSX
-    # or HTML; skip JSON for them rather than maintain a parallel
-    # projection of every layout.
-    if "json" in args.formats and args.audience != "customer":
+    # JSON is an internal/debug artifact (full CohortModel dump,
+    # carries criteria / coding_schema / implemented / patient_pct /
+    # data_source even for trimmed audiences). Stakeholder-facing
+    # audiences — customer and sales — read XLSX or HTML; suppress
+    # JSON for them rather than maintain a parallel projection of
+    # every layout.
+    if "json" in args.formats and args.audience not in ("customer", "sales"):
         write_json(model, out_dir / f"{stem}.json")
 
     return 0

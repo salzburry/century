@@ -591,15 +591,24 @@ Real work items that shouldn't block the core pipeline from being correct:
 
 The program is good enough when:
 
-- Every cohort output has Summary, Tables, Columns, Variables.
-- `provider`, `disease`, `years_of_data`, `% Patient` populate automatically.
+- Each audience ships its agreed-on sheet set (see the audience
+  matrix in §4.3 / §11): `technical` carries all four sheets,
+  `sales` carries Summary + Variables (Tempus-style spec),
+  `pharma` carries Summary + Variables, and `customer` carries
+  trimmed versions of all four.
+- `provider`, `disease`, `years_of_data`, `% Patient` (or
+  `Completeness` in the customer audience) populate
+  automatically.
 - `Category` and `Description` come from config, not manual fill-in.
-- Filenames follow `Output/<schema>_dictionary.{xlsx,html,json}` —
+- Filenames follow `Output/<schema>_dictionary[_<audience>].{xlsx,html}`,
+  plus `.json` only for the internal-facing audiences
+  (`technical`, `pharma`); `customer` and `sales` suppress JSON so
+  stakeholder bundles never carry the full debug CohortModel dump.
   PDF rendering is tracked in §5.3 (PR 7, WeasyPrint, future work).
 - One CLI path runs any cohort; per-cohort differences live in
   `packs/cohorts/<name>.yaml` + `packs/variables/<disease>.yaml`.
-- HTML, XLSX, JSON all render from one `CohortModel`.
-- PII is redacted in sales and pharma outputs.
+- All shipped formats render from one `CohortModel`.
+- PII is redacted in `sales`, `pharma`, and `customer` outputs.
 - Reruns on unchanged inputs are byte-identical (deterministic).
 - Drift detection flags schema changes since the last run.
 - Tests cover canonical model, pack loading, audience filters, PII redaction.
