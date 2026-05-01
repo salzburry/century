@@ -486,7 +486,9 @@ rendering is future work (see §5.3 / PR 7):
 
 - `Output/<schema>_dictionary.html`
 - `Output/<schema>_dictionary.xlsx`
-- `Output/<schema>_dictionary.json` (suppressed for `--audience customer`)
+- `Output/<schema>_dictionary.json` (suppressed for the
+  stakeholder-facing audiences `--audience customer` and
+  `--audience sales`; emitted for `technical` and `pharma`)
 
 Minimum sections by audience:
 
