@@ -33,20 +33,23 @@ trap cleanup EXIT
 
 mkdir -p "$BUNDLE_DIR"
 
-# Files / directories to include. Keep this list short and explicit
-# rather than copying everything in the repo — tests, output
-# directories, and the old runtime zip itself are intentionally
-# excluded.
+# Files / directories to include. Keep this list tight — only what's
+# needed at runtime to generate a dictionary. Tests, caches, the
+# legacy root build script, the cohort-onboarding helper, and the
+# bundle-build script itself are excluded; they live in the source
+# repo and aren't useful inside the runtime artifact.
 FILES=(
   introspect_cohort.py
-  build_dictionary.py
   requirements.txt
   README.md
 )
 DIRS=(
   dictionary_v2
   packs
-  scripts
+)
+# scripts/ is selectively copied — only validate_packs.py is shipped.
+EXTRA_FILES=(
+  scripts/validate_packs.py
 )
 
 for f in "${FILES[@]}"; do
@@ -69,6 +72,13 @@ for d in "${DIRS[@]}"; do
       mkdir -p "$BUNDLE_DIR/$d/$(dirname "$rel")"
       cp "$d/$rel" "$BUNDLE_DIR/$d/$rel"
     done
+  fi
+done
+
+for f in "${EXTRA_FILES[@]}"; do
+  if [[ -f "$f" ]]; then
+    mkdir -p "$BUNDLE_DIR/$(dirname "$f")"
+    cp "$f" "$BUNDLE_DIR/$f"
   fi
 done
 
@@ -258,27 +268,95 @@ are universally appropriate).
 
 ---
 
-## 4. End-to-end workflow
+## 4. End-to-end workflow — worked example: `mtc_aat`
+
+`mtc_aat` is the MTC cohort of patients on anti-amyloid therapies
+(Leqembi / Kisunla / Aduhelm). Its variables pack inherits everything
+from the shared `aat_common` → `adrd_common` chain, so on a fresh
+clone every variable lives in a shared pack — a perfect case for
+`--auto-stub`.
+
+### A. Quickest path (no discovery, just build)
 
 ```bash
-# 1. (Optional, one-time per cohort) discover exact-match candidates.
+# Sanity-check: dry-run uses no DB and proves the packs load.
+python dictionary_v2/build_dictionary.py --cohort mtc_aat --dry-run
+
+# Real build against the warehouse — writes
+# Output/mtc__aat_cohort_dictionary_customer.{xlsx,html}.
+python dictionary_v2/build_dictionary.py \
+    --cohort mtc_aat \
+    --audience customer
+```
+
+That's it for the basic case. Skip to step C if the existing
+`criteria: ILIKE '%...%'` matchers are good enough for this round.
+
+### B. Tighten Criteria with discovery (one-time per cohort)
+
+If you want the dictionary's `Criteria` cells to be exact
+`column IN ('Lecanemab', 'Lecanemab-irmb', ...)` lists drawn
+from the cohort's actual data instead of fuzzy ILIKE:
+
+```bash
+# B1. Read-only report — what the cohort actually contains for
+#     every variable's existing broad criteria. Writes
+#     Output/discovery/mtc_aat/report.md.
+python dictionary_v2/discover_exact_matches.py --cohort mtc_aat
+
+# B2. Same plus a YAML proposal file you can copy from manually.
 python dictionary_v2/discover_exact_matches.py \
-    --cohort balboa_ckd \
+    --cohort mtc_aat \
     --write-suggestions
 
-# 2. Review Output/discovery/balboa_ckd/{report.md,suggested.yaml}.
-
-# 3. Apply approved match: blocks back into the cohort pack.
+# B3. Apply observed values directly into packs/variables/mtc_aat.yaml,
+#     auto-stubbing each shared row into the cohort pack first.
+#     Walks one variable at a time with [UPDATE]/[ADD cohort override]
+#     prompts; answer y / n / all / quit.
 python dictionary_v2/discover_exact_matches.py \
-    --cohort balboa_ckd \
-    --apply --target cohort
+    --cohort mtc_aat \
+    --apply --target cohort --auto-stub
 
-# 4. Build the customer dictionary.
+# B4. (Scripted CI runs) skip the prompt entirely.
+python dictionary_v2/discover_exact_matches.py \
+    --cohort mtc_aat \
+    --apply-yes --target cohort --auto-stub
+```
+
+After step B3/B4, `git diff packs/variables/mtc_aat.yaml` shows
+exactly what was stubbed in. Each new row carries a leading
+`# Auto-stubbed from packs/variables/aat_common.yaml ...` comment.
+
+### C. Build the customer-facing dictionary
+
+```bash
 python dictionary_v2/build_dictionary.py \
-    --cohort balboa_ckd \
+    --cohort mtc_aat \
     --audience customer
+```
 
-# 5. Hand off Output/<schema>_dictionary_customer.{xlsx,html}.
+Output:
+```
+Output/mtc__aat_cohort_dictionary_customer.xlsx
+Output/mtc__aat_cohort_dictionary_customer.html
+```
+
+(JSON is not produced for the `customer` audience by design.)
+
+### D. Hand-off
+The `.xlsx` is what the reviewer signs off on. The `.html` is the
+same content in a single-page browsable form.
+
+### Other audiences for the same cohort
+```bash
+# Internal (debug fields, raw SQL Criteria, PII visible).
+python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience technical
+
+# Sales (drops Columns sheet, drops PII).
+python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales
+
+# Pharma (Summary + Variables only, drops PII).
+python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience pharma
 ```
 
 ---
@@ -299,17 +377,14 @@ errors. Safe to wire into CI.
 ```
 century-dictionary/
 ├── BUNDLE_README.md                    ← you are here
-├── README.md                           ← full project guide
+├── README.md                           ← full project guide (architecture, audiences)
 ├── requirements.txt
 ├── introspect_cohort.py                ← Postgres schema walker
-├── build_dictionary.py                 ← legacy entrypoint
 ├── dictionary_v2/
-│   ├── build_dictionary.py             ← v2 build (audiences, customer)
-│   └── discover_exact_matches.py       ← discovery + --apply
+│   ├── build_dictionary.py             ← main build (audiences, customer)
+│   └── discover_exact_matches.py       ← discovery + --apply / --auto-stub
 ├── scripts/
-│   ├── validate_packs.py
-│   ├── dump_new_schemas.py             ← raw-dump helper
-│   └── build_runtime_bundle.sh         ← rebuild this zip
+│   └── validate_packs.py               ← pack lint (no DB needed)
 └── packs/                              ← cohort + variable + descriptor packs
     ├── categories.yaml
     ├── column_descriptions.yaml
@@ -317,12 +392,15 @@ century-dictionary/
     ├── table_descriptions.yaml
     ├── dictionary_layout.yaml          ← per-audience layout overrides
     ├── STYLE.md
-    ├── cohorts/                        ← per-cohort descriptors
+    ├── cohorts/                        ← per-cohort descriptors (13 cohorts)
     └── variables/                      ← shared <disease>_common + per-cohort
 ```
 
-Tests are intentionally NOT shipped in the runtime bundle. To run
-them, work from the source repo (`python -m unittest`).
+Excluded from the runtime bundle (live in the source repo):
+- `tests/` and `dictionary_v2/test_*.py` — run from a source checkout.
+- The legacy root `build_dictionary.py` — superseded by the v2 module.
+- `scripts/dump_new_schemas.py` — only used to onboard new cohorts.
+- `scripts/build_runtime_bundle.sh` — only used to rebuild this zip.
 
 ---
 
@@ -337,6 +415,10 @@ them, work from the source repo (`python -m unittest`).
 - **`--apply` exits 2 with "requires --target"** — pick one:
   `--target cohort` (safer, per-cohort only) or `--target shared`
   (touches shared packs).
+- **`--apply --target cohort` skips most variables** — they live in
+  shared packs (`*_common.yaml`) and the cohort pack doesn't have
+  them yet. Pass `--auto-stub` to copy each shared row into the
+  cohort pack as a per-cohort override before applying the match block.
 - **Empty Variables sheet** — your cohort's variables pack is
   probably a placeholder pulling from `<disease>_common.yaml`.
   That's normal; the build resolves `include:` chains automatically.
