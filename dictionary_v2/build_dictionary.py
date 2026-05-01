@@ -1377,6 +1377,28 @@ def build_model(
         date_coverage=date_coverage,
     )
 
+    # Sort the three data sheets by (category, secondary key) before
+    # they hit the model. Reviewers expect a-z ordering by category
+    # first and then variable / table / column within each category;
+    # the YAML packs are authored in clinical groupings rather than
+    # alphabetically. Sorting here means every audience and every
+    # output format (xlsx / html / json) gets consistent ordering.
+    # Sort keys are case-insensitive so "Diagnoses" and "diagnoses"
+    # don't split into two clusters.
+    def _ci(s: Any) -> str:
+        return (s or "").strip().lower() if isinstance(s, str) else ""
+
+    table_rows = sorted(
+        table_rows, key=lambda t: (_ci(t.category), _ci(t.table_name)),
+    )
+    column_rows = sorted(
+        column_rows,
+        key=lambda c: (_ci(c.category), _ci(c.table), _ci(c.column)),
+    )
+    variables_rows = sorted(
+        variables_rows, key=lambda v: (_ci(v.category), _ci(v.variable)),
+    )
+
     return CohortModel(
         cohort=pack["cohort_name"],
         provider=pack["provider"],

@@ -1512,6 +1512,98 @@ class DiscoveryApplyTests(unittest.TestCase):
         )
 
 
+class CohortModelSortingTests(unittest.TestCase):
+    """build_model must sort tables/columns/variables a-z by
+    (category, name) so reviewers always see a stable, alphabetical
+    layout — independent of how the YAML packs are authored.
+    """
+
+    def setUp(self):
+        # Stage a deliberately mis-ordered variables pack: categories
+        # are clinically grouped (Vitals before Demographics) and
+        # variables within each category are not yet alphabetical.
+        slug = "_sort_test_pack"
+        path = bd.PACKS_DIR / "variables" / f"{slug}.yaml"
+        path.write_text(
+            "variables:\n"
+            "  - category: Vitals\n"
+            "    variable: Heart Rate\n"
+            "    table: measurement\n"
+            "    column: value_as_number\n"
+            "  - category: Vitals\n"
+            "    variable: Blood Pressure\n"
+            "    table: measurement\n"
+            "    column: value_as_number\n"
+            "  - category: Demographics\n"
+            "    variable: Sex\n"
+            "    table: person\n"
+            "    column: gender_concept_name\n"
+            "  - category: Demographics\n"
+            "    variable: Age\n"
+            "    table: person\n"
+            "    column: year_of_birth\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        # Wire up a synthetic cohort pack pointing at it.
+        cohort_path = bd.PACKS_DIR / "cohorts" / "_sort_test_cohort.yaml"
+        cohort_path.write_text(
+            "provider: TEST\n"
+            "disease: TEST\n"
+            "schema_name: _sort_test_schema\n"
+            "cohort_name: _sort_test_cohort\n"
+            "display_name: Sort Test\n"
+            "variables_pack: _sort_test_pack\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+    def test_variables_sorted_by_category_then_variable(self):
+        model = bd.build_model("_sort_test_cohort", conn=None, dry_run=True)
+        names = [(v.category, v.variable) for v in model.variables]
+        self.assertEqual(
+            names,
+            [("Demographics", "Age"),
+             ("Demographics", "Sex"),
+             ("Vitals", "Blood Pressure"),
+             ("Vitals", "Heart Rate")],
+        )
+
+    def test_sort_is_case_insensitive(self):
+        # A row authored with lowercase category must still cluster
+        # under the same group as the proper-cased category, not
+        # split off into its own bucket.
+        path = bd.PACKS_DIR / "variables" / "_sort_test_case.yaml"
+        path.write_text(
+            "variables:\n"
+            "  - category: demographics\n"
+            "    variable: Apple\n"
+            "    table: t\n"
+            "    column: c\n"
+            "  - category: Demographics\n"
+            "    variable: Banana\n"
+            "    table: t\n"
+            "    column: c\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        cohort = bd.PACKS_DIR / "cohorts" / "_sort_test_case_cohort.yaml"
+        cohort.write_text(
+            "provider: TEST\ndisease: TEST\nschema_name: x\n"
+            "cohort_name: _sort_test_case_cohort\n"
+            "display_name: x\nvariables_pack: _sort_test_case\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort.unlink(missing_ok=True))
+
+        model = bd.build_model("_sort_test_case_cohort", conn=None, dry_run=True)
+        cats = [v.category for v in model.variables]
+        self.assertEqual(cats, ["demographics", "Demographics"],
+                         msg="rows should cluster despite case mismatch")
+
+
 class VariablePackOverrideTests(unittest.TestCase):
     """A cohort pack's local row must replace any inherited row with
     the same (category, variable) key. Without this, --auto-stub's
