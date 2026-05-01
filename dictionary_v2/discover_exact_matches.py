@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,14 +128,38 @@ def _resolve_configured_values(match_block: dict[str, Any] | None) -> list[str]:
 # yields the value distribution, which is meaningless as a Criteria
 # matcher — e.g. Serum Creatinine with column=value_as_number would
 # enumerate 1.0, 1.1, 0.9, ... instead of "Creatinine [Mass/volume]
-# in Serum or Plasma". Discovery refuses to enumerate these unless
-# `match.column` redirects to a real matcher column.
+# in Serum or Plasma". `value_as_concept_name` is in here too because
+# observation rows store the answer (English / Spanish / ...) there
+# while the clinical matcher lives in observation_concept_name.
+# Discovery refuses to enumerate these unless `match.column` redirects
+# to a real matcher column, or the existing `criteria:` makes the
+# matcher column inferrable.
 _VALUE_COLUMN_NAMES: frozenset[str] = frozenset({
     "value_as_number", "value_as_string", "value_as_concept_id",
+    "value_as_concept_name",
     "value_as_datetime", "value_as_date",
     "range_low", "range_high", "unit_concept_id", "unit_source_value",
     "quantity", "days_supply", "refills",
 })
+
+
+# Match the LHS of the first comparison in a `criteria:` clause when
+# it's a *_concept_name column — common shape is
+# `observation_concept_name ILIKE '%language%'`. Lets discovery infer
+# the right matcher for variables whose `column:` is a value column.
+_CRITERIA_LHS_RE = re.compile(
+    r"\b([a-z_]+_concept_name)\b\s*(?:ILIKE\b|=|IN\b)",
+    re.IGNORECASE,
+)
+
+
+def _infer_matcher_from_criteria(criteria: str) -> str:
+    """Return the first `<x>_concept_name` column referenced on the
+    LHS of a comparison in `criteria`, or "" if none."""
+    if not criteria:
+        return ""
+    m = _CRITERIA_LHS_RE.search(criteria)
+    return m.group(1) if m else ""
 
 
 def _resolve_matcher_column(v: dict[str, Any]) -> tuple[str, str]:
@@ -145,23 +170,46 @@ def _resolve_matcher_column(v: dict[str, Any]) -> tuple[str, str]:
 
     Priority:
       1. `match.column` if present — the explicit clinical matcher.
-      2. Variable's `column` if it's not a value column.
-      3. Skip with a guidance message asking for `match.column`.
+      2. Inference from `criteria:` LHS when that's a `*_concept_name`
+         column. Handles e.g. column=value_as_concept_name with
+         criteria=observation_concept_name ILIKE '%language%'.
+      3. Variable's `column` if it's a non-value column.
+      4. Skip with guidance asking for `match.column`.
     """
     match = v.get("match")
     if isinstance(match, dict) and (match.get("column") or "").strip():
         return match["column"].strip(), ""
+
+    criteria = (v.get("criteria") or "").strip()
+    inferred = _infer_matcher_from_criteria(criteria)
     column = (v.get("column") or "").strip()
-    if not column:
-        return "", "missing column"
     lowered = column.lower()
-    if lowered in _VALUE_COLUMN_NAMES or lowered.endswith("_date") \
-            or lowered.endswith("_datetime"):
+    is_value_col = (
+        lowered in _VALUE_COLUMN_NAMES
+        or lowered.endswith("_date")
+        or lowered.endswith("_datetime")
+    )
+
+    # If the variable's display column is a value column, only the
+    # inferred matcher is safe to group by. Otherwise we'd enumerate
+    # values (English / Spanish / 1.0 / 1.1) rather than concepts.
+    if is_value_col:
+        if inferred:
+            return inferred, ""
         return "", (
             f"column `{column}` is a value/date column; configure "
             f"`match.column` (e.g. measurement_concept_name) to enable "
             f"discovery"
         )
+
+    if not column:
+        return "", "missing column"
+
+    # Display column is itself a concept-style column. Prefer it,
+    # unless the criteria clearly points at a different concept
+    # column (defensive — keeps inferred wins when both are present).
+    if inferred and inferred != column:
+        return inferred, ""
     return column, ""
 
 
