@@ -357,9 +357,12 @@ exactly:
 Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness
 ```
 
-`Value Sets` and `Proposal` cells will be empty — those come from
-curated YAML fields (see Step 3 below). The dry-run skips
-DB-derived columns, so `Completeness` is `—`.
+`Value Sets` and `Proposal` cells will be empty in dry-run because
+there's no DB connection — at runtime the `Value Sets` cell falls
+back to the observed top-N values from the live cohort, newline-
+separated, no counts. `Proposal` and the curated-override path for
+`Value Sets` come from YAML (see Step 3 below). `Completeness` is
+`—` for dry-run since it's also DB-derived.
 
 ---
 
@@ -381,11 +384,15 @@ Hand off the xlsx + html as the sales artifact.
 
 ---
 
-## Step 3 (optional) — populate `Value Sets` and `Proposal`
+## Step 3 (optional) — override `Value Sets` and set `Proposal`
 
-Both columns are authored in the cohort's variables YAML
-(`packs/variables/mtc_aat.yaml`) under each `variable:` row.
-Edit the file directly; the next `--audience sales` run picks them up.
+By default the `Value Sets` cell shows the cohort's observed top-N
+values (newline-separated, no counts). If you want a curated
+clinical enum instead — e.g. always render the canonical
+seven-tier education list whether or not every value is in the
+data — author it under the variable in the cohort's variables YAML
+(`packs/variables/mtc_aat.yaml`). The curated list, when present,
+overrides the observed-fallback. `Proposal` is always YAML-only.
 
 ```yaml
 - category: Demographics

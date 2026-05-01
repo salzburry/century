@@ -209,9 +209,9 @@ class CustomerTableFilterTests(unittest.TestCase):
              "Notes", "Type", "Proposal", "Completeness"],
         )
 
-    def test_sales_value_set_renders_newline_separated(self):
-        # Multi-value `value_set` lists render one-per-line so xlsx
-        # cells display the same way the reference Google sheet does.
+    def test_sales_value_set_renders_curated_yaml_when_present(self):
+        # Curated `value_set:` YAML wins — newline-separated for
+        # the xlsx cell.
         row = bd.VariableRow(
             category="Demographics", variable="Education level",
             description="The patient's highest level of education received.",
@@ -229,6 +229,42 @@ class CustomerTableFilterTests(unittest.TestCase):
         self.assertEqual(rendered["Type"], "Abstracted")
         self.assertEqual(rendered["Proposal"], "Custom")
         self.assertEqual(rendered["Completeness"], "100.0%")
+
+    def test_sales_value_set_falls_back_to_observed_top_values(self):
+        # No curated value_set: in YAML — Value Sets cell falls back
+        # to the observed top-N labels (already populated on
+        # `v.values` as a comma-joined string), reformatted newline-
+        # separated. No counts, no percentages.
+        row = bd.VariableRow(
+            category="Medications", variable="Anti-amyloid Therapy",
+            description="Anti-amyloid mAb administrations.",
+            table="drug_exposure", column="drug_concept_name",
+            criteria="", values="Lecanemab, Lecanemab-irmb, Leqembi, Donanemab-azbt, Kisunla",
+            distribution="ignored for sales", median_iqr="",
+            completeness_pct=87.5, implemented="Yes", patient_pct=80.0,
+            extraction_type="Structured", notes="",
+            value_set=[], proposal="",
+        )
+        rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
+        self.assertEqual(
+            rendered["Value Sets"],
+            "Lecanemab\nLecanemab-irmb\nLeqembi\nDonanemab-azbt\nKisunla",
+        )
+
+    def test_sales_value_set_empty_when_no_data_no_curation(self):
+        # Free-text columns, dry-run rows, etc. — no observed values,
+        # no curated set. Cell renders empty rather than rendering "—".
+        row = bd.VariableRow(
+            category="Demographics", variable="Notes",
+            description="Free text.", table="observation",
+            column="note_text", criteria="",
+            values="", distribution="", median_iqr="",
+            completeness_pct=None, implemented="No", patient_pct=None,
+            extraction_type="Unstructured", notes="",
+            value_set=[], proposal="",
+        )
+        rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
+        self.assertEqual(rendered["Value Sets"], "")
 
     def test_sales_visibility_is_variables_only(self):
         vis = bd.AUDIENCE_VISIBILITY["sales"]

@@ -1747,14 +1747,30 @@ _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
 # Completeness is added per follow-up so the sales reader can
 # also see population coverage at a glance.
 #
-# `Value Sets` and `Proposal` come from curated YAML fields
-# (`value_set:`, `proposal:`); rows that haven't been curated yet
-# render with empty cells. Type maps directly to extraction_type.
+# `Value Sets` falls back through three sources:
+#   1. Curated YAML `value_set:` list (if a clinician hand-authored
+#      a canonical enum, that's authoritative).
+#   2. Otherwise the observed top-N value labels — same data already
+#      in `v.values` (comma-joined for legacy Variables sheets), just
+#      reformatted newline-separated to match the reviewer's
+#      Tempus-style cell layout. No counts, no percentages.
+#   3. Empty when neither is available (dry-run rows, free-text
+#      columns, etc.).
+# `Proposal` comes from the curated YAML field. Type maps directly
+# to extraction_type.
+def _sales_value_sets_cell(v: Any) -> str:
+    if v.value_set:
+        return "\n".join(v.value_set)
+    if (v.values or "").strip():
+        return "\n".join(s.strip() for s in v.values.split(",") if s.strip())
+    return ""
+
+
 _SALES_VARIABLES_LAYOUT: list[tuple[str, Any]] = [
     ("Category",    lambda v: v.category),
     ("Variable",    lambda v: v.variable),
     ("Description", lambda v: v.description),
-    ("Value Sets",  lambda v: "\n".join(v.value_set)),
+    ("Value Sets",  _sales_value_sets_cell),
     ("Notes",       lambda v: v.notes),
     ("Type",        lambda v: v.extraction_type),
     ("Proposal",    lambda v: v.proposal),
