@@ -711,6 +711,20 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip DB; report config-only with no observations")
     args = parser.parse_args(argv)
 
+    # Validate the --apply contract before any DB work or report
+    # writing — a live run shouldn't spend time querying the
+    # warehouse only to discover the CLI args were incomplete.
+    if (args.apply or args.apply_yes) and not args.target:
+        print(
+            "[apply] --apply requires --target {cohort|shared}. "
+            "Pick `cohort` to write to packs/variables/"
+            f"{args.cohort}.yaml only (safer), or `shared` to "
+            "write to each variable's source pack (touches files "
+            "that other cohorts include).",
+            file=sys.stderr,
+        )
+        return 2
+
     out_dir = Path(args.out_dir) / args.cohort
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -759,16 +773,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.apply or args.apply_yes:
-        if not args.target:
-            print(
-                "[apply] --apply requires --target {cohort|shared}. "
-                "Pick `cohort` to write to packs/variables/"
-                f"{args.cohort}.yaml only (safer), or `shared` to "
-                "write to each variable's source pack (touches files "
-                "that other cohorts include).",
-                file=sys.stderr,
-            )
-            return 2
+        # --target was already validated up front (see top of main()),
+        # so by this point we know it's set and DB work / report
+        # writing has succeeded.
         apply_suggestions(
             observations,
             target=args.target,

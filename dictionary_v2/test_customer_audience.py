@@ -961,6 +961,25 @@ class DiscoveryApplyTests(unittest.TestCase):
             rc, 2, msg="--apply without --target should exit 2",
         )
 
+    def test_main_apply_without_target_skips_discovery(self):
+        # Contract failure must short-circuit before DB work or any
+        # report files get written. The dry-run path is the cheap
+        # proxy for "did we do real work" — it walks the pack and
+        # produces report.md. Argument validation should fire first.
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--cohort", "balboa_ckd",
+            "--out-dir", str(out_dir),
+            "--dry-run",
+            "--apply",   # without --target
+        ])
+        self.assertEqual(rc, 2)
+        # Cohort sub-dir must not exist — discovery never ran.
+        self.assertFalse(
+            (out_dir / "balboa_ckd" / "report.md").exists(),
+            msg="discovery should not run when --apply is invalid",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
