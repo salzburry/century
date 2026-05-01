@@ -7,7 +7,6 @@ build_dictionary.py module (which doesn't know about customer).
 from __future__ import annotations
 
 import importlib.util
-import json
 import shutil
 import sys
 import unittest
@@ -262,73 +261,30 @@ class CustomerHtmlSmokeTests(_CustomerSmokeBase):
         self.assertIn("<th>Criteria</th>", html)
 
 
-class CustomerJsonContractTests(_CustomerSmokeBase):
-    """write_json was previously dumping the full CohortModel for every
-    audience, leaking debug fields the customer XLSX/HTML had already
-    dropped. The customer projection mirrors the workbook contract."""
+class CustomerJsonSuppressionTests(_CustomerSmokeBase):
+    """JSON is an internal/debug artifact; customer audience targets
+    external stakeholders who read XLSX/HTML. main() suppresses JSON
+    output for customer rather than maintaining a parallel projection."""
 
-    def _write_and_load(self, audience: str) -> dict:
-        path = _output_dir(f"{self.id()}-{audience}") / f"{audience}.json"
-        # write_json signature is (model, path, audience). For customer we
-        # pass the already-filtered model; for technical we want the full
-        # model so the regression assertion checks the unprojected dump.
-        model = self.filtered if audience == "customer" else self.model
-        bd.write_json(model, path, audience=audience)
-        return json.loads(path.read_text())
-
-    def test_customer_json_omits_debug_top_level_fields(self):
-        payload = self._write_and_load("customer")
-        # Customer JSON must not carry the dataclass top-level metadata
-        # the reviewer flagged; nor should the summary block.
-        for leak in ("variant", "status", "git_sha", "introspect_version",
-                     "schema_snapshot_digest"):
-            self.assertNotIn(leak, payload)
-            self.assertNotIn(leak, payload.get("summary", {}))
-        self.assertNotIn("column_count", payload.get("summary", {}))
-
-    def test_customer_json_variables_drop_coding_implemented_data_source(self):
-        payload = self._write_and_load("customer")
-        self.assertGreater(len(payload["variables"]), 0)
-        for var in payload["variables"]:
-            for leak in ("coding_schema", "implemented", "data_source"):
-                self.assertNotIn(leak, var,
-                    msg=f"customer JSON variable should not contain {leak!r}")
-
-    def test_customer_json_keeps_both_criteria_fields(self):
-        payload = self._write_and_load("customer")
-        var = payload["variables"][0]
-        self.assertIn("inclusion_criteria", var)
-        self.assertIn("criteria", var)
-
-    def test_customer_json_columns_are_only_four_fields(self):
-        payload = self._write_and_load("customer")
-        self.assertGreater(len(payload["columns"]), 0)
-        for col in payload["columns"]:
-            self.assertEqual(set(col.keys()),
-                             {"tables", "column", "description", "field_type"})
-
-    def test_customer_json_tables_drop_data_source_and_source_table(self):
-        payload = self._write_and_load("customer")
-        for tbl in payload["tables"]:
-            self.assertNotIn("data_source", tbl)
-            self.assertNotIn("source_table", tbl)
-
-    def test_customer_json_excludes_internal_tables(self):
-        payload = self._write_and_load("customer")
-        names = [t["table"] for t in payload["tables"]]
-        self.assertNotIn("cohort_patients", names)
-
-    def test_technical_json_keeps_full_dataclass_shape(self):
-        # Regression: non-customer JSON path is unchanged. Top-level
-        # debug fields and full variable shape stay intact.
-        payload = self._write_and_load("technical")
-        for kept in ("variant", "status", "git_sha", "introspect_version",
-                     "schema_snapshot_digest"):
-            self.assertIn(kept, payload)
-        # First variable still carries the full dataclass keys.
-        var = payload["variables"][0]
-        for kept in ("coding_schema", "implemented", "data_source"):
-            self.assertIn(kept, var)
+    def test_main_skips_json_for_customer(self):
+        # Drive main() end-to-end for one cohort. Use --dry-run so the
+        # introspection step doesn't need a database connection.
+        out_dir = _output_dir(self.id())
+        argv = [
+            "--cohort", "balboa_ckd",
+            "--audience", "customer",
+            "--formats", "xlsx", "html", "json",
+            "--out-dir", str(out_dir),
+            "--dry-run",
+        ]
+        rc = bd.main(argv)
+        self.assertEqual(rc, 0)
+        files = sorted(p.name for p in out_dir.iterdir() if p.is_file())
+        # JSON must be absent; XLSX + HTML still get written.
+        self.assertFalse(any(f.endswith(".json") for f in files),
+                         msg=f"customer audience must not write JSON, got {files}")
+        self.assertTrue(any(f.endswith(".xlsx") for f in files), msg=files)
+        self.assertTrue(any(f.endswith(".html") for f in files), msg=files)
 
 
 if __name__ == "__main__":

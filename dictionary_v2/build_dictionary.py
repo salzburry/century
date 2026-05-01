@@ -1842,78 +1842,15 @@ def write_html(model: CohortModel, out_path: Path,
     print(f"Wrote {out_path}", file=sys.stderr)
 
 
-# Display labels are renderer-friendly ("Table(s)", "% Patient",
-# "Median (IQR)") but make poor JSON keys. Map to canonical snake_case
-# so the customer JSON view stays mechanical / programmable.
-_JSON_KEY_OVERRIDES: dict[str, str] = {
-    "Table(s)":               "tables",
-    "Column(s)":              "columns",
-    "% Patient":              "patient_pct",
-    "% Patients With Value":  "patient_pct",
-    "Median (IQR)":           "median_iqr",
-    "Inclusion Criteria":     "inclusion_criteria",
-    "Field Type":             "field_type",
-    "Coding Schema":          "coding_schema",
-    "Data Source":            "data_source",
-}
+def write_json(model: CohortModel, out_path: Path) -> None:
+    """Write a full-dump JSON sidecar.
 
-
-def _layout_key(label: str) -> str:
-    if label in _JSON_KEY_OVERRIDES:
-        return _JSON_KEY_OVERRIDES[label]
-    slug = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
-    return slug or label
-
-
-def _customer_json_view(model: CohortModel) -> dict[str, Any]:
-    """Build a customer JSON projection that matches the XLSX/HTML
-    contract — only the fields the customer audience can see, no debug
-    metadata, no internal scaffolding tables (already filtered upstream)."""
-    summary: dict[str, Any] = {}
-    for xl_label, _, fn in summary_layout("customer"):
-        if xl_label is None:
-            continue
-        summary[xl_label] = fn(model)
-    # Date coverage stays as a structured object too, for consumers
-    # that want the parts without re-parsing the merged HTML string.
-    summary["date_coverage"] = {
-        "min_date":      model.summary.date_coverage.min_date,
-        "max_date":      model.summary.date_coverage.max_date,
-        "years_of_data": model.summary.date_coverage.years_of_data,
-    }
-
-    def _project(layout, items):
-        return [
-            {_layout_key(label): fn(item) for label, fn in layout}
-            for item in items
-        ]
-
-    return {
-        "summary":   summary,
-        "tables":    _project(tables_layout("customer"),    model.tables),
-        "columns":   _project(columns_layout("customer"),   model.columns),
-        "variables": _project(variables_layout("customer"), model.variables),
-    }
-
-
-def write_json(model: CohortModel, out_path: Path,
-               audience: str = "technical") -> None:
-    """Write a JSON sidecar.
-
-    For technical / sales / pharma we dump the full CohortModel — that's
-    the long-standing contract. For customer we project the model
-    through the per-audience layouts so the JSON matches what the
-    customer XLSX/HTML actually expose; otherwise the JSON would leak
-    debug fields (variant, status, git_sha, …) and variable-level
-    fields (coding_schema, implemented, data_source) that the
-    customer sheets intentionally drop.
+    JSON is an internal/debug artifact — stakeholders read XLSX or HTML.
+    The customer audience skips JSON entirely (see main()); the other
+    audiences get the full CohortModel for debugging.
     """
-    if audience == "customer":
-        payload: Any = _customer_json_view(model)
-    else:
-        payload = model.to_dict()
     out_path.write_text(
-        json.dumps(payload, indent=2, default=str), encoding="utf-8",
+        json.dumps(model.to_dict(), indent=2, default=str), encoding="utf-8",
     )
     print(f"Wrote {out_path}", file=sys.stderr)
 
@@ -1967,8 +1904,12 @@ def main(argv: list[str] | None = None) -> int:
         write_xlsx(model, out_dir / f"{stem}.xlsx", audience=args.audience)
     if "html" in args.formats:
         write_html(model, out_dir / f"{stem}.html", audience=args.audience)
-    if "json" in args.formats:
-        write_json(model, out_dir / f"{stem}.json", audience=args.audience)
+    # JSON is an internal/debug artifact (technical / sales / pharma).
+    # Customer audience targets external stakeholders who read XLSX
+    # or HTML; skip JSON for them rather than maintain a parallel
+    # projection of every layout.
+    if "json" in args.formats and args.audience != "customer":
+        write_json(model, out_dir / f"{stem}.json")
 
     return 0
 
