@@ -245,7 +245,14 @@ def load_cohort_pack(cohort: str) -> dict[str, Any]:
 
 
 def load_variables_pack(disease_slug: str) -> list[dict[str, Any]]:
-    """Load packs/variables/<slug>.yaml and resolve any `include:` list."""
+    """Load packs/variables/<slug>.yaml and resolve any `include:` list.
+
+    Override semantics: local rows replace inherited rows that share
+    the same (category, variable) key, so a cohort pack can carry a
+    per-cohort `match:` block that supersedes a shared
+    <disease>_common.yaml's fuzzy ILIKE definition for that cohort
+    without producing duplicates. New local rows are appended.
+    """
     if not disease_slug:
         return []
     path = PACKS_DIR / "variables" / f"{disease_slug}.yaml"
@@ -256,7 +263,23 @@ def load_variables_pack(disease_slug: str) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for inc in data.get("include") or []:
         result.extend(load_variables_pack(inc))
-    result.extend(data.get("variables") or [])
+
+    def _key(r: dict[str, Any]) -> tuple[str, str]:
+        return (
+            (r.get("category") or "").strip(),
+            (r.get("variable") or "").strip(),
+        )
+
+    index_by_key: dict[tuple[str, str], int] = {
+        _key(r): i for i, r in enumerate(result)
+    }
+    for local_row in (data.get("variables") or []):
+        key = _key(local_row)
+        if key in index_by_key:
+            result[index_by_key[key]] = local_row
+        else:
+            index_by_key[key] = len(result)
+            result.append(local_row)
     return result
 
 

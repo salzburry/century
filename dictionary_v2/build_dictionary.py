@@ -254,7 +254,20 @@ def load_cohort_pack(cohort: str) -> dict[str, Any]:
 
 
 def load_variables_pack(disease_slug: str) -> list[dict[str, Any]]:
-    """Load packs/variables/<slug>.yaml and resolve any `include:` list."""
+    """Load packs/variables/<slug>.yaml and resolve any `include:` list.
+
+    Override semantics: this pack's local rows replace any inherited
+    row with the same (category, variable) key. New local rows that
+    don't match anything inherited are appended at the end. This lets
+    a cohort pack carry a per-cohort `match:` block that *replaces*
+    the shared `<disease>_common.yaml`'s fuzzy ILIKE definition for
+    that cohort only — without polluting the shared pack and without
+    producing duplicate rows in the resolved variable list.
+
+    Inheritance order matches the include declaration: leftmost
+    include resolved first, rightmost include can override siblings,
+    and the local pack's `variables:` overrides everything inherited.
+    """
     if not disease_slug:
         return []
     path = PACKS_DIR / "variables" / f"{disease_slug}.yaml"
@@ -262,10 +275,33 @@ def load_variables_pack(disease_slug: str) -> list[dict[str, Any]]:
         sys.stderr.write(f"[warn] variables pack not found: {path} -> Page 4 will be empty\n")
         return []
     data = _yaml_load(path)
+
+    # Resolve includes first. Each include's rows can themselves
+    # already be the result of overrides at deeper levels of the chain.
     result: list[dict[str, Any]] = []
     for inc in data.get("include") or []:
         result.extend(load_variables_pack(inc))
-    result.extend(data.get("variables") or [])
+
+    # Apply this pack's local rows as overrides on top of the
+    # inherited rows. Same (category, variable) → in-place replace
+    # (preserving position so audience layouts stay stable). New
+    # row → append.
+    def _key(r: dict[str, Any]) -> tuple[str, str]:
+        return (
+            (r.get("category") or "").strip(),
+            (r.get("variable") or "").strip(),
+        )
+
+    index_by_key: dict[tuple[str, str], int] = {
+        _key(r): i for i, r in enumerate(result)
+    }
+    for local_row in (data.get("variables") or []):
+        key = _key(local_row)
+        if key in index_by_key:
+            result[index_by_key[key]] = local_row
+        else:
+            index_by_key[key] = len(result)
+            result.append(local_row)
     return result
 
 
