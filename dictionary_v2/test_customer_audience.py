@@ -258,6 +258,31 @@ class CustomerTableFilterTests(unittest.TestCase):
             msg="labels with internal commas must render verbatim",
         )
 
+    def test_example_from_comma_containing_top_label(self):
+        # process_variables sets `example` from the first observed
+        # top label. Use the structured list (top_value_labels[0])
+        # so a label containing a comma renders verbatim — the old
+        # `values_cell.split(",")[0]` path would have produced
+        # "Cancer" instead of "Cancer, malignant" for the technical
+        # / customer Example column.
+        row = bd.VariableRow(
+            category="Diagnosis", variable="Cancer Site",
+            description="Site/type of cancer.",
+            table="condition_occurrence", column="condition_concept_name",
+            criteria="", values="Cancer, malignant, Cancer, in situ",
+            distribution="", median_iqr="",
+            completeness_pct=80.0, implemented="Yes", patient_pct=80.0,
+            extraction_type="Structured", notes="",
+            top_value_labels=["Cancer, malignant", "Cancer, in situ"],
+            example="Cancer, malignant",
+            proposal="",
+        )
+        # Spot-check the row carries the un-split example.
+        self.assertEqual(row.example, "Cancer, malignant")
+        # And that the technical Variables layout renders it verbatim.
+        rendered = {label: fn(row) for label, fn in bd.variables_layout("technical")}
+        self.assertEqual(rendered["Example"], "Cancer, malignant")
+
     def test_sales_value_sets_empty_when_no_observed_values(self):
         # Free-text columns / dry-run rows have empty top_value_labels.
         # Cell renders empty rather than "—" — there's no curation

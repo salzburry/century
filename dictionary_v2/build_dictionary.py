@@ -1092,12 +1092,15 @@ def resolve_variables(
         # information_schema.
         field_type = column_types.get((table, column), "")
 
-        # Single representative example value. Prefer the first
-        # observed top-value; if categorical sampling didn't fire (date
-        # / continuous), parse Min from the distribution cell.
+        # Single representative example value. Prefer the structured
+        # top_value_labels list — labels can contain commas (OMOP
+        # concept names like "Cancer, malignant"), so splitting
+        # values_cell would fragment them. Fall back to parsing the
+        # distribution cell's "Min: ..." prefix when categorical
+        # sampling didn't fire (date / continuous).
         example = ""
-        if values_cell:
-            example = values_cell.split(",")[0].strip()
+        if top_value_labels:
+            example = top_value_labels[0]
         elif distribution_cell:
             m = re.search(r"Min:\s*([^,;]+)", distribution_cell)
             if m:
