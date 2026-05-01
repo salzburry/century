@@ -402,7 +402,8 @@ Build one canonical object before any renderer runs.
 }
 ```
 
-HTML, PDF, XLSX, and JSON all render from this one object.
+HTML, XLSX, and JSON all render from this one object today; the
+PDF renderer (PR 7, WeasyPrint) plugs into the same shape.
 Reproducibility stamp (`generated_at`, `git_sha`, `introspect_version`,
 `schema_snapshot_digest`) is mandatory for auditability.
 
@@ -458,12 +459,12 @@ The audience presets and the PII tagging ship in the same PR.
 
 ## 11. Output contract
 
-Every run can produce all four formats from the same model:
+Every run can produce three formats from the same model. PDF
+rendering is future work (see §5.3 / PR 7):
 
 - `Output/<schema>_dictionary.html`
-- `Output/<schema>_dictionary.pdf`
 - `Output/<schema>_dictionary.xlsx`
-- `Output/<schema>_dictionary.json`
+- `Output/<schema>_dictionary.json` (suppressed for `--audience customer`)
 
 Minimum sections by audience:
 
@@ -472,6 +473,7 @@ Minimum sections by audience:
 | technical | ✓ | ✓ | ✓ | ✓ |
 | sales | ✓ | ✓ | — | ✓ |
 | pharma | ✓ | — | — | ✓ |
+| customer | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) | ✓ (trimmed) |
 
 ## 12. Shipping order
 
@@ -571,15 +573,14 @@ Real work items that shouldn't block the core pipeline from being correct:
 
 The program is good enough when:
 
-- PDFs are rendered directly from HTML — no browser chrome, no OCR
-  corruption.
 - Every cohort output has Summary, Tables, Columns, Variables.
 - `provider`, `disease`, `years_of_data`, `% Patient` populate automatically.
 - `Category` and `Description` come from config, not manual fill-in.
-- Filenames follow `Output/<schema>_dictionary.{xlsx,html,pdf,json}`.
+- Filenames follow `Output/<schema>_dictionary.{xlsx,html,json}` —
+  PDF rendering is tracked in §5.3 (PR 7, WeasyPrint, future work).
 - One CLI path runs any cohort; per-cohort differences live in
   `packs/cohorts/<name>.yaml` + `packs/variables/<disease>.yaml`.
-- HTML, PDF, XLSX, JSON all render from one `CohortModel`.
+- HTML, XLSX, JSON all render from one `CohortModel`.
 - PII is redacted in sales and pharma outputs.
 - Reruns on unchanged inputs are byte-identical (deterministic).
 - Drift detection flags schema changes since the last run.
