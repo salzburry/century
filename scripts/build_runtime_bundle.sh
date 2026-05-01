@@ -147,7 +147,7 @@ nimbus_copd, rmn_alzheimers, rvc_amd_curated, rvc_dr_curated
 | `--audience` | What ships | When to use |
 |---|---|---|
 | `technical` (default) | Full Summary + Tables + Columns + Variables, all debug fields, raw SQL Criteria, PII visible. | Internal review. |
-| `sales` | Drops the Columns sheet and PII rows. | Account / sales-engineering decks. |
+| `sales` | Tempus-style spec: Summary cover + single Variables sheet (`Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness`). Tables + Columns sheets dropped. PII rows dropped. `Value Sets` and `Proposal` come from curated YAML fields (`value_set:`, `proposal:`). | Sales / pharma-partner spec. |
 | `pharma` | Only Summary + Variables; Tables & Columns hidden; PII dropped. | Pharma partner outputs. |
 | `customer` | All four sheets but trimmed (drops debug fields like git_sha / variant / column_count, drops internal scaffolding tables, drops PII rows). Keeps the configured `Criteria` column side-by-side with `Inclusion Criteria` per reviewer feedback. JSON not produced. | Customer-facing dictionary — what the reviewer signs off on. |
 

@@ -193,6 +193,13 @@ class VariableRow:
     example: str = ""
     coding_schema: str = ""
     data_source: str = ""
+    # Tempus-style sales-spec metadata. `value_set` is a curated list
+    # of clinical reference values (rendered newline-separated in the
+    # Value Sets cell); `proposal` is the Standard / Custom tag.
+    # Both are authored in the variables YAML and default to empty so
+    # un-curated rows still build.
+    value_set: list[str] = field(default_factory=list)
+    proposal: str = ""
 
 
 @dataclass
@@ -1093,6 +1100,8 @@ def resolve_variables(
             example=example,
             coding_schema=coding_schema,
             data_source=derive_data_source(extraction, table, explicit_data_source),
+            value_set=[str(x) for x in (v.get("value_set") or [])],
+            proposal=(v.get("proposal") or "").strip(),
         ))
     return out
 
@@ -1230,6 +1239,8 @@ def build_model(
                 data_source=derive_data_source(
                     extraction, table, (v.get("data_source") or "").strip(),
                 ),
+                value_set=[str(x) for x in (v.get("value_set") or [])],
+                proposal=(v.get("proposal") or "").strip(),
             ))
     else:
         total_patients = fetch_person_count(conn, schema)
@@ -1356,7 +1367,11 @@ def build_model(
 # the model filter and the renderer omits.
 AUDIENCE_VISIBILITY: dict[str, dict[str, bool]] = {
     "technical": {"summary": True, "tables": True, "columns": True, "variables": True},
-    "sales":     {"summary": True, "tables": True, "columns": False, "variables": True},
+    # Sales now ships the Tempus-style Variables sheet only — the
+    # reviewer's reference layout is a single sheet, so Tables /
+    # Columns are dropped. Summary stays on (provider/disease/dates
+    # context) but its header row is suppressed in write_xlsx.
+    "sales":     {"summary": True, "tables": False, "columns": False, "variables": True},
     "pharma":    {"summary": True, "tables": False, "columns": False, "variables": True},
     # Customer audience (PR-B). Opt-in via `--audience customer`. Keeps
     # all four sheets visible but trims columns and filters internal
@@ -1653,6 +1668,26 @@ _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
 ]
 
 
+# Sales layout: stand-alone Tempus-style spec sheet. Reviewer's
+# reference workbook (CH-Tempus Variables) uses these 7 columns;
+# Completeness is added per follow-up so the sales reader can
+# also see population coverage at a glance.
+#
+# `Value Sets` and `Proposal` come from curated YAML fields
+# (`value_set:`, `proposal:`); rows that haven't been curated yet
+# render with empty cells. Type maps directly to extraction_type.
+_SALES_VARIABLES_LAYOUT: list[tuple[str, Any]] = [
+    ("Category",    lambda v: v.category),
+    ("Variable",    lambda v: v.variable),
+    ("Description", lambda v: v.description),
+    ("Value Sets",  lambda v: "\n".join(v.value_set)),
+    ("Notes",       lambda v: v.notes),
+    ("Type",        lambda v: v.extraction_type),
+    ("Proposal",    lambda v: v.proposal),
+    ("Completeness", lambda v: _fmt_pct(v.completeness_pct)),
+]
+
+
 def variables_layout(audience: str) -> list[tuple[str, Any]]:
     """Variables sheet layout for the given audience.
 
@@ -1660,8 +1695,11 @@ def variables_layout(audience: str) -> list[tuple[str, Any]]:
       - technical: head + Criteria + technical tail (SQL Criteria visible)
       - customer:  head + Criteria + customer tail (both prose Inclusion
                    Criteria and configured Criteria visible side by side)
-      - sales / pharma: head + technical tail (no raw SQL)
+      - sales:     standalone Tempus-style spec sheet, no shared head.
+      - pharma:    head + technical tail (no raw SQL)
     """
+    if audience == "sales":
+        return list(_SALES_VARIABLES_LAYOUT)
     layout = list(_VARIABLES_LAYOUT_HEAD)
     if audience in ("technical", "customer"):
         layout.append(_VARIABLES_LAYOUT_CRITERIA)
@@ -1753,11 +1791,11 @@ def write_xlsx(model: CohortModel, out_path: Path,
         pd, variables_layout(audience), model.variables
     )
 
-    # Customer audience hides the literal "metric" / "value" header row
+    # Customer and sales audiences hide the literal "metric" / "value" header row
     # on Summary — the reviewer flagged those words as not customer-
     # facing. Other audiences keep the header for backward compatibility
     # with existing tests / consumers.
-    summary_with_header = audience != "customer"
+    summary_with_header = audience not in ("customer", "sales")
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         summary_df.to_excel(
