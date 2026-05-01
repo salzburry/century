@@ -29,3 +29,9 @@ pandas>=2.0
 openpyxl>=3.1
 pyyaml>=6.0
 psycopg[binary]>=3.1
+
+# Optional. Required only when running
+# `python dictionary_v2/discover_exact_matches.py --apply`,
+# which round-trips packs/variables/*.yaml to inject `match:` blocks.
+# Without this, --apply refuses to write rather than destroy comments.
+ruamel.yaml>=0.18

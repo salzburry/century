@@ -466,6 +466,143 @@ def _yaml_str(s: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# `--apply`: round-trip the source pack file and inject/update the
+# `match:` block on each variable. Uses ruamel.yaml when available so
+# comments and key ordering survive; falls back to refusing the apply
+# rather than silently destroying the file.
+# --------------------------------------------------------------------------- #
+
+
+def _eligible_for_apply(o: VariableObservation) -> bool:
+    """Only variables whose live discovery produced observations are
+    eligible. No observations → nothing to apply (and skipped/error
+    rows must never be written into packs)."""
+    return bool(o.observed) and not o.error and bool(o.source_pack)
+
+
+def _suggested_values_for(o: VariableObservation) -> list[str]:
+    """Union of observed (frequency-ordered) + currently-configured
+    values. Mirrors the suggestions YAML's ordering."""
+    union: list[str] = []
+    seen: set[str] = set()
+    for val, _ in o.observed:
+        if val not in seen:
+            seen.add(val)
+            union.append(val)
+    for val in o.configured_values:
+        if val not in seen:
+            seen.add(val)
+            union.append(val)
+    return union
+
+
+def _confirm(prompt: str) -> bool:
+    """y/N prompt. Returns False on EOF / non-tty so scripted runs
+    without --apply-yes default to safe."""
+    try:
+        return input(prompt).strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def apply_suggestions(
+    observations: list[VariableObservation],
+    auto_yes: bool = False,
+) -> tuple[int, int]:
+    """Interactively (or with auto_yes) inject `match:` blocks back
+    into the source pack files.
+
+    Returns (applied, skipped). Refuses to write if ruamel.yaml is
+    not installed, since pyyaml round-trip would destroy comments.
+    """
+    eligible = [o for o in observations if _eligible_for_apply(o)]
+    if not eligible:
+        print("[apply] nothing eligible to apply.", file=sys.stderr)
+        return (0, 0)
+
+    try:
+        from ruamel.yaml import YAML  # type: ignore
+    except ImportError:
+        print(
+            "[apply] ruamel.yaml is not installed — refusing to write "
+            "to packs because pyyaml round-trip would destroy comments. "
+            "Install with: pip install ruamel.yaml",
+            file=sys.stderr,
+        )
+        return (0, len(eligible))
+
+    if not auto_yes:
+        print(
+            f"[apply] {len(eligible)} variable(s) have observations "
+            f"that can be written as `match:` blocks into source packs:",
+            file=sys.stderr,
+        )
+        for o in eligible:
+            print(
+                f"  - {o.category} / {o.variable}  "
+                f"({len(o.observed)} values → packs/variables/{o.source_pack}.yaml)",
+                file=sys.stderr,
+            )
+        if not _confirm("[apply] proceed? [y/N]: "):
+            print("[apply] aborted.", file=sys.stderr)
+            return (0, len(eligible))
+
+    yaml_rt = YAML(typ="rt")
+    yaml_rt.preserve_quotes = True
+    yaml_rt.width = 4096   # don't reflow long IN list lines
+
+    # Group eligible observations by source pack so each file is read
+    # and written exactly once.
+    by_pack: dict[str, list[VariableObservation]] = {}
+    for o in eligible:
+        by_pack.setdefault(o.source_pack, []).append(o)
+
+    applied = 0
+    skipped = 0
+    for pack_slug, obs_list in by_pack.items():
+        path = PACKS_DIR / "variables" / f"{pack_slug}.yaml"
+        if not path.is_file():
+            print(
+                f"[apply] {path} not found; skipping {len(obs_list)} variable(s)",
+                file=sys.stderr,
+            )
+            skipped += len(obs_list)
+            continue
+
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml_rt.load(f)
+        rows = (data.get("variables") or []) if isinstance(data, dict) else []
+        rows_by_name = {(r.get("variable") or "").strip(): r for r in rows}
+
+        for o in obs_list:
+            row = rows_by_name.get(o.variable)
+            if row is None:
+                print(
+                    f"[apply] {pack_slug}: variable {o.variable!r} not "
+                    f"found in {path.name} (likely lives in an "
+                    f"included pack); skipping",
+                    file=sys.stderr,
+                )
+                skipped += 1
+                continue
+            row["match"] = {
+                "column": o.column,
+                "values": _suggested_values_for(o),
+            }
+            applied += 1
+
+        with path.open("w", encoding="utf-8") as f:
+            yaml_rt.dump(data, f)
+        print(f"[apply] updated {path}", file=sys.stderr)
+
+    print(
+        f"[apply] applied {applied} match block(s); skipped {skipped}",
+        file=sys.stderr,
+    )
+    return (applied, skipped)
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 
@@ -478,6 +615,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", default=str(OUTPUT_DIR))
     parser.add_argument("--write-suggestions", action="store_true",
                         help="also emit a *.suggested.yaml proposal file")
+    parser.add_argument("--apply", action="store_true",
+                        help="after writing the report, prompt to write "
+                             "match: blocks directly into source packs "
+                             "(ruamel.yaml required)")
+    parser.add_argument("--apply-yes", action="store_true",
+                        help="implies --apply with no interactive prompt; "
+                             "for scripted use")
     parser.add_argument("--dry-run", action="store_true",
                         help="skip DB; report config-only with no observations")
     args = parser.parse_args(argv)
@@ -528,6 +672,9 @@ def main(argv: list[str] | None = None) -> int:
             f"cohort-specific. Nothing was applied automatically.",
             file=sys.stderr,
         )
+
+    if args.apply or args.apply_yes:
+        apply_suggestions(observations, auto_yes=args.apply_yes)
 
     return 0
 
