@@ -179,14 +179,30 @@ _CONCEPT_SPECIFIC_NAME_PATTERNS = [
 ]
 
 
+def _has_scope(v: dict[str, Any]) -> bool:
+    """A variable is scoped if it has any matcher — free-form
+    `criteria:` (legacy) OR a structured `match:` block (the v2
+    schema's strict-IN form). Both checks below previously keyed
+    off only `criteria:`, which means a future match-only row
+    would have looked unscoped and triggered false warnings.
+    """
+    if (v.get("criteria") or "").strip():
+        return True
+    match = v.get("match")
+    if isinstance(match, dict):
+        if (match.get("values") or []) or (match.get("values_file") or "").strip():
+            return True
+    return False
+
+
 def _check_missing_criteria(v: dict[str, Any]) -> str | None:
-    """Flag clinically-specific variable rows that lack a criteria filter."""
-    if v.get("criteria"):
+    """Flag clinically-specific variable rows that lack a scope."""
+    if _has_scope(v):
         return None
     name = v.get("variable") or ""
     for p in _CONCEPT_SPECIFIC_NAME_PATTERNS:
         if p.search(name):
-            return f"{name!r} has no criteria — would summarise every {v.get('column','?')} row"
+            return f"{name!r} has no criteria/match — would summarise every {v.get('column','?')} row"
     return None
 
 
@@ -447,18 +463,21 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                 ))
 
         # Any criteria-bearing row (compound OR single-clause) needs
-        # explicit `inclusion_criteria:` prose. The friendly auto-
-        # translation ("Records where the observation concept matches
-        # 'language'.") was removed because it produced QA-style copy
-        # rather than Flatiron-style clinical prose; without explicit
-        # prose, derive_inclusion_criteria returns empty and the
-        # rendered workbook ships a blank Inclusion Criteria cell.
-        if criteria.strip() and not (v.get("inclusion_criteria") or "").strip():
+        # The inclusion-prose guard fires when a row has any scope —
+        # legacy `criteria:` OR a structured `match:` block. Both
+        # render as a non-blank Criteria cell that needs paired
+        # human-readable prose. The friendly auto-translation
+        # ("Records where the observation concept matches 'language'.")
+        # was removed because it produced QA-style copy rather than
+        # Flatiron-style clinical prose; without explicit prose,
+        # derive_inclusion_criteria returns empty and the rendered
+        # workbook ships a blank Inclusion Criteria cell.
+        if _has_scope(v) and not (v.get("inclusion_criteria") or "").strip():
             report.findings.append(Finding(
                 "error", slug,
-                f"{cat}/{var}: criteria has no `inclusion_criteria:` "
-                f"prose — sales / pharma audiences would see a blank "
-                f"Inclusion Criteria cell. Add a one-sentence row-"
+                f"{cat}/{var}: criteria/match has no `inclusion_criteria:` "
+                f"prose — sales / pharma / customer audiences would see a "
+                f"blank Inclusion Criteria cell. Add a one-sentence row-"
                 f"inclusion description to the pack row.",
             ))
 
