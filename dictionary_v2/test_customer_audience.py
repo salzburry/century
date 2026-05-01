@@ -618,6 +618,19 @@ class CustomerHtmlSmokeTests(_CustomerSmokeBase):
         self.assertIn("<th>Inclusion Criteria</th>", html)
         self.assertIn("<th>Criteria</th>", html)
 
+    def test_html_preserves_newlines_in_cells(self):
+        # Multi-line cell content (sales Value Sets, Inclusion
+        # Criteria when authored as a paragraph, etc.) must render
+        # as separate visible lines in the browser, not collapse
+        # into a run-on string. Enforced via a CSS
+        # `white-space: pre-line` rule on every td/th in the
+        # dictionary table.
+        path = _output_dir(self.id()) / "out.html"
+        bd.write_html(self.filtered, path, audience="customer")
+        html = path.read_text()
+        self.assertIn("white-space: pre-line", html,
+                      msg="HTML cells must preserve newline separators")
+
 
 class CustomerJsonSuppressionTests(_CustomerSmokeBase):
     """JSON is an internal/debug artifact; customer audience targets

@@ -2425,6 +2425,10 @@ def write_html(model: CohortModel, out_path: Path,
    padding: 9px 12px;
    vertical-align: top;
    text-align: left;
+   /* Preserve newlines in cell text so multi-line cells (e.g. the
+      sales Value Sets cell) render as separate visible lines
+      instead of collapsing into a single run-on string. */
+   white-space: pre-line;
  }}
  table.dd tbody tr:last-child td {{ border-bottom: none; }}
  table.dd thead th {{
