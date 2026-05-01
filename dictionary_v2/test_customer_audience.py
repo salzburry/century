@@ -511,15 +511,46 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertEqual(skip, "")
 
     def test_resolve_matcher_column_skips_value_columns(self):
-        # value_as_number / value_as_string etc. would discover the
-        # value distribution, not the clinical matcher. Discovery
-        # should refuse and ask the pack to set match.column.
-        for col in ("value_as_number", "value_as_string", "measurement_date"):
+        # value_as_number / value_as_string / value_as_concept_name etc.
+        # would discover the value distribution, not the clinical
+        # matcher. Discovery should refuse and ask the pack to set
+        # match.column when no inference is possible.
+        for col in ("value_as_number", "value_as_string",
+                    "value_as_concept_name", "measurement_date"):
             matcher, skip = self.mod._resolve_matcher_column({
                 "table": "measurement", "column": col,
             })
             self.assertEqual(matcher, "", msg=f"{col} should be skipped")
             self.assertIn("match.column", skip)
+
+    def test_resolve_matcher_infers_from_criteria_lhs(self):
+        # Real shape from ckd_common.yaml — Language has
+        # column=value_as_concept_name (a value column) but
+        # criteria points the matcher at observation_concept_name.
+        # Discovery must group on the inferred matcher, not on the
+        # value column, otherwise it would suggest match.values like
+        # ["English", "Spanish"] redefining the variable.
+        matcher, skip = self.mod._resolve_matcher_column({
+            "table": "observation",
+            "column": "value_as_concept_name",
+            "criteria": "observation_concept_name ILIKE '%language%'",
+        })
+        self.assertEqual(matcher, "observation_concept_name")
+        self.assertEqual(skip, "")
+
+    def test_resolve_matcher_infers_from_in_clause(self):
+        # The LHS regex must also handle `IN (...)` and `=` shapes,
+        # not just ILIKE.
+        for crit in (
+            "drug_concept_name IN ('A', 'B')",
+            "drug_concept_name = 'Aspirin'",
+        ):
+            matcher, _ = self.mod._resolve_matcher_column({
+                "table": "drug_exposure",
+                "column": "value_as_string",
+                "criteria": crit,
+            })
+            self.assertEqual(matcher, "drug_concept_name", msg=crit)
 
     def test_resolve_matcher_column_uses_concept_name_directly(self):
         # When `column` is already the matcher (concept_name), no
