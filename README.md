@@ -119,14 +119,18 @@ site-specific and shift between pulls.
 
 ## 4. Current generator output
 
-`build_dictionary.py --cohort <slug>` writes four deliverables per
-cohort:
+`build_dictionary.py --cohort <slug>` writes up to three deliverables
+per cohort. `--formats` accepts any combination of `xlsx`, `html`,
+`json` (default = all three):
 
 - `Output/<schema>_dictionary.xlsx` — four-sheet workbook
 - `Output/<schema>_dictionary.html` — single-page HTML, same shape
 - `Output/<schema>_dictionary.json` — canonical model dump
-- `Output/<schema>_dictionary.pdf` — print-friendly HTML (when run
-  with `--formats pdf` via an external wrap-to-PDF step)
+  (suppressed for `--audience customer` — JSON is an internal
+  debug artifact, customers consume xlsx/html)
+
+PDF output is not currently produced by the generator; the WeasyPrint
+renderer is tracked in §5.3.
 
 ### 4.1 Workbook shape
 
