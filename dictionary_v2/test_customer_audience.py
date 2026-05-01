@@ -538,6 +538,82 @@ class DiscoveryScriptTests(unittest.TestCase):
         self.assertEqual(matcher, "observation_concept_name")
         self.assertEqual(skip, "")
 
+    def test_observe_skips_unscoped_rows(self):
+        # A variable with no `criteria:` and no `match:` block must NOT
+        # be discovered against the whole table. WHERE TRUE would
+        # propose every concept_name in the table as an exact match,
+        # silently redefining a generic row like "Diagnosis".
+        class _ShouldNotQuery:
+            def cursor(self):
+                raise AssertionError(
+                    "discovery must not query when row has no scope"
+                )
+            def rollback(self):
+                pass
+        obs = self.mod._observe_one(_ShouldNotQuery(), "schema", {
+            "category": "Conditions",
+            "variable": "Diagnosis",
+            "table": "condition_occurrence",
+            "column": "condition_concept_name",
+        })
+        self.assertIn("no `criteria:` or `match:`", obs.error)
+        self.assertEqual(obs.observed, [])
+
+    def test_observe_uses_match_block_as_scope(self):
+        # When only a `match:` block is configured (no free-form
+        # criteria), discovery must scope to that strict IN list, not
+        # WHERE TRUE.
+        captured = {}
+
+        class _CaptureConn:
+            def cursor(self):
+                outer = self
+                class _Cur:
+                    def __enter__(self_inner): return self_inner
+                    def __exit__(self_inner, *a): return False
+                    def execute(self_inner, sql):
+                        captured["sql"] = sql
+                    def fetchall(self_inner):
+                        return []
+                return _Cur()
+            def rollback(self):
+                pass
+
+        self.mod._observe_one(_CaptureConn(), "schema", {
+            "table": "drug_exposure",
+            "column": "drug_concept_name",
+            "match": {
+                "column": "drug_concept_name",
+                "values": ["Aspirin 81 MG", "Aspirin 325 MG"],
+            },
+        })
+        self.assertIn("Aspirin 81 MG", captured["sql"])
+        self.assertNotIn("WHERE TRUE", captured["sql"])
+
+    def test_report_shows_source_pack(self):
+        o = self.mod.VariableObservation(
+            category="Conditions", variable="CKD",
+            table="condition_occurrence", column="condition_concept_name",
+            criteria="condition_concept_name ILIKE '%kidney%'",
+            configured_values=[], observed=[("Chronic kidney disease", 100)],
+            source_pack="ckd_common",
+        )
+        md = self.mod._fmt_md([o], "balboa_ckd")
+        self.assertIn("packs/variables/ckd_common.yaml", md)
+
+    def test_suggestions_warn_about_shared_vs_cohort_placement(self):
+        o = self.mod.VariableObservation(
+            category="C", variable="V", table="t", column="c",
+            criteria="c ILIKE '%x%'", configured_values=[],
+            observed=[("A", 10)], source_pack="ckd_common",
+        )
+        y = self.mod._fmt_suggestions_yaml([o], cohort="balboa_ckd")
+        # Reviewer is told where this row was defined and where to
+        # paste cohort-specific overrides.
+        self.assertIn("packs/variables/ckd_common.yaml", y)
+        self.assertIn("packs/variables/balboa_ckd.yaml", y)
+        self.assertIn("cohort-specific", y)
+
     def test_resolve_matcher_infers_from_in_clause(self):
         # The LHS regex must also handle `IN (...)` and `=` shapes,
         # not just ILIKE.

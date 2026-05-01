@@ -68,6 +68,7 @@ class VariableObservation:
     configured_values: list[str]
     observed: list[tuple[str, int]]   # (value, count) for criteria-matched rows
     error: str = ""
+    source_pack: str = ""             # disease/cohort slug the variable lives in
 
     @property
     def configured_set(self) -> set[str]:
@@ -93,18 +94,44 @@ class VariableObservation:
         return [v for v in self.configured_values if v not in seen]
 
 
+def _load_variables_pack_tagged(slug: str) -> list[dict[str, Any]]:
+    """Mirror build_dictionary.load_variables_pack but tag each
+    variable with `_source_pack` (the YAML slug it was defined in).
+
+    Reviewers need that provenance when copying suggested `match:`
+    blocks back into packs/variables/, so cohort-specific values
+    don't accidentally land in shared <disease>_common files.
+    """
+    if not slug:
+        return []
+    path = PACKS_DIR / "variables" / f"{slug}.yaml"
+    if not path.is_file():
+        sys.stderr.write(f"[warn] variables pack not found: {path}\n")
+        return []
+    data = _bd._yaml_load(path)
+    out: list[dict[str, Any]] = []
+    for inc in data.get("include") or []:
+        out.extend(_load_variables_pack_tagged(inc))
+    for v in (data.get("variables") or []):
+        tagged = dict(v)
+        tagged["_source_pack"] = slug
+        out.append(tagged)
+    return out
+
+
 def _pack_for_cohort(cohort: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Return (cohort_pack, variables_list) for a cohort slug.
 
-    Uses the same loader as build_dictionary so `include:` references
-    resolve — most cohort variable packs are placeholders that pull
-    everything from a shared `<disease>_common` pack.
+    Uses a tagged copy of the build's pack loader so each variable
+    carries its source pack slug — needed so the suggestions report
+    can tell reviewers which file a candidate match block belongs
+    in (per-cohort vs shared <disease>_common).
     """
     cohort_pack = _bd._yaml_load(PACKS_DIR / "cohorts" / f"{cohort}.yaml")
     if not cohort_pack:
         raise SystemExit(f"unknown cohort: {cohort}")
     variables_pack_slug = cohort_pack.get("variables_pack") or ""
-    variables_list = _bd.load_variables_pack(variables_pack_slug)
+    variables_list = _load_variables_pack_tagged(variables_pack_slug)
     return cohort_pack, variables_list
 
 
@@ -214,23 +241,39 @@ def _resolve_matcher_column(v: dict[str, Any]) -> tuple[str, str]:
 
 
 def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
-    """Run the variable's existing criteria against the cohort and dump
+    """Run the variable's existing scope against the cohort and dump
     the distinct values it matches with row counts.
 
     Discovery groups by the *matcher* column (concept name), not the
     variable's display/value column — see _resolve_matcher_column.
+
+    The WHERE scope mirrors the live build's logic:
+      - `match:` block (compiles to strict `IN (...)`) takes priority;
+      - otherwise the free-form `criteria:` is used as-is;
+      - rows with neither are skipped, since `WHERE TRUE` would
+        enumerate every concept in the table and propose an exact-
+        match list that redefines the variable to whatever happens
+        to live there.
     """
     table = v.get("table") or ""
     display_column = v.get("column") or ""
     matcher_column, skip_reason = _resolve_matcher_column(v)
-    criteria = (v.get("criteria") or "").strip()
+    raw_criteria = (v.get("criteria") or "").strip()
+    match_sql = _bd.compile_match_block(v.get("match"))
+    scope_sql = match_sql or raw_criteria
+    # Display the source the reviewer cares about — strict match if
+    # configured, otherwise the broad criteria currently driving the
+    # variable.
+    displayed_criteria = match_sql or raw_criteria
+
     obs = VariableObservation(
         category=v.get("category") or "",
         variable=v.get("variable") or display_column,
         table=table, column=matcher_column or display_column,
-        criteria=criteria,
+        criteria=displayed_criteria,
         configured_values=_resolve_configured_values(v.get("match")),
         observed=[],
+        source_pack=v.get("_source_pack") or "",
     )
     if not table:
         obs.error = "missing table"
@@ -238,12 +281,21 @@ def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
     if skip_reason:
         obs.error = skip_reason
         return obs
+    if not scope_sql:
+        # No criteria and no match block — refuse to enumerate the
+        # whole table. Discovery would otherwise propose every concept
+        # in the table as an exact match, redefining a generic row
+        # like "Diagnosis" to whatever happens to be most frequent.
+        obs.error = (
+            "no `criteria:` or `match:` block configured; cannot "
+            "scope discovery without redefining the variable"
+        )
+        return obs
 
-    where = f"({criteria})" if criteria else "TRUE"
     sql = (
         f'SELECT "{matcher_column}"::text, COUNT(*) AS n '
         f'FROM "{schema}"."{table}" '
-        f'WHERE {where} AND "{matcher_column}" IS NOT NULL '
+        f'WHERE ({scope_sql}) AND "{matcher_column}" IS NOT NULL '
         f'GROUP BY "{matcher_column}" '
         f'ORDER BY n DESC;'
     )
@@ -287,6 +339,10 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
     out: list[str] = [f"# Exact-match discovery — {cohort}", ""]
     for o in observations:
         out.append(f"## {o.category} / {o.variable}")
+        if o.source_pack:
+            out.append(
+                f"- source pack: `packs/variables/{o.source_pack}.yaml`"
+            )
         out.append(f"- table: `{o.table}`")
         out.append(f"- column: `{o.column}`")
         if o.criteria:
@@ -321,17 +377,29 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
 
 
 def _fmt_suggestions_yaml(
-    observations: list[VariableObservation],
+    observations: list[VariableObservation], cohort: str = "",
 ) -> str:
     """Per-variable proposed `match:` block, union of configured +
     observed, sorted by frequency desc with config-only rows last.
 
     This is a proposal for human review — never written into the
-    disease pack automatically.
+    disease pack automatically. Each block is annotated with the
+    source pack so reviewers know whether to update the cohort's
+    own variables file or the shared <disease>_common pack.
     """
     lines: list[str] = [
-        "# Suggested `match:` blocks. Review and copy into",
-        "# packs/variables/<disease>.yaml under each variable.",
+        "# Suggested `match:` blocks. Review and copy into the",
+        "# source pack noted under each variable.",
+        "#",
+        "# IMPORTANT placement guidance:",
+        "#   - If the proposed values are clinically appropriate for",
+        "#     EVERY cohort that includes the source pack, paste into",
+        "#     the listed shared <disease>_common.yaml file.",
+        "#   - If the values are cohort-specific (e.g. one provider's",
+        "#     local concept names), instead paste into the per-cohort",
+        f"#     pack (packs/variables/{cohort or '<cohort>'}.yaml) so",
+        "#     the shared common pack stays portable.",
+        "#",
         "# Generated by dictionary_v2/discover_exact_matches.py.",
         "",
     ]
@@ -352,6 +420,10 @@ def _fmt_suggestions_yaml(
                 union.append(val)
 
         lines.append(f"# {o.category} / {o.variable}")
+        if o.source_pack:
+            lines.append(
+                f"# source pack: packs/variables/{o.source_pack}.yaml"
+            )
         lines.append(f"# table={o.table} column={o.column}")
         lines.append(f"variable: {o.variable}")
         lines.append("match:")
@@ -409,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
                 configured_values=_resolve_configured_values(v.get("match")),
                 observed=[],
                 error=skip,
+                source_pack=v.get("_source_pack") or "",
             ))
     else:
         psycopg = _require_psycopg()
@@ -426,13 +499,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.write_suggestions:
         suggest_path = out_dir / "suggested.yaml"
         suggest_path.write_text(
-            _fmt_suggestions_yaml(observations), encoding="utf-8",
+            _fmt_suggestions_yaml(observations, cohort=args.cohort),
+            encoding="utf-8",
         )
         print(f"Wrote {suggest_path}", file=sys.stderr)
         print(
-            f"Review {suggest_path} and copy chosen `match:` blocks "
-            f"into packs/variables/<disease>.yaml — nothing was applied "
-            f"automatically.",
+            f"Review {suggest_path} — each block names its source "
+            f"pack. Paste into that file if the values are shared, "
+            f"or into packs/variables/{args.cohort}.yaml if they're "
+            f"cohort-specific. Nothing was applied automatically.",
             file=sys.stderr,
         )
 
