@@ -1301,5 +1301,91 @@ class DiscoveryApplyTests(unittest.TestCase):
         )
 
 
+class VariablePackOverrideTests(unittest.TestCase):
+    """A cohort pack's local row must replace any inherited row with
+    the same (category, variable) key. Without this, --auto-stub's
+    cohort-side match: block coexists with the shared pack's fuzzy
+    ILIKE definition and the build can render both, undermining the
+    entire exact-match feedback loop.
+    """
+
+    def setUp(self):
+        # Stage a parent (shared) pack with one fuzzy variable and a
+        # child (cohort) pack that includes it and overrides the same
+        # variable with a strict match: block.
+        self.shared_slug = "_override_test_shared"
+        self.shared_path = bd.PACKS_DIR / "variables" / f"{self.shared_slug}.yaml"
+        self.shared_path.write_text(
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: Aspirin\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%aspirin%'\n"
+            "  - category: Drugs\n"
+            "    variable: Lisinopril\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%lisinopril%'\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: self.shared_path.unlink(missing_ok=True))
+
+        self.cohort_slug = "_override_test_cohort"
+        self.cohort_path = bd.PACKS_DIR / "variables" / f"{self.cohort_slug}.yaml"
+        self.cohort_path.write_text(
+            f"include: [{self.shared_slug}]\n"
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: Aspirin\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    criteria: drug_concept_name ILIKE '%aspirin%'\n"
+            "    match:\n"
+            "      column: drug_concept_name\n"
+            "      values: ['Aspirin 81 MG Oral Tablet', 'Aspirin 325 MG Oral Tablet']\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: self.cohort_path.unlink(missing_ok=True))
+
+    def test_cohort_row_replaces_inherited_row_no_duplicate(self):
+        rows = bd.load_variables_pack(self.cohort_slug)
+        aspirin_rows = [r for r in rows if r.get("variable") == "Aspirin"]
+        self.assertEqual(
+            len(aspirin_rows), 1,
+            msg="cohort override must collapse to one row, got: " + str(aspirin_rows),
+        )
+        # The surviving row must be the cohort version (carries match:).
+        self.assertIn("match", aspirin_rows[0])
+
+    def test_non_overridden_variables_pass_through(self):
+        rows = bd.load_variables_pack(self.cohort_slug)
+        names = [r.get("variable") for r in rows]
+        # Lisinopril was only defined in the shared pack — must
+        # still be present after override resolution.
+        self.assertIn("Lisinopril", names)
+        # No duplication anywhere.
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_override_compiles_to_strict_in_via_match(self):
+        # End-to-end: build the variable through compile_match_block
+        # the same way process_variables would. Result must be
+        # `column IN (...)`, not the inherited ILIKE.
+        rows = bd.load_variables_pack(self.cohort_slug)
+        aspirin = next(r for r in rows if r.get("variable") == "Aspirin")
+        sql = bd.compile_match_block(aspirin.get("match"))
+        self.assertIn("IN ('Aspirin 81 MG Oral Tablet'", sql)
+        self.assertNotIn("ILIKE", sql)
+
+    def test_override_preserves_inherited_position(self):
+        rows = bd.load_variables_pack(self.cohort_slug)
+        # Aspirin was first in the shared pack; replacement must
+        # land at index 0, not get appended at the end after
+        # Lisinopril. Audience layouts depend on positional
+        # stability across runs.
+        self.assertEqual(rows[0].get("variable"), "Aspirin")
+        self.assertEqual(rows[1].get("variable"), "Lisinopril")
+
+
 if __name__ == "__main__":
     unittest.main()
