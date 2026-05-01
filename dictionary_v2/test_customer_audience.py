@@ -209,32 +209,10 @@ class CustomerTableFilterTests(unittest.TestCase):
              "Notes", "Type", "Proposal", "Completeness"],
         )
 
-    def test_sales_value_set_renders_curated_yaml_when_present(self):
-        # Curated `value_set:` YAML wins — newline-separated for
-        # the xlsx cell.
-        row = bd.VariableRow(
-            category="Demographics", variable="Education level",
-            description="The patient's highest level of education received.",
-            table="observation", column="value_as_concept_name",
-            criteria="", values="", distribution="", median_iqr="",
-            completeness_pct=100.0, implemented="Yes", patient_pct=100.0,
-            extraction_type="Abstracted", notes="Yes",
-            value_set=["Less than high school", "Bachelor's degree"],
-            proposal="Custom",
-        )
-        rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
-        self.assertEqual(
-            rendered["Value Sets"], "Less than high school\nBachelor's degree",
-        )
-        self.assertEqual(rendered["Type"], "Abstracted")
-        self.assertEqual(rendered["Proposal"], "Custom")
-        self.assertEqual(rendered["Completeness"], "100.0%")
-
-    def test_sales_value_set_falls_back_to_observed_top_values(self):
-        # No curated value_set: in YAML — Value Sets cell falls back
-        # to the observed top-N labels (already populated on
-        # `v.values` as a comma-joined string), reformatted newline-
-        # separated. No counts, no percentages.
+    def test_sales_value_sets_renders_observed_top_values(self):
+        # Value Sets is the observed top-N labels from `v.values`,
+        # newline-separated. No curation field; the data is the
+        # source of truth.
         row = bd.VariableRow(
             category="Medications", variable="Anti-amyloid Therapy",
             description="Anti-amyloid mAb administrations.",
@@ -243,17 +221,21 @@ class CustomerTableFilterTests(unittest.TestCase):
             distribution="ignored for sales", median_iqr="",
             completeness_pct=87.5, implemented="Yes", patient_pct=80.0,
             extraction_type="Structured", notes="",
-            value_set=[], proposal="",
+            proposal="Standard",
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(
             rendered["Value Sets"],
             "Lecanemab\nLecanemab-irmb\nLeqembi\nDonanemab-azbt\nKisunla",
         )
+        self.assertEqual(rendered["Type"], "Structured")
+        self.assertEqual(rendered["Proposal"], "Standard")
+        self.assertEqual(rendered["Completeness"], "87.5%")
 
-    def test_sales_value_set_empty_when_no_data_no_curation(self):
-        # Free-text columns, dry-run rows, etc. — no observed values,
-        # no curated set. Cell renders empty rather than rendering "—".
+    def test_sales_value_sets_empty_when_no_observed_values(self):
+        # Free-text columns / dry-run rows have v.values = "".
+        # Cell renders empty rather than "—" — there's no curation
+        # path to fall back to.
         row = bd.VariableRow(
             category="Demographics", variable="Notes",
             description="Free text.", table="observation",
@@ -261,7 +243,7 @@ class CustomerTableFilterTests(unittest.TestCase):
             values="", distribution="", median_iqr="",
             completeness_pct=None, implemented="No", patient_pct=None,
             extraction_type="Unstructured", notes="",
-            value_set=[], proposal="",
+            proposal="",
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(rendered["Value Sets"], "")
@@ -284,34 +266,6 @@ class CustomerTableFilterTests(unittest.TestCase):
         for kept in ("cohort", "provider", "disease", "patient_count",
                      "table_count", "generated_at"):
             self.assertIn(kept, xl_keys)
-
-    def test_value_set_normalizer_handles_scalar_and_list(self):
-        # YAML list — used as-is.
-        self.assertEqual(
-            bd._normalize_value_set(["Yes", "No", "Unknown"]),
-            ["Yes", "No", "Unknown"],
-        )
-        # Scalar string with commas — split, never iterated by char.
-        self.assertEqual(
-            bd._normalize_value_set("Yes, No, Unknown"),
-            ["Yes", "No", "Unknown"],
-        )
-        # Single scalar string — one-element list, NOT 8 chars.
-        self.assertEqual(
-            bd._normalize_value_set("Hispanic"),
-            ["Hispanic"],
-        )
-        # Empty / None → empty list.
-        self.assertEqual(bd._normalize_value_set(None), [])
-        self.assertEqual(bd._normalize_value_set(""), [])
-        self.assertEqual(bd._normalize_value_set([]), [])
-        # Skip empty strings inside a list.
-        self.assertEqual(
-            bd._normalize_value_set(["A", "", "B"]),
-            ["A", "B"],
-        )
-        # Junk type — empty list, no crash.
-        self.assertEqual(bd._normalize_value_set(42), [])
 
     def test_sales_audience_hides_tables_sheet(self):
         # The Tempus-style sales layout is a single Variables sheet.
@@ -1935,43 +1889,6 @@ class VariablePackOverrideTests(unittest.TestCase):
             msg="validator must collapse overrides too",
         )
         self.assertIn("match", aspirin_rows[0])
-
-    def test_validator_flags_value_set_scalar_as_error(self):
-        # Pack a value_set as a scalar string — validator must flag
-        # it as an error, since the renderer would otherwise iterate
-        # the string char-by-char in the Value Sets cell.
-        scalar_path = bd.PACKS_DIR / "variables" / "_validator_value_set_scalar.yaml"
-        scalar_path.write_text(
-            "variables:\n"
-            "  - category: Demographics\n"
-            "    variable: ScalarValueSetTest\n"
-            "    table: person\n"
-            "    column: gender_concept_name\n"
-            "    value_set: 'Yes, No, Unknown'\n",
-            encoding="utf-8",
-        )
-        self.addCleanup(lambda: scalar_path.unlink(missing_ok=True))
-
-        import importlib.util
-        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
-        spec = importlib.util.spec_from_file_location(
-            "validate_packs_value_set_test", vp_path,
-        )
-        vp = importlib.util.module_from_spec(spec)
-        sys.modules["validate_packs_value_set_test"] = vp
-        spec.loader.exec_module(vp)
-
-        rows = vp._resolve_variables("_validator_value_set_scalar", findings=[])
-        # Walk the row through the validator's checker.
-        msgs = []
-        for v in rows:
-            vs = v.get("value_set")
-            if vs is not None and not isinstance(vs, (list, tuple)):
-                msgs.append(str(type(vs).__name__))
-        self.assertEqual(
-            msgs, ["str"],
-            msg="validator should detect scalar value_set as a non-list type",
-        )
 
     def test_validator_flags_unknown_proposal_value(self):
         # Anything other than Standard / Custom (when proposal is set)

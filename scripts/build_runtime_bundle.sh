@@ -259,8 +259,8 @@ The default flow keeps shared packs untouched. Promotion is a deliberate follow-
 python scripts/validate_packs.py --strict
 ```
 Lints every cohort's pack chain (cohort → variables_pack → includes)
-for missing fields, dangling refs, malformed `match:` / `value_set:`
-blocks, unknown `proposal:` values, etc. Exits non-zero on errors.
+for missing fields, dangling refs, malformed `match:` blocks,
+unknown `proposal:` values, etc. Exits non-zero on errors.
 
 ---
 
@@ -357,12 +357,10 @@ exactly:
 Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness
 ```
 
-`Value Sets` and `Proposal` cells will be empty in dry-run because
-there's no DB connection — at runtime the `Value Sets` cell falls
-back to the observed top-N values from the live cohort, newline-
-separated, no counts. `Proposal` and the curated-override path for
-`Value Sets` come from YAML (see Step 3 below). `Completeness` is
-`—` for dry-run since it's also DB-derived.
+`Value Sets` and `Completeness` are empty / `—` in dry-run because
+both are DB-derived. At runtime, `Value Sets` shows the cohort's
+observed top-N values for the variable's column, newline-separated.
+`Proposal` is YAML-only (see Step 3 below).
 
 ---
 
@@ -384,15 +382,11 @@ Hand off the xlsx + html as the sales artifact.
 
 ---
 
-## Step 3 (optional) — override `Value Sets` and set `Proposal`
+## Step 3 (optional) — set `Proposal` per variable
 
-By default the `Value Sets` cell shows the cohort's observed top-N
-values (newline-separated, no counts). If you want a curated
-clinical enum instead — e.g. always render the canonical
-seven-tier education list whether or not every value is in the
-data — author it under the variable in the cohort's variables YAML
-(`packs/variables/mtc_aat.yaml`). The curated list, when present,
-overrides the observed-fallback. `Proposal` is always YAML-only.
+`Proposal` is the only column on the sales sheet authored from
+YAML. Set it on each variable in the cohort's pack
+(`packs/variables/mtc_aat.yaml`):
 
 ```yaml
 - category: Demographics
@@ -400,28 +394,16 @@ overrides the observed-fallback. `Proposal` is always YAML-only.
   description: The patient's highest level of education received.
   table: observation
   column: value_as_concept_name
-  value_set:                              # ← curated clinical reference values
-    - Less than high school
-    - High school diploma or equivalent
-    - Some college, no degree
-    - Associate degree
-    - Bachelor's degree
-    - Master's degree
-    - Doctoral or professional degree
   proposal: Custom                        # ← Standard | Custom
 ```
 
-The `value_set:` cell renders newline-separated in the workbook
-(matches the reference Google sheet). `proposal:` must be exactly
-`Standard` or `Custom` when set; the validator rejects anything
-else.
+Must be exactly `Standard` or `Custom` when set; the validator
+rejects anything else.
 
-If you accidentally write a scalar instead of a list:
-```yaml
-value_set: "Yes, No, Unknown"             # ← scalar; auto-split by builder
-```
-the renderer normalizes it to a 3-item list, but the validator
-will still flag it as an error so you fix the YAML.
+`Value Sets` is data-driven and not configurable — the cell
+always reflects what the cohort actually contains. A data
+dictionary that claims a value the cohort doesn't carry is wrong
+by definition.
 
 After editing:
 ```bash

@@ -193,12 +193,11 @@ class VariableRow:
     example: str = ""
     coding_schema: str = ""
     data_source: str = ""
-    # Tempus-style sales-spec metadata. `value_set` is a curated list
-    # of clinical reference values (rendered newline-separated in the
-    # Value Sets cell); `proposal` is the Standard / Custom tag.
-    # Both are authored in the variables YAML and default to empty so
-    # un-curated rows still build.
-    value_set: list[str] = field(default_factory=list)
+    # Tempus-style sales-spec metadata. `proposal` is the
+    # Standard / Custom tag, authored in the variables YAML.
+    # Defaults to empty so un-curated rows still build. (Value Sets
+    # is data-driven — derived from observed top-N values, no
+    # curation field.)
     proposal: str = ""
 
 
@@ -814,40 +813,6 @@ def _sql_quote(value: str) -> str:
 SALES_PROPOSAL_VALUES = ("Standard", "Custom")
 
 
-def _normalize_value_set(raw: Any) -> list[str]:
-    """Coerce a YAML `value_set:` value into a list[str].
-
-    Authors sometimes paste a scalar string copied from the
-    reference sheet (e.g. `value_set: Yes, No, Unknown`) instead
-    of a proper YAML list. Without normalization the renderer
-    iterates the string character-by-character and the Value Sets
-    cell ships as
-        Y
-        e
-        s
-        ,
-        ...
-    Normalize:
-      - list / tuple → str() of each non-empty element
-      - scalar str with commas → split on commas, strip
-      - scalar str without commas → single-element list
-      - None / empty → []
-      - anything else → []
-    """
-    if raw is None:
-        return []
-    if isinstance(raw, (list, tuple)):
-        return [str(v) for v in raw if str(v).strip()]
-    if isinstance(raw, str):
-        s = raw.strip()
-        if not s:
-            return []
-        if "," in s:
-            return [part.strip() for part in s.split(",") if part.strip()]
-        return [s]
-    return []
-
-
 def _load_match_values_file(rel_path: str) -> list[str]:
     """Load `values:` list from a YAML file referenced by `values_file:`.
 
@@ -1139,7 +1104,6 @@ def resolve_variables(
             example=example,
             coding_schema=coding_schema,
             data_source=derive_data_source(extraction, table, explicit_data_source),
-            value_set=_normalize_value_set(v.get("value_set")),
             proposal=(v.get("proposal") or "").strip(),
         ))
     return out
@@ -1278,7 +1242,6 @@ def build_model(
                 data_source=derive_data_source(
                     extraction, table, (v.get("data_source") or "").strip(),
                 ),
-                value_set=_normalize_value_set(v.get("value_set")),
                 proposal=(v.get("proposal") or "").strip(),
             ))
     else:
@@ -1747,20 +1710,17 @@ _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
 # Completeness is added per follow-up so the sales reader can
 # also see population coverage at a glance.
 #
-# `Value Sets` falls back through three sources:
-#   1. Curated YAML `value_set:` list (if a clinician hand-authored
-#      a canonical enum, that's authoritative).
-#   2. Otherwise the observed top-N value labels — same data already
-#      in `v.values` (comma-joined for legacy Variables sheets), just
-#      reformatted newline-separated to match the reviewer's
-#      Tempus-style cell layout. No counts, no percentages.
-#   3. Empty when neither is available (dry-run rows, free-text
-#      columns, etc.).
+# `Value Sets` is purely data-driven: the observed top-N value
+# labels for the variable's column, newline-separated, no counts /
+# percentages. Same data already in `v.values` (comma-joined for
+# the technical sheet), just reformatted. Empty for free-text
+# columns and dry-run rows where there are no observed values.
+# A data dictionary that claims a value the cohort doesn't carry
+# is wrong — so there's no curation override; if it's not in the
+# data, it doesn't appear.
 # `Proposal` comes from the curated YAML field. Type maps directly
 # to extraction_type.
 def _sales_value_sets_cell(v: Any) -> str:
-    if v.value_set:
-        return "\n".join(v.value_set)
     if (v.values or "").strip():
         return "\n".join(s.strip() for s in v.values.split(",") if s.strip())
     return ""

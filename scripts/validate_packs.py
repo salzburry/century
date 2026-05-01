@@ -468,18 +468,10 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                 "warning", slug, f"{cat}/{var}: {catch_all}",
             ))
 
-        # Sales-spec field shape checks. value_set: must be a list
-        # (a scalar string would render character-by-character in the
-        # Value Sets cell — see _normalize_value_set salvage path).
-        # proposal: must be one of the allowed tags when present.
-        vs = v.get("value_set")
-        if vs is not None and not isinstance(vs, (list, tuple)):
-            report.findings.append(Finding(
-                "error", slug,
-                f"{cat}/{var}: `value_set:` must be a YAML list, got "
-                f"{type(vs).__name__}. Use the block form:\n"
-                f"  value_set:\n    - Yes\n    - No\n    - Unknown",
-            ))
+        # Sales-spec proposal: must be one of the allowed tags when
+        # present. (Value Sets is data-driven now — derived from
+        # observed top-N values at build time — so there's no
+        # curation field for the validator to shape-check.)
         prop = v.get("proposal")
         if prop is not None and isinstance(prop, str) and prop.strip():
             if prop.strip() not in ("Standard", "Custom"):
