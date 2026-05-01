@@ -180,24 +180,49 @@ python dictionary_v2/discover_exact_matches.py \
 Adds `Output/discovery/<cohort>/suggested.yaml` with a proposed
 `match:` block per variable, annotated with the source pack.
 
-### Write match: blocks back into packs (interactive)
+### Write match: blocks back into packs (interactive, per-variable)
 ```bash
 # Safer: writes ONLY into packs/variables/<cohort_slug>.yaml.
-# Variables that live solely in a shared pack are skipped (the cohort
-# pack must already define the variable to be overridable).
+# Variables that live solely in a shared pack are skipped (use
+# --auto-stub below to copy them over automatically).
 python dictionary_v2/discover_exact_matches.py \
     --cohort <cohort_slug> \
     --apply --target cohort
 
+# --auto-stub: when --target cohort hits a variable that isn't
+# in the cohort pack yet, copy its full base definition (table,
+# column, criteria, description, ...) from the source pack into
+# the cohort pack first, then attach the match: block. Shared
+# packs are NEVER modified. Each stubbed row gets a leading
+# YAML comment recording the source pack.
+python dictionary_v2/discover_exact_matches.py \
+    --cohort <cohort_slug> \
+    --apply --target cohort --auto-stub
+
 # Touches each variable's source pack — including shared
 # <disease>_common.yaml files. Use only when the values are
 # clinically appropriate for every cohort that includes the source.
+# (--auto-stub is rejected here; auto-stub is cohort-only.)
 python dictionary_v2/discover_exact_matches.py \
     --cohort <cohort_slug> \
     --apply --target shared
 ```
-Both prompt `[apply] proceed? [y/N]:` before writing. Add
-`--apply-yes` for non-interactive scripted runs.
+
+### Per-variable prompts
+Interactive `--apply` walks each candidate one at a time:
+```
+[update] Drugs / Aspirin (8 values, source=ckd_common) → balboa_ckd.yaml
+        apply? [y]es / [n]o / [a]ll-remaining / [q]uit:
+
+[stub]   Drugs / Lisinopril (5 values, source=ckd_common) → balboa_ckd.yaml
+        apply? [y]es / [n]o / [a]ll-remaining / [q]uit:
+```
+- `[update]` = the cohort pack already has this variable; the match block is overwritten.
+- `[stub]`   = `--auto-stub` mode created a new cohort row from the shared source.
+- `all` accepts every remaining row without further prompts.
+- `quit` aborts the whole run; no files are written.
+
+Add `--apply-yes` to skip the prompts entirely (for scripted runs).
 
 ### Other discovery flags
 ```bash
