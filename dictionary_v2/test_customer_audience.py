@@ -954,6 +954,58 @@ class CompileMatchBlockTests(unittest.TestCase):
             "\"concept_name\" IN ('Bar', 'Baz', 'Foo')",
         )
 
+    def test_concept_ids_compile_to_bare_integer_in_list(self):
+        # Commit D: concept_ids compile WITHOUT quotes and WITHOUT
+        # any DB vocabulary lookup. Build path stays deterministic
+        # even if the cohort doesn't have a `concept` table reachable.
+        sql = bd.compile_match_block({
+            "column": "drug_concept_id",
+            "concept_ids": [40221901, 793143, 35606214],
+        })
+        self.assertEqual(
+            sql, "\"drug_concept_id\" IN (40221901, 793143, 35606214)",
+        )
+
+    def test_concept_ids_dedupe_and_castable_strings(self):
+        # Strings that parse as ints are accepted (YAML sometimes
+        # quotes large IDs). Duplicates collapse, order preserved.
+        sql = bd.compile_match_block({
+            "column": "drug_concept_id",
+            "concept_ids": [793143, "40221901", 793143, "40221901"],
+        })
+        self.assertEqual(
+            sql, "\"drug_concept_id\" IN (793143, 40221901)",
+        )
+
+    def test_concept_ids_take_precedence_over_values(self):
+        # When both are present (a misconfiguration the validator
+        # flags), concept_ids wins so the cohort gets the canonical
+        # OMOP filter rather than the fragile string match.
+        sql = bd.compile_match_block({
+            "column": "drug_concept_id",
+            "concept_ids": [40221901],
+            "values": ["Lecanemab"],
+        })
+        self.assertEqual(sql, "\"drug_concept_id\" IN (40221901)")
+
+    def test_concept_ids_empty_falls_through_to_values(self):
+        sql = bd.compile_match_block({
+            "column": "drug_concept_name",
+            "concept_ids": [],
+            "values": ["Lecanemab"],
+        })
+        self.assertEqual(sql, "\"drug_concept_name\" IN ('Lecanemab')")
+
+    def test_concept_ids_non_integer_entries_dropped(self):
+        # The validator should refuse this at lint time, but the
+        # compiler must also degrade gracefully — keep castable IDs,
+        # drop garbage. Returns "" if nothing is castable.
+        sql = bd.compile_match_block({
+            "column": "drug_concept_id",
+            "concept_ids": ["not_an_id", None, "abc"],
+        })
+        self.assertEqual(sql, "")
+
 
 # Load the discovery script once under a stable module name so the
 # dataclass it defines (VariableObservation) survives across test cases.
@@ -1590,6 +1642,60 @@ class DiscoveryApplyTests(unittest.TestCase):
         between_diag = text[diag_idx:ins_idx]
         self.assertNotIn("match:", between_diag,
                          msg="Diagnosis row must not be touched")
+
+    def test_apply_writes_concept_ids_when_observation_has_them(self):
+        # Commit D: observations from concept-id mode carry
+        # observed_concept_ids + id_matcher_column. apply must
+        # write those as `match.concept_ids:` (bare integer list)
+        # against the *_concept_id column — NOT as match.values.
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria="drug_concept_name ILIKE '%aspirin%'",
+            configured_values=[],
+            observed=[("Aspirin 81 MG Oral Tablet", 100), ("Aspirin 325 MG", 50)],
+            source_pack=self.pack_slug,
+            observed_concept_ids=[
+                (1112807, "Aspirin 81 MG Oral Tablet", 100),
+                (1112809, "Aspirin 325 MG", 50),
+            ],
+            id_matcher_column="drug_concept_id",
+        )
+        applied, _ = self.mod.apply_suggestions(
+            [obs], target="shared", auto_yes=True,
+        )
+        self.assertEqual(applied, 1)
+        text = self.pack_path.read_text()
+        # Wrote integer concept_ids list against drug_concept_id.
+        self.assertIn("column: drug_concept_id", text)
+        self.assertIn("concept_ids:", text)
+        self.assertIn("1112807", text)
+        self.assertIn("1112809", text)
+        # Did NOT fall back to writing string `values:`.
+        self.assertNotIn("values:\n", text)
+
+    def test_id_column_for_derives_concept_id_from_concept_name(self):
+        # Pure helper test — concept_name → concept_id substitution
+        # for OMOP-shaped columns.
+        self.assertEqual(
+            self.mod._id_column_for("drug_concept_name"), "drug_concept_id",
+        )
+        self.assertEqual(
+            self.mod._id_column_for("observation_concept_name"),
+            "observation_concept_id",
+        )
+        self.assertEqual(
+            self.mod._id_column_for("value_as_concept_name"),
+            "value_as_concept_id",
+        )
+        # Already an id column — pass through.
+        self.assertEqual(
+            self.mod._id_column_for("drug_concept_id"), "drug_concept_id",
+        )
+        # Not a recognized OMOP shape — empty string signals
+        # "concept-id mode can't run on this variable."
+        self.assertEqual(self.mod._id_column_for("value_as_number"), "")
+        self.assertEqual(self.mod._id_column_for(""), "")
 
     def test_apply_target_cohort_skips_inherited_only_variables(self):
         cohort_slug = "_apply_test_cohort_empty"
@@ -2261,6 +2367,81 @@ class VariablePackOverrideTests(unittest.TestCase):
             and v.get("proposal").strip() not in ("Standard", "Custom")
         ]
         self.assertEqual(bad_proposals, ["Stnadard"])
+
+    def test_validator_flags_malformed_concept_ids(self):
+        # Commit D: concept_ids must be a list of int-castable
+        # values; concept_ids and values are mutually exclusive;
+        # match.column should look like an *_concept_id column.
+        path = bd.PACKS_DIR / "variables" / "_validator_concept_ids.yaml"
+        path.write_text(
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: BadConceptIdsScalar\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: 40221901\n"           # scalar, not list
+            "  - category: Drugs\n"
+            "    variable: BothConceptIdsAndValues\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      values: ['Lecanemab']\n"           # mutex with concept_ids
+            "  - category: Drugs\n"
+            "    variable: ConceptIdsOnNameColumn\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_name\n"      # name, not id → warn
+            "      concept_ids: [40221901]\n"
+            "  - category: Drugs\n"
+            "    variable: ConceptIdsBadEntries\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901, 'not_an_id']\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        import importlib.util
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_concept_ids_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_concept_ids_test"] = vp
+        spec.loader.exec_module(vp)
+
+        # Walk the rows through the validator's per-row checks by
+        # calling validate_cohort with a synthetic cohort.
+        cohort_path = bd.PACKS_DIR / "cohorts" / "_validator_concept_ids.yaml"
+        cohort_path.write_text(
+            "provider: TEST\ndisease: TEST\nschema_name: x\n"
+            "cohort_name: _validator_concept_ids\n"
+            "display_name: x\nvariables_pack: _validator_concept_ids\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        report = vp.validate_cohort("_validator_concept_ids", known_categories=set())
+        msgs = "\n".join(f.message for f in report.findings)
+        # Scalar concept_ids → error.
+        self.assertIn("BadConceptIdsScalar", msgs)
+        self.assertIn("must be a YAML list", msgs)
+        # Both concept_ids and values → error.
+        self.assertIn("BothConceptIdsAndValues", msgs)
+        self.assertIn("mutually exclusive", msgs)
+        # Concept-name column with concept_ids → warning.
+        self.assertIn("ConceptIdsOnNameColumn", msgs)
+        self.assertIn("`*_concept_id` column", msgs)
+        # Non-integer entry → error.
+        self.assertIn("ConceptIdsBadEntries", msgs)
+        self.assertIn("must be integers", msgs)
 
     def test_validator_flags_malformed_freshness_metadata(self):
         # Commit B fields must be the right shape when present.

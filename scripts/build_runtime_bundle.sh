@@ -461,29 +461,35 @@ python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales
 
 ## Step 4 (optional) — tighten Criteria with discovery
 
-This addresses the reviewer's "Criteria should be exact matches,
-not ILIKE" feedback. Replaces fuzzy `criteria: drug_concept_name
-ILIKE '%lecanemab%'` with strict `match: { column, values }` blocks
-populated from the live cohort.
+Replaces fuzzy `criteria: drug_concept_name ILIKE '%lecanemab%'`
+with strict `match:` blocks populated from the live cohort.
+Two modes:
 
-The sales sheet doesn't show a `Criteria` column directly, but
-tightening Criteria still affects which rows feed `Completeness`
-and the underlying value distributions, so it's worth doing once
-per cohort.
+- `--mode names` (default): writes `match.values: ['Lecanemab',
+  'Donanemab', ...]`. Strict, but string-matching — fragile if
+  the cohort spells the concept slightly differently from the
+  curated list.
+- `--mode concept-ids`: writes `match.concept_ids: [40221901,
+  793143, ...]` against the corresponding `*_concept_id` column.
+  Canonical OMOP IDs, no DB vocabulary lookup at build time.
+  **Recommended** for clinical accuracy — concept IDs are stable
+  even when concept_name strings drift between cohorts.
 
 ```bash
-# 4a. Read-only report — what does mtc_aat actually contain for
-#     each variable's existing broad criteria?
-python dictionary_v2/discover_exact_matches.py --cohort mtc_aat
+# 4a. Read-only concept-id report — surfaces (id, name, count)
+#     triples for each variable's existing broad criteria.
+python dictionary_v2/discover_exact_matches.py \
+    --cohort mtc_aat --mode concept-ids
 # → Output/discovery/mtc_aat/report.md
 
-# 4b. Apply observed values into packs/variables/mtc_aat.yaml.
+# 4b. Apply concept_ids into packs/variables/mtc_aat.yaml.
 #     --auto-stub copies each inherited row from the shared
 #     aat_common pack into mtc_aat.yaml first, then attaches the
 #     match block. Walks one variable at a time with a
 #     [UPDATE]/[ADD cohort override] prompt.
 python dictionary_v2/discover_exact_matches.py \
     --cohort mtc_aat \
+    --mode concept-ids \
     --apply --target cohort --auto-stub
 ```
 

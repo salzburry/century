@@ -46,7 +46,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +92,13 @@ class VariableObservation:
                                        # — usually the broad criteria when both
                                        # are present, so reviewers can see how
                                        # missing_from_config was derived
+    # Concept-ID mode (set when `--mode concept-ids`): observed
+    # (concept_id, concept_name, count) triples plus the matcher
+    # column for the id (typically `*_concept_id`). The build
+    # never reads from this — it's report metadata for the human
+    # reviewer and the apply path that writes match.concept_ids.
+    observed_concept_ids: list[tuple[int, str, int]] = field(default_factory=list)
+    id_matcher_column: str = ""        # e.g. drug_concept_id
 
     @property
     def configured_set(self) -> set[str]:
@@ -359,13 +366,39 @@ def _build_observation(
     )
 
 
-def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
+def _id_column_for(name_col: str) -> str:
+    """Derive the OMOP `*_concept_id` column from a `*_concept_name`
+    column by string substitution. Returns "" when the input doesn't
+    look like a concept_name column — concept-ID discovery only
+    works on canonical OMOP shapes.
+    """
+    if not name_col:
+        return ""
+    if name_col.endswith("_concept_name"):
+        return name_col[:-len("_concept_name")] + "_concept_id"
+    if name_col.endswith("_concept_id"):
+        return name_col   # already an id column
+    return ""
+
+
+def _observe_one(
+    conn, schema: str, v: dict[str, Any], mode: str = "names",
+) -> VariableObservation:
     """Run the variable's existing scope against the cohort and dump
     the distinct values it matches with row counts.
 
     Discovery groups by the *matcher* column (concept name), not the
     variable's display/value column — see _resolve_matcher_column.
     Scope rules live in _resolve_scope() and are shared with dry-run.
+
+    Mode:
+      - "names" (default): existing behaviour. Reports (name, count).
+      - "concept-ids": derives the `*_concept_id` column from the
+        matcher's `*_concept_name`, runs `SELECT id, name, COUNT(*)
+        GROUP BY id, name`, and stamps `observed_concept_ids` on
+        the observation. Used by the apply path to write
+        `match.concept_ids: [...]` blocks. Build never reads this
+        — it's metadata for the human reviewer + apply step.
     """
     matcher_column, scope_sql, displayed_criteria, error = _resolve_scope(v)
     obs = _build_observation(
@@ -375,6 +408,46 @@ def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
     if error:
         return obs
 
+    if mode == "concept-ids":
+        id_col = _id_column_for(matcher_column)
+        if not id_col:
+            obs.error = (
+                f"--mode concept-ids needs a `*_concept_name` matcher "
+                f"column to derive the matching `*_concept_id`; got "
+                f"{matcher_column!r}"
+            )
+            return obs
+        obs.id_matcher_column = id_col
+        sql = (
+            f'SELECT "{id_col}", "{matcher_column}"::text, COUNT(*) AS n '
+            f'FROM "{schema}"."{obs.table}" '
+            f'WHERE ({scope_sql}) '
+            f'  AND "{id_col}" IS NOT NULL '
+            f'  AND "{matcher_column}" IS NOT NULL '
+            f'GROUP BY "{id_col}", "{matcher_column}" '
+            f'ORDER BY n DESC;'
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                triples = [
+                    (int(r[0]), str(r[1]), int(r[2]))
+                    for r in cur.fetchall()
+                ]
+            obs.observed_concept_ids = triples
+            # Mirror name-mode `observed` for the existing report
+            # branches (configured & observed / missing / stale all
+            # work off `observed`). The id column travels separately.
+            obs.observed = [(name, n) for _, name, n in triples]
+        except Exception as exc:
+            obs.error = str(exc)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return obs
+
+    # Default name mode.
     sql = (
         f'SELECT "{matcher_column}"::text, COUNT(*) AS n '
         f'FROM "{schema}"."{obs.table}" '
@@ -397,6 +470,7 @@ def _observe_one(conn, schema: str, v: dict[str, Any]) -> VariableObservation:
 
 def discover(
     cohort: str, conn, only_variable: str | None = None,
+    mode: str = "names",
 ) -> list[VariableObservation]:
     cohort_pack, variables_list = _pack_for_cohort(cohort)
     schema = cohort_pack.get("schema_name") or cohort_pack.get("schema") or cohort
@@ -409,7 +483,7 @@ def discover(
 
     observations: list[VariableObservation] = []
     for v in rows:
-        observations.append(_observe_one(conn, schema, v))
+        observations.append(_observe_one(conn, schema, v, mode=mode))
     return observations
 
 
@@ -470,7 +544,21 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
 
         out.append(f"- configured values: {len(o.configured_values)}")
         out.append(f"- observed distinct values: {len(o.observed)}")
+        if o.observed_concept_ids and o.id_matcher_column:
+            out.append(
+                f"- concept-id mode: {o.id_matcher_column} → "
+                f"{len(o.observed_concept_ids)} unique ids"
+            )
         out.append("")
+
+        # Concept-id mode: show (id, name, count) triples so the
+        # reviewer can copy the integer list straight into a
+        # `match.concept_ids: [...]` block.
+        if o.observed_concept_ids:
+            out.append("### Observed concept IDs (id · name · count)")
+            for cid, name, n in o.observed_concept_ids:
+                out.append(f"- `{cid}`  ·  `{name}`  ·  ({n:,})")
+            out.append("")
 
         if o.configured_and_observed:
             out.append("### Configured & observed")
@@ -926,21 +1014,29 @@ def apply_suggestions(
                 skipped += 1
                 continue
 
-        # Mutate the in-memory pack.
-        if action == "update":
-            existing["match"] = {
+        # Build the match block. Concept-ID mode writes the
+        # `*_concept_id` column + an integer concept_ids list.
+        # Name mode keeps the existing column + string values list.
+        if o.observed_concept_ids and o.id_matcher_column:
+            match_block = {
+                "column": o.id_matcher_column,
+                "concept_ids": [cid for cid, _, _ in o.observed_concept_ids],
+            }
+        else:
+            match_block = {
                 "column": o.column,
                 "values": _suggested_values_for(o),
             }
+
+        # Mutate the in-memory pack.
+        if action == "update":
+            existing["match"] = match_block
         else:   # stub: copy the source row (CommentedMap) into the cohort pack
             new_row = _source_def(o.source_pack, o.category, o.variable)
             # _source_def already returned a deep-copy, but evict the
             # cache entry so the next iteration (if any) reads a fresh one.
             source_var_cache.pop((o.source_pack, o.category, o.variable), None)
-            new_row["match"] = {
-                "column": o.column,
-                "values": _suggested_values_for(o),
-            }
+            new_row["match"] = match_block
             rows.append(new_row)
             _attach_stub_comment(rows[-1], o.source_pack)
 
@@ -1019,6 +1115,16 @@ def main(argv: list[str] | None = None) -> int:
                              "then attach the match: block. Shared packs "
                              "are never modified. Only valid with "
                              "--target cohort.")
+    parser.add_argument("--mode", choices=("names", "concept-ids"),
+                        default="names",
+                        help="proposal granularity. `names` (default): "
+                             "report observed concept_name strings; "
+                             "--apply writes match.values. `concept-ids`: "
+                             "report (concept_id, concept_name, count) "
+                             "triples by joining on the corresponding "
+                             "*_concept_id column; --apply writes "
+                             "match.concept_ids (canonical OMOP IDs, no "
+                             "vocabulary lookup needed at build time).")
     parser.add_argument("--dry-run", action="store_true",
                         help="skip DB; report config-only with no observations")
     args = parser.parse_args(argv)
@@ -1075,7 +1181,9 @@ def main(argv: list[str] | None = None) -> int:
             user = None; password = None; sslmode = None
         with psycopg.connect(**build_conn_kwargs(_NS())) as conn:
             conn.autocommit = True
-            observations = discover(args.cohort, conn, args.variable)
+            observations = discover(
+                args.cohort, conn, args.variable, mode=args.mode,
+            )
 
     report_path = out_dir / "report.md"
     report_path.write_text(_fmt_md(observations, args.cohort), encoding="utf-8")

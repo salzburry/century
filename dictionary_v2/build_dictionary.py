@@ -867,12 +867,31 @@ def _load_match_values_file(rel_path: str) -> list[str]:
 
 
 def compile_match_block(match: dict[str, Any] | None) -> str:
-    """Return `"<column>" IN ('v1', 'v2', ...)` SQL from a structured
-    match block, or "" if the block is missing/empty.
+    """Return `"<column>" IN (...)` SQL from a structured match block,
+    or "" if the block is missing/empty.
 
-    Values come from `match.values` (inline) and/or `match.values_file`
-    (path under packs/). Both sources are unioned and deduplicated
-    while preserving first-seen order.
+    Two source forms, mutually exclusive:
+
+    - `concept_ids:` (preferred for clinical accuracy) — list of
+      OMOP concept-ID integers. Compiles to a bare-integer
+      IN list with NO database vocabulary lookup at build time:
+          "drug_concept_id" IN (40221901, 793143, 35606214)
+      Concept names are display metadata only — render them via
+      the variable's `column:` (typically the matching
+      `*_concept_name`) on the Observed Values cell. Keeping the
+      filter integer-only means the matcher is deterministic even
+      if a vocabulary lookup is unavailable.
+
+    - `values:` / `values_file:` — list of string labels. Compiles
+      to a quoted IN list:
+          "drug_concept_name" IN ('Lecanemab', 'Donanemab')
+      Both inline and file values are unioned and deduplicated
+      while preserving first-seen order.
+
+    If both `concept_ids` and `values` are populated on the same
+    block, `concept_ids` wins (concept-ID matching is canonical;
+    string matching is a fallback). The validator flags the
+    combination so packs don't drift into ambiguity.
     """
     if not isinstance(match, dict):
         return ""
@@ -880,6 +899,24 @@ def compile_match_block(match: dict[str, Any] | None) -> str:
     if not column:
         return ""
 
+    # Concept-ID branch — bare integers, no name lookup.
+    raw_ids = match.get("concept_ids") or []
+    if raw_ids:
+        ids: list[int] = []
+        seen_ids: set[int] = set()
+        for v in raw_ids:
+            try:
+                i = int(v)
+            except (TypeError, ValueError):
+                continue
+            if i not in seen_ids:
+                seen_ids.add(i)
+                ids.append(i)
+        if ids:
+            return f'"{column}" IN ({", ".join(str(i) for i in ids)})'
+        return ""
+
+    # String values branch (legacy + values_file).
     values: list[str] = []
     seen: set[str] = set()
     for v in (match.get("values") or []):

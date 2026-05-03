@@ -208,8 +208,17 @@ def _render_summary(
     lines.append("## Per-cohort results")
     lines.append("")
     lines.append(
+        "Counts come from the canonical model BEFORE any audience "
+        "filter (PII, internal scaffolding tables, cohort table-excludes "
+        "are not subtracted). `unimplemented%` is the fraction of "
+        "variables flagged `Implemented=No` — a coverage signal about "
+        "whether the cohort actually carries data for each variable, "
+        "not an audience-policy signal."
+    )
+    lines.append("")
+    lines.append(
         "| cohort | status | patients | tables | variables | "
-        "implemented | drop% | warnings |"
+        "implemented | unimplemented% | warnings |"
     )
     lines.append(
         "|---|---|---:|---:|---:|---|---:|---:|"
@@ -258,12 +267,16 @@ def _render_summary(
         if r.status == "ok" and r.drop_pct is not None and r.drop_pct >= 25
     ] if not dry_run else []
     if high_drop:
-        lines.append("## High drop% — review criteria")
+        lines.append("## High unimplemented% — review variable criteria")
         lines.append("")
         lines.append(
-            "The following cohorts drop ≥25% of variables in "
-            "stakeholder output. Most of these are usually "
-            "criteria-mismatch issues, not real data gaps. Run:"
+            "Cohorts where ≥25% of variables come back as "
+            "`Implemented=No`. This usually means the variable's "
+            "broad `criteria:` (or `match:`) didn't hit anything in "
+            "this cohort — either the cohort genuinely lacks the "
+            "concept, or the criteria pattern is too narrow / "
+            "looks at the wrong column. Run discovery to surface "
+            "what the cohort actually contains:"
         )
         lines.append("")
         lines.append("```bash")
