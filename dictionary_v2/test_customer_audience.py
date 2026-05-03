@@ -2122,6 +2122,50 @@ class DiscoveryApplyTests(unittest.TestCase):
             self.mod._id_and_name_columns("value_as_number"), ("", ""),
         )
 
+    def test_id_and_name_columns_honors_name_column_override(self):
+        # Curated abstraction tables can carry `*_concept_id` without
+        # the matching `*_concept_name` — instead they have a label
+        # column like `display_label`. Setting match.name_column:
+        # must let discovery use that label column for the (id, name)
+        # report triples.
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "drug_concept_id",
+                display_col="",
+                name_col_override="display_label",
+            ),
+            ("drug_concept_id", "display_label"),
+        )
+        # Override wins even when the display column would have
+        # prefix-matched (so the curator can deliberately point at
+        # a richer label column).
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "drug_concept_id",
+                display_col="drug_concept_name",
+                name_col_override="custom_label",
+            ),
+            ("drug_concept_id", "custom_label"),
+        )
+        # Override survives the value-column safety case too — the
+        # curator opted in by setting the override explicitly.
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "observation_concept_id",
+                display_col="value_as_concept_name",
+                name_col_override="curated_observation_label",
+            ),
+            ("observation_concept_id", "curated_observation_label"),
+        )
+        # Empty / whitespace override is ignored — falls through to
+        # the existing derivation.
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "drug_concept_id", "drug_concept_name", "  ",
+            ),
+            ("drug_concept_id", "drug_concept_name"),
+        )
+
     def test_id_and_name_columns_rejects_mismatched_prefix_display(self):
         # An observation row's typical shape:
         #   column: value_as_concept_name           (the answer)
@@ -2824,6 +2868,80 @@ class VariablePackOverrideTests(unittest.TestCase):
         # Non-integer entry → error.
         self.assertIn("ConceptIdsBadEntries", msgs)
         self.assertIn("must be integers", msgs)
+
+    def test_validator_flags_malformed_name_column_override(self):
+        # `match.name_column:` is the optional discovery override
+        # for non-canonical tables. When present it must be a
+        # non-empty string — anything else is a typo / wrong shape
+        # the validator catches at lint time.
+        path = bd.PACKS_DIR / "variables" / "_validator_name_column.yaml"
+        path.write_text(
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: BadNameColumnInt\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      name_column: 42\n"                  # int, not string
+            "  - category: Drugs\n"
+            "    variable: EmptyNameColumn\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      name_column: ''\n"                  # empty string
+            "  - category: Drugs\n"
+            "    variable: ValidNameColumnOverride\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      name_column: display_label\n",      # valid — should pass
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        cohort_path = bd.PACKS_DIR / "cohorts" / "_validator_name_column.yaml"
+        cohort_path.write_text(
+            "provider: TEST\ndisease: TEST\nschema_name: x\n"
+            "cohort_name: _validator_name_column\n"
+            "display_name: x\nvariables_pack: _validator_name_column\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        import importlib.util
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_name_column_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_name_column_test"] = vp
+        spec.loader.exec_module(vp)
+
+        report = vp.validate_cohort(
+            "_validator_name_column", known_categories=set(),
+        )
+        msgs = "\n".join(f.message for f in report.findings)
+        # Int → error.
+        self.assertIn("BadNameColumnInt", msgs)
+        self.assertIn("name_column", msgs)
+        # Empty string → error.
+        self.assertIn("EmptyNameColumn", msgs)
+        # Valid override must NOT trigger a name_column finding.
+        valid_findings = [
+            f for f in report.findings
+            if "ValidNameColumnOverride" in f.message
+            and "name_column" in f.message
+        ]
+        self.assertEqual(
+            valid_findings, [],
+            msg="valid name_column override must not trigger a finding",
+        )
 
     def test_validator_flags_malformed_freshness_metadata(self):
         # Commit B fields must be the right shape when present.

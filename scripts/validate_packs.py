@@ -556,6 +556,19 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                             f"`concept_ids:` is set — concept-ID matching "
                             f"usually targets a `*_concept_id` column.",
                         ))
+            # Optional `name_column:` override for non-canonical
+            # tables. Must be a non-empty string when present —
+            # discovery uses it as the label projection for the
+            # report's (id, name, count) triples.
+            name_col = match.get("name_column")
+            if name_col is not None:
+                if not isinstance(name_col, str) or not name_col.strip():
+                    report.findings.append(Finding(
+                        "error", slug,
+                        f"{cat}/{var}: `match.name_column:` must be a "
+                        f"non-empty string when set, got "
+                        f"{type(name_col).__name__}={name_col!r}",
+                    ))
 
         # Sales-spec proposal: must be one of the allowed tags when
         # present. (Value Sets is data-driven now — derived from
