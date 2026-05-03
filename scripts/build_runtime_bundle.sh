@@ -41,6 +41,7 @@ mkdir -p "$BUNDLE_DIR"
 FILES=(
   introspect_cohort.py
   requirements.txt
+  NEXT_STEPS.md
 )
 DIRS=(
   dictionary_v2
@@ -108,6 +109,7 @@ For a worked end-to-end example (mtc_aat → sales spec), see
 century-dictionary/
 ├── README.md                            ← you are here
 ├── run.md                               ← worked example: mtc_aat / sales
+├── NEXT_STEPS.md                        ← post-v2 rollout plan + tracker
 ├── requirements.txt
 ├── introspect_cohort.py                 ← Postgres schema walker
 ├── dictionary_v2/
