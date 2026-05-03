@@ -2094,6 +2094,108 @@ class DiscoveryApplyTests(unittest.TestCase):
         # Old name-mode header must NOT appear when in id mode.
         self.assertNotIn("Observed but NOT in config", md)
 
+    def test_id_and_name_columns_handles_id_matcher_separately(self):
+        # When matcher is already a `*_concept_id` column (common
+        # for already-migrated rows), the name column must come
+        # from the variable's display column or a derived
+        # `*_concept_name`. Reusing the id column as the name
+        # column would render (id, name) triples as (111, '111').
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "drug_concept_name", "drug_concept_name",
+            ),
+            ("drug_concept_id", "drug_concept_name"),
+        )
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "drug_concept_id", "drug_concept_name",
+            ),
+            ("drug_concept_id", "drug_concept_name"),
+        )
+        # Display column missing — derive name col from matcher prefix.
+        self.assertEqual(
+            self.mod._id_and_name_columns("drug_concept_id"),
+            ("drug_concept_id", "drug_concept_name"),
+        )
+        # Non-OMOP shape — refuse.
+        self.assertEqual(
+            self.mod._id_and_name_columns("value_as_number"), ("", ""),
+        )
+
+    def test_report_skips_id_stale_sections_without_observed_triples(self):
+        # Name-mode discovery against an id-configured row leaves
+        # observed_concept_ids empty. The id-stale/missing/configured-
+        # and-observed sections must be suppressed in that case —
+        # otherwise every configured ID falsely lands in the
+        # "candidate removals" list because it isn't in an empty
+        # observed_concept_ids set. That would push reviewers
+        # toward removing valid concept IDs.
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria='"drug_concept_id" IN (111, 222)',
+            configured_values=[],
+            # Name-mode observations — strings, not triples.
+            observed=[("Aspirin 81 MG", 100), ("Aspirin 325 MG", 50)],
+            source_pack="ckd_common",
+            observed_concept_ids=[],            # critical — name mode
+            configured_concept_ids=[111, 222],
+            configured_match_column="drug_concept_id",
+            id_matcher_column="",
+            discovery_scope='"drug_concept_id" IN (111, 222)',
+        )
+        md = self.mod._fmt_md([obs], "balboa_ckd")
+        # ID-mode framing IS shown (configured IDs are visible).
+        self.assertIn("concept-id mode: drug_concept_id", md)
+        self.assertIn("Configured concept IDs (no observations from this run)", md)
+        # The dangerous "candidate removals" section MUST NOT appear.
+        self.assertNotIn(
+            "In match.concept_ids but NOT observed", md,
+            msg="stale-id section must be suppressed when observed_concept_ids is empty",
+        )
+        # Same for missing/configured-and-observed.
+        self.assertNotIn("Configured & observed (concept IDs)", md)
+        self.assertNotIn(
+            "Observed but NOT in match.concept_ids", md,
+        )
+
+    def test_per_variable_prompt_uses_apply_id_mode_predicate(self):
+        # Prompt's id-mode predicate must match apply's so the
+        # action label can't promise a name-mode UPDATE while
+        # apply silently writes a concept_ids block. With a
+        # row whose only ID signal is configured_concept_ids
+        # (name-mode discovery against an id-configured row),
+        # the prompt must still say "(concept-ids)".
+        captured: list[str] = []
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda prompt="": (captured.append(prompt) or "n")
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria='"drug_concept_id" IN (111, 222)',
+            configured_values=[],
+            observed=[("Aspirin 81 MG", 100)],
+            source_pack=self.pack_slug,
+            observed_concept_ids=[],            # name-mode discovery
+            configured_concept_ids=[111, 222],
+            configured_match_column="drug_concept_id",
+            id_matcher_column="",
+        )
+        self.mod.apply_suggestions(
+            [obs], target="shared", auto_yes=False,
+        )
+        prompt = captured[-1]
+        self.assertIn("(concept-ids)", prompt,
+                      msg="prompt must mark id-configured rows as concept-ids "
+                          "so the reviewer knows which match-block shape "
+                          "will be written")
+        self.assertIn("match.column=drug_concept_id", prompt)
+        # Value line includes the re-run hint when only configured.
+        self.assertIn("re-run --mode concept-ids", prompt)
+
     def test_per_variable_prompt_surfaces_concept_ids_mode(self):
         # Commit D: when the observation has concept_ids data, the
         # prompt must say so. Reviewer needs to know whether they're
