@@ -456,30 +456,38 @@ Every heuristic fill is logged so the config can absorb it later.
 ## 10. Audience model
 
 ### 10.1 Presets
-- **technical** — Summary + Tables + Columns + Variables. No redaction. Raw SQL `Criteria` shown.
-- **sales** — Tempus-style three-sheet spec: Summary cover (styled
-  with title block, description paragraph, hero stats and a
-  coverage-by-category rollup) + Tables (customer-trimmed) +
-  Variables. Variables has exactly:
-  `Category | Variable | Description | Value Sets | Notes | Type |
-  Proposal | Completeness`. Columns sheet is intentionally not
-  produced — partners read Variables for clinical content. PII
-  rows dropped, internal scaffolding tables filtered, JSON
-  suppressed. `Value Sets` is data-driven (observed top-10
-  values for the variable's column, newline-separated, no
-  curation field). `Proposal` is the only YAML-authored sales
-  field — set `proposal: Standard` or `proposal: Custom` per
-  variable; the validator rejects anything else. Variables with
-  no data in the cohort (`Implemented = No`) are dropped from
-  the rendered sheet so the partner artifact only shows what's
-  deliverable.
-- **pharma** — Summary + Variables. PII dropped; no raw column inventory. SQL `Criteria` hidden.
-- **customer** — All four sheets but trimmed (drops debug summary
-  fields, internal scaffolding tables, PII; trims Columns to
-  Table / Column / Description / Field Type). Keeps the configured
-  `Criteria` column side-by-side with prose `Inclusion Criteria`
-  per reviewer feedback. JSON output is suppressed (customer
-  consumes xlsx/html). The main stakeholder-facing run mode.
+
+The full per-audience column contract lives in
+[`docs/audiences.md`](./docs/audiences.md). Quick summary:
+
+- **technical** — full audit view. Summary + Tables + Columns +
+  Variables, all sheets at full width. Carries both metrics:
+  row-level `Completeness` AND `% Patients With Value`. Raw SQL
+  `Criteria` shown. JSON dump produced. No PII redaction.
+- **sales** — Tempus-style stakeholder spec: styled Summary cover
+  + Tables (trimmed) + Variables. Columns sheet not produced.
+  Variables exactly: `Category | Variable | Description |
+  Observed Values | Notes | Type | Proposal | % Patients With
+  Value`. `Observed Values` is data-driven (top-10 from the
+  cohort, newline-separated, no curation field). `Proposal` is
+  the only YAML-authored sales field — must be exactly `Standard`
+  or `Custom`. Variables with no data (`Implemented = No`) are
+  dropped. PII dropped, internal scaffolding tables filtered,
+  JSON suppressed.
+- **pharma** — Summary + Variables. Same Variables fields as
+  technical (Coding Schema, Implemented, Data Source kept) but
+  drops the row-level `Completeness` column in favor of the
+  single stakeholder metric `% Patients With Value`. Raw SQL
+  `Criteria` hidden. PII dropped.
+- **customer** — All four sheets but trimmed. Variables drops
+  Coding Schema / Implemented / Data Source; renames `Values` to
+  `Observed Values` (cell is the cohort's observed top-N values,
+  not a curated enum); uses `% Patients With Value` as the single
+  coverage metric. Keeps the configured `Criteria` column
+  side-by-side with prose `Inclusion Criteria` per reviewer
+  feedback. Columns trimmed to Table / Column / Description /
+  Field Type. PII dropped, internal scaffolding tables filtered,
+  JSON suppressed. The main stakeholder-facing run mode.
 
 ### 10.2 PII requirement
 PII redaction is **not optional** for sales / pharma outputs. Any column

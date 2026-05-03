@@ -170,7 +170,7 @@ nimbus_copd, rmn_alzheimers, rvc_amd_curated, rvc_dr_curated.
 | `--audience` | Sheets | Notes |
 |---|---|---|
 | `technical` (default) | Summary + Tables + Columns + Variables | Full debug fields, raw SQL Criteria, PII visible. Writes xlsx + html + json. |
-| `sales` | Summary + Tables + Variables (no Columns sheet). Summary and Tables use the customer-trimmed layouts; Variables uses the Tempus-style spec (Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness). | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
+| `sales` | Summary + Tables + Variables (no Columns sheet). Summary and Tables use the customer-trimmed layouts; Variables uses the Tempus-style spec (Category, Variable, Description, Observed Values, Notes, Type, Proposal, % Patients With Value). | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 | `pharma` | Summary + Variables | PII dropped. JSON kept. |
 | `customer` | Summary, Tables, Columns, Variables (all trimmed) | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 
@@ -308,7 +308,7 @@ technical-audience output instead):
 
 - **Summary** — cohort cover (provider, disease, patient count, date coverage).
 - **Tables** — customer-trimmed: `Table | Category | Description | Inclusion Criteria | Rows | Columns | Patients`. Internal scaffolding tables (`cohort_patients`, `standard_profile_data_model`, etc.) are filtered out via `packs/dictionary_layout.yaml`.
-- **Variables** — Tempus-style spec: `Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness`. Variables that have no data in the cohort (`Implemented = No`) are dropped automatically.
+- **Variables** — Tempus-style spec: `Category | Variable | Description | Observed Values | Notes | Type | Proposal | % Patients With Value`. Variables that have no data in the cohort (`Implemented = No`) are dropped automatically.
 
 JSON is intentionally not produced for the sales audience — the partner
 bundle never carries the internal `CohortModel` dump.
@@ -359,12 +359,14 @@ Wrote Output/mtc__aat_cohort_dictionary_sales.html
 If you open the xlsx, the `Variables` sheet header row will read
 exactly:
 ```
-Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness
+Category | Variable | Description | Observed Values | Notes | Type | Proposal | % Patients With Value
 ```
 
-`Value Sets` and `Completeness` are empty / `—` in dry-run because
-both are DB-derived. At runtime, `Value Sets` shows the cohort's
-observed top-N values for the variable's column, newline-separated.
+`Observed Values` and `% Patients With Value` are empty / `—` in
+dry-run because both are DB-derived. At runtime, `Observed Values`
+shows the cohort's observed top-N values for the variable's column,
+newline-separated; `% Patients With Value` is the fraction of cohort
+patients with at least one non-null row for that variable.
 `Proposal` is YAML-only (see Step 3 below).
 
 ---
@@ -377,9 +379,10 @@ python dictionary_v2/build_dictionary.py \
     --audience sales
 ```
 
-`Completeness` is now populated from live cohort counts. Variables
-the cohort doesn't actually carry data for (`Implemented = No`)
-are dropped automatically from the sales / customer artifacts —
+`% Patients With Value` is now populated from live cohort counts.
+Variables the cohort doesn't actually carry data for
+(`Implemented = No`) are dropped automatically from the sales /
+customer artifacts —
 they'd otherwise render as 0% rows and add noise. Internal
 audiences (`technical`, `pharma`) keep them so QA can see gaps.
 
@@ -405,7 +408,7 @@ YAML. Set it on each variable in the cohort's pack
 Must be exactly `Standard` or `Custom` when set; the validator
 rejects anything else.
 
-`Value Sets` is data-driven and not configurable — the cell
+`Observed Values` is data-driven and not configurable — the cell
 always reflects what the cohort actually contains. A data
 dictionary that claims a value the cohort doesn't carry is wrong
 by definition.

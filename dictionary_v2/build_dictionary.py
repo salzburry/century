@@ -1723,24 +1723,60 @@ _TECHNICAL_VARIABLES_TAIL: list[tuple[str, Any]] = [
     ("Median (IQR)",  lambda v: v.median_iqr),
     ("Completeness",  lambda v: _fmt_pct(v.completeness_pct)),
     ("Implemented",   lambda v: v.implemented),
-    ("% Patient",     lambda v: _fmt_pct(v.patient_pct)),
+    # Renamed from "% Patient" — same field (patient_pct), clearer
+    # label that matches what the metric actually measures: the
+    # fraction of cohort patients with at least one non-null row
+    # for this variable. Stakeholder audiences (pharma, sales,
+    # customer) drop the row-level Completeness column and use
+    # only this metric; technical keeps both for internal QA.
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
     ("Data Source",   lambda v: v.data_source),
     ("Notes",         lambda v: v.notes),
 ]
 
+
+# Pharma Variables tail: same fields as technical except the
+# row-level `Completeness` column is dropped. Stakeholder audiences
+# all converge on `% Patients With Value` as the single coverage
+# metric; row-level Completeness lives in the technical view only.
+_PHARMA_VARIABLES_TAIL: list[tuple[str, Any]] = [
+    ("Field Type",    lambda v: v.field_type),
+    ("Example",       lambda v: v.example),
+    ("Coding Schema", lambda v: v.coding_schema),
+    ("Values",        lambda v: v.values),
+    ("Distribution",  lambda v: v.distribution),
+    ("Median (IQR)",  lambda v: v.median_iqr),
+    ("Implemented",   lambda v: v.implemented),
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
+    ("Data Source",   lambda v: v.data_source),
+    ("Notes",         lambda v: v.notes),
+]
+
+
+# Shared accessor for the stakeholder "Observed Values" cell.
+# Reads the structured top_value_labels list (newline-separated,
+# no counts) so OMOP labels with internal commas render verbatim.
+def _observed_values_cell(v: Any) -> str:
+    if v.top_value_labels:
+        return "\n".join(v.top_value_labels)
+    return ""
+
+
 # Customer Variables drops Coding Schema / Implemented / Data Source.
-# `% Patient` is also dropped for customers — Completeness alone
-# answers the reviewer's "what fraction of patients have a value"
-# question in customer-facing form. The technical / sales / pharma
-# layouts still carry both metrics for internal review.
+# Single coverage metric (`% Patients With Value`) sourced from
+# patient_pct — the same metric the technical sheet shows under that
+# label. The Values column is renamed to `Observed Values` so the
+# label honestly describes what's in the cell (cohort's actual top-N
+# values, not a curated enum). Comma-safe: reads the structured
+# top_value_labels list, never splits a string on commas.
 _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
-    ("Field Type",   lambda v: v.field_type),
-    ("Example",      lambda v: v.example),
-    ("Values",       lambda v: v.values),
-    ("Distribution", lambda v: v.distribution),
-    ("Median (IQR)", lambda v: v.median_iqr),
-    ("Completeness", lambda v: _fmt_pct(v.completeness_pct)),
-    ("Notes",        lambda v: v.notes),
+    ("Field Type",      lambda v: v.field_type),
+    ("Example",         lambda v: v.example),
+    ("Observed Values", _observed_values_cell),
+    ("Distribution",    lambda v: v.distribution),
+    ("Median (IQR)",    lambda v: v.median_iqr),
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
+    ("Notes",           lambda v: v.notes),
 ]
 
 
@@ -1762,22 +1798,20 @@ _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
 # is wrong — so there's no curation override; if it's not in the
 # data, it doesn't appear.
 # `Proposal` comes from the curated YAML field. Type maps directly
-# to extraction_type.
-def _sales_value_sets_cell(v: Any) -> str:
-    if v.top_value_labels:
-        return "\n".join(v.top_value_labels)
-    return ""
+# to extraction_type. The Observed Values cell uses the shared
+# _observed_values_cell helper defined above (also used by the
+# customer Variables tail).
 
 
 _SALES_VARIABLES_LAYOUT: list[tuple[str, Any]] = [
     ("Category",    lambda v: v.category),
     ("Variable",    lambda v: v.variable),
     ("Description", lambda v: v.description),
-    ("Value Sets",  _sales_value_sets_cell),
+    ("Observed Values", _observed_values_cell),
     ("Notes",       lambda v: v.notes),
     ("Type",        lambda v: v.extraction_type),
     ("Proposal",    lambda v: v.proposal),
-    ("Completeness", lambda v: _fmt_pct(v.completeness_pct)),
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
 ]
 
 
@@ -1785,11 +1819,19 @@ def variables_layout(audience: str) -> list[tuple[str, Any]]:
     """Variables sheet layout for the given audience.
 
     Audience rules:
-      - technical: head + Criteria + technical tail (SQL Criteria visible)
-      - customer:  head + Criteria + customer tail (both prose Inclusion
-                   Criteria and configured Criteria visible side by side)
-      - sales:     standalone Tempus-style spec sheet, no shared head.
-      - pharma:    head + technical tail (no raw SQL)
+      - technical: head + Criteria + technical tail (SQL Criteria
+                   visible; carries both Completeness and
+                   % Patients With Value).
+      - customer:  head + Criteria + customer tail (Observed Values
+                   instead of comma-joined "Values"; only
+                   % Patients With Value, row-level Completeness
+                   dropped; Coding Schema / Implemented / Data
+                   Source dropped).
+      - sales:     standalone Tempus-style spec sheet — Observed
+                   Values + % Patients With Value, no shared head.
+      - pharma:    head + pharma tail (technical fields minus
+                   row-level Completeness; % Patients With Value
+                   only).
     """
     if audience == "sales":
         return list(_SALES_VARIABLES_LAYOUT)
@@ -1798,6 +1840,8 @@ def variables_layout(audience: str) -> list[tuple[str, Any]]:
         layout.append(_VARIABLES_LAYOUT_CRITERIA)
     if audience == "customer":
         layout.extend(_CUSTOMER_VARIABLES_TAIL)
+    elif audience == "pharma":
+        layout.extend(_PHARMA_VARIABLES_TAIL)
     else:
         layout.extend(_TECHNICAL_VARIABLES_TAIL)
     return layout

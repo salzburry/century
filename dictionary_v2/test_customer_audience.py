@@ -146,28 +146,56 @@ class CustomerLayoutTests(unittest.TestCase):
         for dropped in ("Coding Schema", "Implemented", "Data Source"):
             self.assertNotIn(dropped, headers)
 
-    def test_variables_drops_percent_patient_for_customer_keeps_completeness(self):
-        # Per reviewer instruction: customer audience shows
-        # Completeness only; % Patient is dropped to avoid surfacing
-        # two near-identical patient-coverage metrics.
+    def test_customer_variables_uses_pct_patients_with_value_only(self):
+        # Audience contract: stakeholder audiences carry a single
+        # patient-coverage metric called `% Patients With Value`
+        # (sourced from patient_pct). Row-level Completeness lives
+        # in the technical view only. The stale "% Patient" /
+        # "Completeness" labels must not appear.
         headers = [label for label, _ in bd.variables_layout("customer")]
+        self.assertIn("% Patients With Value", headers)
+        for stale in ("Completeness", "% Patient"):
+            self.assertNotIn(stale, headers,
+                             msg=f"customer must not carry {stale}")
+        # Customer also renames the comma-joined "Values" cell to
+        # "Observed Values" — the cell is observed top-N from the
+        # cohort, not a curated enum.
+        self.assertIn("Observed Values", headers)
+        self.assertNotIn("Values", headers)
+
+    def test_pharma_variables_uses_pct_patients_with_value_only(self):
+        # Pharma is stakeholder-facing too — drops row-level
+        # Completeness, keeps % Patients With Value. Other technical
+        # fields (Coding Schema, Implemented, Data Source) survive.
+        headers = [label for label, _ in bd.variables_layout("pharma")]
+        self.assertIn("% Patients With Value", headers)
+        for stale in ("Completeness", "% Patient"):
+            self.assertNotIn(stale, headers,
+                             msg=f"pharma must not carry {stale}")
+        for kept in ("Coding Schema", "Implemented", "Data Source"):
+            self.assertIn(kept, headers, msg=f"pharma should keep {kept}")
+
+    def test_technical_variables_keeps_both_metrics(self):
+        # Technical is the audit view: row-level Completeness and
+        # % Patients With Value (renamed from "% Patient") side by
+        # side. Keeps full debug fields.
+        headers = [label for label, _ in bd.variables_layout("technical")]
         self.assertIn("Completeness", headers)
-        self.assertNotIn("% Patient", headers)
+        self.assertIn("% Patients With Value", headers)
+        self.assertNotIn("% Patient", headers,
+                         msg="technical's old '% Patient' label has been renamed")
 
     def test_other_audiences_unaffected(self):
         # technical and pharma share the same Tables / Columns
-        # layouts as before; sales now has a single-sheet
-        # Tempus-style spec layout exercised separately.
+        # layouts as before; sales has its own Tempus-style
+        # Variables layout exercised separately.
         for aud in ("technical", "pharma"):
             tables = [l for l, _ in bd.tables_layout(aud)]
-            self.assertIn("Data Source", tables, msg=f"{aud} Tables should keep Data Source")
+            self.assertIn("Data Source", tables,
+                          msg=f"{aud} Tables should keep Data Source")
             cols = [l for l, _ in bd.columns_layout(aud)]
-            self.assertIn("Coding Schema", cols, msg=f"{aud} Columns should keep Coding Schema")
-            vars_layout = [l for l, _ in bd.variables_layout(aud)]
-            self.assertIn(
-                "% Patient", vars_layout,
-                msg=f"{aud} Variables should keep % Patient",
-            )
+            self.assertIn("Coding Schema", cols,
+                          msg=f"{aud} Columns should keep Coding Schema")
 
 
 class CustomerTableFilterTests(unittest.TestCase):
@@ -201,18 +229,26 @@ class CustomerTableFilterTests(unittest.TestCase):
 
     def test_sales_layout_is_tempus_spec_columns(self):
         # The sales layout matches the reviewer's Tempus reference
-        # workbook plus a Completeness column.
+        # workbook with two label tweaks: "Value Sets" is honestly
+        # named "Observed Values" (the cell is observed top-N from
+        # the cohort, not a curated enum), and the trailing metric
+        # is `% Patients With Value` (sourced from patient_pct) —
+        # consistent with the audience contract that gives every
+        # stakeholder audience the patient-coverage metric and
+        # keeps row-level Completeness for technical only.
         headers = [label for label, _ in bd.variables_layout("sales")]
         self.assertEqual(
             headers,
-            ["Category", "Variable", "Description", "Value Sets",
-             "Notes", "Type", "Proposal", "Completeness"],
+            ["Category", "Variable", "Description", "Observed Values",
+             "Notes", "Type", "Proposal", "% Patients With Value"],
         )
 
-    def test_sales_value_sets_renders_observed_top_values(self):
-        # Value Sets reads from the structured top_value_labels list
-        # (newline-separated, no counts). Dataset is source of truth;
-        # no curation field.
+    def test_sales_observed_values_renders_top_value_labels(self):
+        # Observed Values reads from the structured top_value_labels
+        # list (newline-separated, no counts). Dataset is source of
+        # truth; no curation field. The metric column is
+        # `% Patients With Value`, sourced from patient_pct — the
+        # same field the technical sheet shows under that label.
         row = bd.VariableRow(
             category="Medications", variable="Anti-amyloid Therapy",
             description="Anti-amyloid mAb administrations.",
@@ -227,19 +263,23 @@ class CustomerTableFilterTests(unittest.TestCase):
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(
-            rendered["Value Sets"],
+            rendered["Observed Values"],
             "Lecanemab\nLecanemab-irmb\nLeqembi\nDonanemab-azbt\nKisunla",
         )
         self.assertEqual(rendered["Type"], "Structured")
         self.assertEqual(rendered["Proposal"], "Standard")
-        self.assertEqual(rendered["Completeness"], "87.5%")
+        self.assertEqual(rendered["% Patients With Value"], "80.0%")
+        # Completeness (row-level) and the old "Value Sets" / "% Patient"
+        # labels must NOT appear in the sales sheet anymore.
+        for stale in ("Completeness", "Value Sets", "% Patient"):
+            self.assertNotIn(stale, rendered)
 
-    def test_sales_value_sets_preserves_labels_with_commas(self):
-        # OMOP concept names can contain commas
-        # ("Cancer, malignant", "Aspirin 81 MG, Oral Tablet"). The
-        # structured top_value_labels list must render each verbatim
-        # — the prior implementation split v.values on commas and
-        # would have fragmented these into bogus cell entries.
+    def test_sales_observed_values_preserves_labels_with_commas(self):
+        # OMOP concept names can contain commas ("Cancer, malignant",
+        # "Aspirin 81 MG, Oral Tablet"). The structured
+        # top_value_labels list must render each verbatim — the
+        # prior implementation split v.values on commas and would
+        # have fragmented these into bogus cell entries.
         row = bd.VariableRow(
             category="Diagnosis", variable="Cancer Site",
             description="Site/type of cancer.",
@@ -253,7 +293,7 @@ class CustomerTableFilterTests(unittest.TestCase):
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(
-            rendered["Value Sets"],
+            rendered["Observed Values"],
             "Cancer, malignant\nCancer, in situ",
             msg="labels with internal commas must render verbatim",
         )
@@ -283,7 +323,7 @@ class CustomerTableFilterTests(unittest.TestCase):
         rendered = {label: fn(row) for label, fn in bd.variables_layout("technical")}
         self.assertEqual(rendered["Example"], "Cancer, malignant")
 
-    def test_sales_value_sets_empty_when_no_observed_values(self):
+    def test_sales_observed_values_empty_when_no_top_labels(self):
         # Free-text columns / dry-run rows have empty top_value_labels.
         # Cell renders empty rather than "—" — there's no curation
         # path to fall back to.
@@ -298,7 +338,7 @@ class CustomerTableFilterTests(unittest.TestCase):
             proposal="",
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
-        self.assertEqual(rendered["Value Sets"], "")
+        self.assertEqual(rendered["Observed Values"], "")
 
     def test_sales_visibility_ships_three_sheets(self):
         # Summary + Tables + Variables. Columns is dropped — a
