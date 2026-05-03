@@ -2303,5 +2303,91 @@ class VariablePackOverrideTests(unittest.TestCase):
                       msg=f"validator should flag string sign_off; got: {msgs}")
 
 
+class BatchRunnerTests(unittest.TestCase):
+    """The batch runner builds every cohort in one invocation,
+    records per-cohort results, and emits BUILD_SUMMARY.md. It
+    must keep going through per-cohort failures rather than aborting
+    the whole fleet."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            "build_all_cohorts_under_test",
+            Path(__file__).resolve().parent.parent / "scripts" / "build_all_cohorts.py",
+        )
+        self.mod = importlib.util.module_from_spec(spec)
+        sys.modules["build_all_cohorts_under_test"] = self.mod
+        spec.loader.exec_module(self.mod)
+
+    def test_dry_run_builds_all_cohorts_and_writes_summary(self):
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--dry-run",
+            "--out-dir", str(out_dir),
+            "--audiences", "technical", "customer",
+            "--formats", "xlsx",
+        ])
+        self.assertEqual(rc, 0)
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        # Header + per-cohort table + at least one cohort row.
+        self.assertIn("# Build summary", summary)
+        self.assertIn("Per-cohort results", summary)
+        self.assertIn("| `mtc_aat` |", summary)
+        # Every shipped cohort should appear.
+        for slug in ("balboa_ckd", "drg_ckd", "mtc_aat", "mtc_alzheimers"):
+            self.assertIn(f"| `{slug}` |", summary,
+                          msg=f"summary missing cohort {slug}")
+        # Dry-run note must be present.
+        self.assertIn("Dry-run note", summary)
+
+    def test_restricting_cohorts_only_builds_those(self):
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--dry-run",
+            "--out-dir", str(out_dir),
+            "--cohorts", "mtc_aat", "balboa_ckd",
+            "--audiences", "technical",
+            "--formats", "xlsx",
+        ])
+        self.assertEqual(rc, 0)
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        self.assertIn("| `mtc_aat` |", summary)
+        self.assertIn("| `balboa_ckd` |", summary)
+        # Other cohorts must NOT appear.
+        for slug in ("drg_ckd", "mtc_alzheimers", "newtown_ibd"):
+            self.assertNotIn(f"| `{slug}` |", summary,
+                             msg=f"summary should not contain {slug}")
+
+    def test_per_cohort_error_does_not_kill_batch(self):
+        # Stage a cohort YAML that's missing required fields so
+        # build_model raises. The batch should still complete and
+        # report the error in BUILD_SUMMARY.md without aborting.
+        bad_path = bd.PACKS_DIR / "cohorts" / "_batch_test_bad.yaml"
+        bad_path.write_text(
+            "# deliberately missing schema_name to force build_model to raise\n"
+            "provider: TEST\n"
+            "disease: TEST\n"
+            "cohort_name: _batch_test_bad\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: bad_path.unlink(missing_ok=True))
+
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--dry-run",
+            "--out-dir", str(out_dir),
+            "--cohorts", "_batch_test_bad", "mtc_aat",
+            "--audiences", "technical",
+            "--formats", "xlsx",
+        ])
+        # One cohort failed → exit 1, but the runner kept going.
+        self.assertEqual(rc, 1)
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        # The bad cohort is recorded as an error.
+        self.assertIn("`_batch_test_bad`", summary)
+        self.assertIn("error", summary)
+        # The good cohort still built.
+        self.assertIn("| `mtc_aat` |", summary)
+
+
 if __name__ == "__main__":
     unittest.main()

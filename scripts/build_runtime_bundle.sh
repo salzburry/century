@@ -46,9 +46,13 @@ DIRS=(
   dictionary_v2
   packs
 )
-# scripts/ is selectively copied — only validate_packs.py is shipped.
+# scripts/ is selectively copied — only the runtime-relevant ones
+# ship (validate_packs lints offline; build_all_cohorts is the
+# batch runner). The bundle-build / cohort-onboarding helpers stay
+# in the source repo only.
 EXTRA_FILES=(
   scripts/validate_packs.py
+  scripts/build_all_cohorts.py
 )
 
 for f in "${FILES[@]}"; do
@@ -110,7 +114,8 @@ century-dictionary/
 │   ├── build_dictionary.py              ← main build (audiences)
 │   └── discover_exact_matches.py        ← discovery + --apply / --auto-stub
 ├── scripts/
-│   └── validate_packs.py                ← pack lint (no DB needed)
+│   ├── validate_packs.py                ← pack lint (no DB needed)
+│   └── build_all_cohorts.py             ← batch runner: build every cohort, write BUILD_SUMMARY.md
 └── packs/                               ← cohort + variable + descriptor packs
     ├── categories.yaml                  ← table → Category map
     ├── column_descriptions.yaml         ← OMOP column semantics
@@ -264,7 +269,37 @@ unknown `proposal:` values, etc. Exits non-zero on errors.
 
 ---
 
-## 6. Troubleshooting
+## 6. Build every cohort in one shot
+
+```bash
+# Build all 13 cohorts × {technical, customer, sales} (default).
+python scripts/build_all_cohorts.py
+
+# Restrict cohorts:
+python scripts/build_all_cohorts.py --cohorts mtc_aat balboa_ckd
+
+# Restrict audiences / formats:
+python scripts/build_all_cohorts.py --audiences customer --formats xlsx
+
+# Pack-correctness check (no DB):
+python scripts/build_all_cohorts.py --dry-run
+```
+Writes per-cohort outputs to `Output/` and a single
+`Output/BUILD_SUMMARY.md` with:
+- per-cohort row counts, implemented %, drop %, warning count
+- error block for any cohort whose build raised
+- "high drop% — review criteria" callout for cohorts ≥25% dropped
+  (those usually need discovery + criteria tightening, not real
+  data gaps)
+- output-file index per cohort
+
+Per-cohort errors are recorded but don't kill the batch — one
+bad pack doesn't block the rest of the fleet from shipping.
+Exit code is non-zero if any cohort failed.
+
+---
+
+## 7. Troubleshooting
 
 - **`ModuleNotFoundError: psycopg`** — install deps:
   `pip install -r requirements.txt`. Or use `--dry-run` to skip DB.
