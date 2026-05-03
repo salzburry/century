@@ -454,7 +454,9 @@ def _id_column_for(name_col: str) -> str:
 
 
 def _id_and_name_columns(
-    matcher_col: str, display_col: str = "",
+    matcher_col: str,
+    display_col: str = "",
+    name_col_override: str = "",
 ) -> tuple[str, str]:
     """Return (id_column, name_column) for concept-ids discovery.
 
@@ -462,29 +464,37 @@ def _id_and_name_columns(
     `(id, name, count)` triples — id for the canonical match, name
     for the human-readable spot-check.
 
-    Cases:
-      - matcher is `*_concept_name`: id = `*_concept_id`, name = matcher.
-      - matcher is `*_concept_id` (already-migrated row):
+    Resolution order:
+      1. If `name_col_override` is set AND matcher is a `*_concept_id`,
+         honor the override. Used when a non-canonical table carries
+         IDs but its label column doesn't follow the `*_concept_name`
+         convention (e.g. a curated abstraction table with a
+         `display_label` column).
+      2. matcher is `*_concept_name`: id = derived `*_concept_id`,
+         name = matcher.
+      3. matcher is `*_concept_id` (already-migrated row):
           id = matcher.
           name = display column ONLY when its prefix matches the
                  matcher's prefix (e.g. matcher=drug_concept_id +
                  display=drug_concept_name). Otherwise derived
                  from the matcher's own prefix.
-        The prefix check is what stops `observation_concept_id` from
-        getting paired with `value_as_concept_name` — different
-        prefixes mean the display column holds answer values, not
-        the clinical concept's name. Pairing them would yield
-        meaningless triples like (observation_concept_id, 'English')
-        for Language rows, where 'English' is the answer rather
-        than a label for the observation concept.
-      - anything else: ("", "") — concept-IDs mode can't run.
+        The prefix check stops `observation_concept_id` from getting
+        paired with `value_as_concept_name` — different prefixes
+        mean the display column holds answer values, not the
+        clinical concept's name.
+      4. anything else: ("", "") — concept-IDs mode can't run.
     """
     if not matcher_col:
         return "", ""
+    name_col_override = (name_col_override or "").strip()
     if matcher_col.endswith("_concept_name"):
         prefix = matcher_col[:-len("_concept_name")]
-        return f"{prefix}_concept_id", matcher_col
+        # An override on a name-shaped matcher is unusual (the
+        # matcher IS the name column) but honor it for symmetry.
+        return f"{prefix}_concept_id", name_col_override or matcher_col
     if matcher_col.endswith("_concept_id"):
+        if name_col_override:
+            return matcher_col, name_col_override
         prefix = matcher_col[:-len("_concept_id")]
         if (
             display_col
@@ -533,7 +543,16 @@ def _observe_one(
         # triples would render as (111, '111') and reviewers would
         # have no clinical label to spot-check.
         display_col = (v.get("column") or "").strip()
-        id_col, name_col = _id_and_name_columns(matcher_column, display_col)
+        # `match.name_column:` lets curated abstraction tables that
+        # don't follow the OMOP `*_concept_name` convention provide
+        # an explicit label column for the discovery report. Empty /
+        # absent → derived from the matcher's prefix (the canonical
+        # OMOP behaviour).
+        match_block = v.get("match") if isinstance(v.get("match"), dict) else {}
+        name_col_override = (match_block.get("name_column") or "").strip()
+        id_col, name_col = _id_and_name_columns(
+            matcher_column, display_col, name_col_override=name_col_override,
+        )
         if not id_col or not name_col:
             obs.error = (
                 f"--mode concept-ids needs a `*_concept_name` / "
