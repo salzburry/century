@@ -182,14 +182,29 @@ _CONCEPT_SPECIFIC_NAME_PATTERNS = [
 def _match_block_compiles(match: Any) -> bool:
     """Mirror dictionary_v2.build_dictionary.compile_match_block()'s
     accept contract: a match block compiles to a real strict-IN
-    clause only when `column` is set AND the union of `values:`
-    and any loaded `values_file:` is non-empty. Anything looser
-    would let a malformed block pass validation while rendering
-    as unscoped at build time.
+    clause only when `column` is set AND at least one of
+    `concept_ids:`, `values:`, or a loadable `values_file:` is
+    non-empty. Anything looser would let a malformed block pass
+    validation while rendering as unscoped at build time.
     """
     if not isinstance(match, dict):
         return False
     if not (match.get("column") or "").strip():
+        return False
+    # Concept-ID branch — must be a list of int-castable values.
+    # A scalar `concept_ids: 40221901` (mistakenly un-listed) is
+    # caught by the per-row shape check; here we just refuse to
+    # treat it as scoped without iterating an int.
+    raw_ids = match.get("concept_ids")
+    if raw_ids:
+        if not isinstance(raw_ids, (list, tuple)):
+            return False
+        for v in raw_ids:
+            try:
+                int(v)
+            except (TypeError, ValueError):
+                continue
+            return True
         return False
     values = list(match.get("values") or [])
     values_file = (match.get("values_file") or "").strip()
@@ -406,6 +421,39 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                 "error", slug, f"cohort pack missing required field: {field_name}"
             ))
 
+    # Optional freshness / governance fields. None of these are
+    # required, but when present they must have the right shape so
+    # the cover renderer can ingest them safely.
+    for field_name in ("data_cutoff_date", "last_etl_run"):
+        v = data.get(field_name)
+        if v is not None and not isinstance(v, str):
+            report.findings.append(Finding(
+                "error", slug,
+                f"cohort pack `{field_name}` must be a string (ISO date), "
+                f"got {type(v).__name__}",
+            ))
+    kl = data.get("known_limitations")
+    if kl is not None and not isinstance(kl, list):
+        report.findings.append(Finding(
+            "error", slug,
+            f"cohort pack `known_limitations` must be a YAML list of "
+            f"strings, got {type(kl).__name__}. Use the block form:\n"
+            f"  known_limitations:\n    - First caveat.\n    - Second caveat.",
+        ))
+    so = data.get("sign_off")
+    if so is not None:
+        if not isinstance(so, dict):
+            report.findings.append(Finding(
+                "error", slug,
+                f"cohort pack `sign_off` must be a YAML mapping with "
+                f"`reviewer` and `date` keys, got {type(so).__name__}",
+            ))
+        elif not (so.get("reviewer") or "").strip():
+            report.findings.append(Finding(
+                "error", slug,
+                "cohort pack `sign_off:` is set but `reviewer` is empty",
+            ))
+
     if not report.variables_pack:
         report.findings.append(Finding(
             "warning", slug,
@@ -467,6 +515,47 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
             report.findings.append(Finding(
                 "warning", slug, f"{cat}/{var}: {catch_all}",
             ))
+
+        # Concept-ID match block shape — list of int-castable
+        # values, mutually exclusive with `values:`, and the
+        # match.column should look like an id column (heuristic
+        # warning, not an error).
+        match = v.get("match") if isinstance(v.get("match"), dict) else None
+        if match is not None:
+            cids = match.get("concept_ids")
+            if cids is not None:
+                if not isinstance(cids, list):
+                    report.findings.append(Finding(
+                        "error", slug,
+                        f"{cat}/{var}: `match.concept_ids:` must be a YAML "
+                        f"list of integers, got {type(cids).__name__}",
+                    ))
+                else:
+                    bad = [x for x in cids if not isinstance(x, int)
+                           and not (isinstance(x, str) and x.strip().isdigit())]
+                    if bad:
+                        report.findings.append(Finding(
+                            "error", slug,
+                            f"{cat}/{var}: `match.concept_ids:` entries "
+                            f"must be integers, got {bad!r}",
+                        ))
+                if cids and (match.get("values") or match.get("values_file")):
+                    report.findings.append(Finding(
+                        "error", slug,
+                        f"{cat}/{var}: `match:` block sets both "
+                        f"`concept_ids:` and `values:`/`values_file:` — "
+                        f"these are mutually exclusive. Concept IDs win "
+                        f"in the build, but the pack should pick one.",
+                    ))
+                if cids and isinstance(cids, list):
+                    col = (match.get("column") or "").strip()
+                    if col and not col.endswith("_concept_id"):
+                        report.findings.append(Finding(
+                            "warning", slug,
+                            f"{cat}/{var}: `match.column:` is {col!r} but "
+                            f"`concept_ids:` is set — concept-ID matching "
+                            f"usually targets a `*_concept_id` column.",
+                        ))
 
         # Sales-spec proposal: must be one of the allowed tags when
         # present. (Value Sets is data-driven now — derived from

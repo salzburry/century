@@ -146,28 +146,85 @@ class CustomerLayoutTests(unittest.TestCase):
         for dropped in ("Coding Schema", "Implemented", "Data Source"):
             self.assertNotIn(dropped, headers)
 
-    def test_variables_drops_percent_patient_for_customer_keeps_completeness(self):
-        # Per reviewer instruction: customer audience shows
-        # Completeness only; % Patient is dropped to avoid surfacing
-        # two near-identical patient-coverage metrics.
+    def test_customer_variables_is_plain_language_view(self):
+        # Customer is the buyer-evaluation view: definitions +
+        # observed values + coverage. Methodology fields (Coding
+        # Schema, Distribution, Median (IQR), Implemented, Data
+        # Source) are deliberately stripped — those live on the
+        # pharma sheet. Single coverage metric is
+        # `% Patients With Value`. Criteria is kept for
+        # transparency about how each variable is matched.
         headers = [label for label, _ in bd.variables_layout("customer")]
+        # Kept fields:
+        for kept in ("Inclusion Criteria", "Criteria", "Observed Values",
+                     "% Patients With Value"):
+            self.assertIn(kept, headers, msg=f"customer should keep {kept}")
+        # Methodology fields explicitly dropped:
+        for dropped in ("Coding Schema", "Distribution", "Median (IQR)",
+                        "Implemented", "Data Source"):
+            self.assertNotIn(dropped, headers,
+                             msg=f"customer must drop {dropped} (pharma keeps it)")
+        # Old labels gone:
+        for stale in ("Completeness", "% Patient", "Values"):
+            self.assertNotIn(stale, headers,
+                             msg=f"customer must not carry {stale}")
+
+    def test_pharma_variables_is_methodology_rich_view(self):
+        # Pharma is the scientific/evidence view: methodology stack
+        # in full + the strict match Criteria so reviewers can
+        # evaluate variable definitions. Drops only row-level
+        # Completeness; carries % Patients With Value as the single
+        # coverage metric.
+        headers = [label for label, _ in bd.variables_layout("pharma")]
+        # Methodology kept (this is what differentiates pharma
+        # from customer):
+        for kept in ("Criteria", "Coding Schema", "Observed Values",
+                     "Distribution", "Median (IQR)", "Implemented",
+                     "% Patients With Value", "Data Source"):
+            self.assertIn(kept, headers, msg=f"pharma should keep {kept}")
+        # Row-level Completeness lives in technical only:
+        self.assertNotIn("Completeness", headers)
+        # Old labels gone:
+        for stale in ("% Patient", "Values"):
+            self.assertNotIn(stale, headers,
+                             msg=f"pharma must not carry {stale}")
+
+    def test_customer_and_pharma_have_distinct_shapes(self):
+        # The whole point of Option 2: customer and pharma should
+        # NOT be the same sheet. Lock that intent in.
+        cust = [l for l, _ in bd.variables_layout("customer")]
+        phar = [l for l, _ in bd.variables_layout("pharma")]
+        self.assertNotEqual(cust, phar,
+                            msg="customer and pharma must differ in column set")
+        # Pharma should be strictly wider than customer (it adds
+        # methodology fields on top of the customer base).
+        self.assertGreater(
+            len(phar), len(cust),
+            msg="pharma should be richer than customer; got "
+                f"customer={len(cust)} cols, pharma={len(phar)} cols",
+        )
+
+    def test_technical_variables_keeps_both_metrics(self):
+        # Technical is the audit view: row-level Completeness and
+        # % Patients With Value (renamed from "% Patient") side by
+        # side. Keeps full debug fields.
+        headers = [label for label, _ in bd.variables_layout("technical")]
         self.assertIn("Completeness", headers)
-        self.assertNotIn("% Patient", headers)
+        self.assertIn("% Patients With Value", headers)
+        self.assertNotIn("% Patient", headers,
+                         msg="technical's old '% Patient' label has been renamed")
 
     def test_other_audiences_unaffected(self):
         # technical and pharma share the same Tables / Columns
-        # layouts as before; sales now has a single-sheet
-        # Tempus-style spec layout exercised separately.
+        # layouts as before; sales has its own Tempus-style
+        # Variables layout exercised separately.
         for aud in ("technical", "pharma"):
             tables = [l for l, _ in bd.tables_layout(aud)]
-            self.assertIn("Data Source", tables, msg=f"{aud} Tables should keep Data Source")
+            self.assertIn("Data Source", tables,
+                          msg=f"{aud} Tables should keep Data Source")
             cols = [l for l, _ in bd.columns_layout(aud)]
-            self.assertIn("Coding Schema", cols, msg=f"{aud} Columns should keep Coding Schema")
-            vars_layout = [l for l, _ in bd.variables_layout(aud)]
-            self.assertIn(
-                "% Patient", vars_layout,
-                msg=f"{aud} Variables should keep % Patient",
-            )
+            self.assertIn("Coding Schema", cols,
+                          msg=f"{aud} Columns should keep Coding Schema")
 
 
 class CustomerTableFilterTests(unittest.TestCase):
@@ -201,18 +258,26 @@ class CustomerTableFilterTests(unittest.TestCase):
 
     def test_sales_layout_is_tempus_spec_columns(self):
         # The sales layout matches the reviewer's Tempus reference
-        # workbook plus a Completeness column.
+        # workbook with two label tweaks: "Value Sets" is honestly
+        # named "Observed Values" (the cell is observed top-N from
+        # the cohort, not a curated enum), and the trailing metric
+        # is `% Patients With Value` (sourced from patient_pct) —
+        # consistent with the audience contract that gives every
+        # stakeholder audience the patient-coverage metric and
+        # keeps row-level Completeness for technical only.
         headers = [label for label, _ in bd.variables_layout("sales")]
         self.assertEqual(
             headers,
-            ["Category", "Variable", "Description", "Value Sets",
-             "Notes", "Type", "Proposal", "Completeness"],
+            ["Category", "Variable", "Description", "Observed Values",
+             "Notes", "Type", "Proposal", "% Patients With Value"],
         )
 
-    def test_sales_value_sets_renders_observed_top_values(self):
-        # Value Sets reads from the structured top_value_labels list
-        # (newline-separated, no counts). Dataset is source of truth;
-        # no curation field.
+    def test_sales_observed_values_renders_top_value_labels(self):
+        # Observed Values reads from the structured top_value_labels
+        # list (newline-separated, no counts). Dataset is source of
+        # truth; no curation field. The metric column is
+        # `% Patients With Value`, sourced from patient_pct — the
+        # same field the technical sheet shows under that label.
         row = bd.VariableRow(
             category="Medications", variable="Anti-amyloid Therapy",
             description="Anti-amyloid mAb administrations.",
@@ -227,19 +292,23 @@ class CustomerTableFilterTests(unittest.TestCase):
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(
-            rendered["Value Sets"],
+            rendered["Observed Values"],
             "Lecanemab\nLecanemab-irmb\nLeqembi\nDonanemab-azbt\nKisunla",
         )
         self.assertEqual(rendered["Type"], "Structured")
         self.assertEqual(rendered["Proposal"], "Standard")
-        self.assertEqual(rendered["Completeness"], "87.5%")
+        self.assertEqual(rendered["% Patients With Value"], "80.0%")
+        # Completeness (row-level) and the old "Value Sets" / "% Patient"
+        # labels must NOT appear in the sales sheet anymore.
+        for stale in ("Completeness", "Value Sets", "% Patient"):
+            self.assertNotIn(stale, rendered)
 
-    def test_sales_value_sets_preserves_labels_with_commas(self):
-        # OMOP concept names can contain commas
-        # ("Cancer, malignant", "Aspirin 81 MG, Oral Tablet"). The
-        # structured top_value_labels list must render each verbatim
-        # — the prior implementation split v.values on commas and
-        # would have fragmented these into bogus cell entries.
+    def test_sales_observed_values_preserves_labels_with_commas(self):
+        # OMOP concept names can contain commas ("Cancer, malignant",
+        # "Aspirin 81 MG, Oral Tablet"). The structured
+        # top_value_labels list must render each verbatim — the
+        # prior implementation split v.values on commas and would
+        # have fragmented these into bogus cell entries.
         row = bd.VariableRow(
             category="Diagnosis", variable="Cancer Site",
             description="Site/type of cancer.",
@@ -253,7 +322,7 @@ class CustomerTableFilterTests(unittest.TestCase):
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
         self.assertEqual(
-            rendered["Value Sets"],
+            rendered["Observed Values"],
             "Cancer, malignant\nCancer, in situ",
             msg="labels with internal commas must render verbatim",
         )
@@ -283,7 +352,7 @@ class CustomerTableFilterTests(unittest.TestCase):
         rendered = {label: fn(row) for label, fn in bd.variables_layout("technical")}
         self.assertEqual(rendered["Example"], "Cancer, malignant")
 
-    def test_sales_value_sets_empty_when_no_observed_values(self):
+    def test_sales_observed_values_empty_when_no_top_labels(self):
         # Free-text columns / dry-run rows have empty top_value_labels.
         # Cell renders empty rather than "—" — there's no curation
         # path to fall back to.
@@ -298,7 +367,7 @@ class CustomerTableFilterTests(unittest.TestCase):
             proposal="",
         )
         rendered = {label: fn(row) for label, fn in bd.variables_layout("sales")}
-        self.assertEqual(rendered["Value Sets"], "")
+        self.assertEqual(rendered["Observed Values"], "")
 
     def test_sales_visibility_ships_three_sheets(self):
         # Summary + Tables + Variables. Columns is dropped — a
@@ -452,6 +521,76 @@ class StakeholderCoverTests(unittest.TestCase):
         self.assertIn("Coverage by category", text)
         self.assertIn("Demographics", text)
         self.assertIn("Medications", text)
+
+    def test_cover_renders_freshness_metadata_when_present(self):
+        # Commit B: when data_cutoff_date / last_etl_run / sign_off /
+        # known_limitations are populated on CohortModel, they
+        # appear on the stakeholder cover.
+        import openpyxl
+        v = _make_variable("person", variable="Sex")
+        v.category = "Demographics"
+        v.completeness_pct = 100.0
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v],
+        )
+        model = dataclasses.replace(
+            model,
+            description="A sample cohort.",
+            data_cutoff_date="2026-04-15",
+            last_etl_run="2026-04-30",
+            known_limitations=[
+                "Diagnosis dates rounded to month before 2020.",
+                "ICU encounters not captured pre-2022.",
+            ],
+            sign_off={"reviewer": "Dr. Jane Doe, MD", "date": "2026-05-01"},
+            summary=dataclasses.replace(model.summary, patient_count=42),
+        )
+        path = _output_dir(self.id()) / "cover.xlsx"
+        bd.write_xlsx(model, path, audience="sales")
+        wb = openpyxl.load_workbook(path)
+        text = "\n".join(
+            str(c.value or "") for c in wb["Summary"]["A"]
+        )
+        self.assertIn("Data current to: 2026-04-15", text)
+        self.assertIn("Last ETL run: 2026-04-30", text)
+        self.assertIn("Reviewed by: Dr. Jane Doe, MD", text)
+        self.assertIn("2026-05-01", text)
+        self.assertIn("Known limitations", text)
+        self.assertIn("Diagnosis dates rounded to month before 2020.", text)
+        self.assertIn("ICU encounters not captured pre-2022.", text)
+
+    def test_cover_skips_freshness_metadata_when_absent(self):
+        # When the cohort YAML doesn't carry the fields, the cover
+        # must NOT show "Known limitations" header or "Data current
+        # to:" — empty values are silent, no blank rows.
+        import openpyxl
+        v = _make_variable("person", variable="Sex")
+        v.category = "Demographics"
+        v.completeness_pct = 100.0
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v],
+        )
+        # Do NOT set freshness fields — defaults are empty.
+        model = dataclasses.replace(
+            model,
+            description="A sample cohort.",
+            summary=dataclasses.replace(model.summary, patient_count=42),
+        )
+        path = _output_dir(self.id()) / "cover_no_freshness.xlsx"
+        bd.write_xlsx(model, path, audience="sales")
+        wb = openpyxl.load_workbook(path)
+        text = "\n".join(
+            str(c.value or "") for c in wb["Summary"]["A"]
+        )
+        # None of the freshness section labels should appear.
+        self.assertNotIn("Data current to:", text)
+        self.assertNotIn("Last ETL run:", text)
+        self.assertNotIn("Reviewed by:", text)
+        self.assertNotIn("Known limitations", text)
 
 
 class StakeholderImplementedFilterTests(unittest.TestCase):
@@ -617,6 +756,19 @@ class CustomerHtmlSmokeTests(_CustomerSmokeBase):
         html = path.read_text()
         self.assertIn("<th>Inclusion Criteria</th>", html)
         self.assertIn("<th>Criteria</th>", html)
+
+    def test_html_preserves_newlines_in_cells(self):
+        # Multi-line cell content (sales Value Sets, Inclusion
+        # Criteria when authored as a paragraph, etc.) must render
+        # as separate visible lines in the browser, not collapse
+        # into a run-on string. Enforced via a CSS
+        # `white-space: pre-line` rule on every td/th in the
+        # dictionary table.
+        path = _output_dir(self.id()) / "out.html"
+        bd.write_html(self.filtered, path, audience="customer")
+        html = path.read_text()
+        self.assertIn("white-space: pre-line", html,
+                      msg="HTML cells must preserve newline separators")
 
 
 class CustomerJsonSuppressionTests(_CustomerSmokeBase):
@@ -801,6 +953,58 @@ class CompileMatchBlockTests(unittest.TestCase):
             sql,
             "\"concept_name\" IN ('Bar', 'Baz', 'Foo')",
         )
+
+    def test_concept_ids_compile_to_bare_integer_in_list(self):
+        # Commit D: concept_ids compile WITHOUT quotes and WITHOUT
+        # any DB vocabulary lookup. Build path stays deterministic
+        # even if the cohort doesn't have a `concept` table reachable.
+        sql = bd.compile_match_block({
+            "column": "drug_concept_id",
+            "concept_ids": [40221901, 793143, 35606214],
+        })
+        self.assertEqual(
+            sql, "\"drug_concept_id\" IN (40221901, 793143, 35606214)",
+        )
+
+    def test_concept_ids_dedupe_and_castable_strings(self):
+        # Strings that parse as ints are accepted (YAML sometimes
+        # quotes large IDs). Duplicates collapse, order preserved.
+        sql = bd.compile_match_block({
+            "column": "drug_concept_id",
+            "concept_ids": [793143, "40221901", 793143, "40221901"],
+        })
+        self.assertEqual(
+            sql, "\"drug_concept_id\" IN (793143, 40221901)",
+        )
+
+    def test_concept_ids_take_precedence_over_values(self):
+        # When both are present (a misconfiguration the validator
+        # flags), concept_ids wins so the cohort gets the canonical
+        # OMOP filter rather than the fragile string match.
+        sql = bd.compile_match_block({
+            "column": "drug_concept_id",
+            "concept_ids": [40221901],
+            "values": ["Lecanemab"],
+        })
+        self.assertEqual(sql, "\"drug_concept_id\" IN (40221901)")
+
+    def test_concept_ids_empty_falls_through_to_values(self):
+        sql = bd.compile_match_block({
+            "column": "drug_concept_name",
+            "concept_ids": [],
+            "values": ["Lecanemab"],
+        })
+        self.assertEqual(sql, "\"drug_concept_name\" IN ('Lecanemab')")
+
+    def test_concept_ids_non_integer_entries_dropped(self):
+        # The validator should refuse this at lint time, but the
+        # compiler must also degrade gracefully — keep castable IDs,
+        # drop garbage. Returns "" if nothing is castable.
+        sql = bd.compile_match_block({
+            "column": "drug_concept_id",
+            "concept_ids": ["not_an_id", None, "abc"],
+        })
+        self.assertEqual(sql, "")
 
 
 # Load the discovery script once under a stable module name so the
@@ -1439,6 +1643,60 @@ class DiscoveryApplyTests(unittest.TestCase):
         self.assertNotIn("match:", between_diag,
                          msg="Diagnosis row must not be touched")
 
+    def test_apply_writes_concept_ids_when_observation_has_them(self):
+        # Commit D: observations from concept-id mode carry
+        # observed_concept_ids + id_matcher_column. apply must
+        # write those as `match.concept_ids:` (bare integer list)
+        # against the *_concept_id column — NOT as match.values.
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria="drug_concept_name ILIKE '%aspirin%'",
+            configured_values=[],
+            observed=[("Aspirin 81 MG Oral Tablet", 100), ("Aspirin 325 MG", 50)],
+            source_pack=self.pack_slug,
+            observed_concept_ids=[
+                (1112807, "Aspirin 81 MG Oral Tablet", 100),
+                (1112809, "Aspirin 325 MG", 50),
+            ],
+            id_matcher_column="drug_concept_id",
+        )
+        applied, _ = self.mod.apply_suggestions(
+            [obs], target="shared", auto_yes=True,
+        )
+        self.assertEqual(applied, 1)
+        text = self.pack_path.read_text()
+        # Wrote integer concept_ids list against drug_concept_id.
+        self.assertIn("column: drug_concept_id", text)
+        self.assertIn("concept_ids:", text)
+        self.assertIn("1112807", text)
+        self.assertIn("1112809", text)
+        # Did NOT fall back to writing string `values:`.
+        self.assertNotIn("values:\n", text)
+
+    def test_id_column_for_derives_concept_id_from_concept_name(self):
+        # Pure helper test — concept_name → concept_id substitution
+        # for OMOP-shaped columns.
+        self.assertEqual(
+            self.mod._id_column_for("drug_concept_name"), "drug_concept_id",
+        )
+        self.assertEqual(
+            self.mod._id_column_for("observation_concept_name"),
+            "observation_concept_id",
+        )
+        self.assertEqual(
+            self.mod._id_column_for("value_as_concept_name"),
+            "value_as_concept_id",
+        )
+        # Already an id column — pass through.
+        self.assertEqual(
+            self.mod._id_column_for("drug_concept_id"), "drug_concept_id",
+        )
+        # Not a recognized OMOP shape — empty string signals
+        # "concept-id mode can't run on this variable."
+        self.assertEqual(self.mod._id_column_for("value_as_number"), "")
+        self.assertEqual(self.mod._id_column_for(""), "")
+
     def test_apply_target_cohort_skips_inherited_only_variables(self):
         cohort_slug = "_apply_test_cohort_empty"
         cohort_path = bd.PACKS_DIR / "variables" / f"{cohort_slug}.yaml"
@@ -1637,6 +1895,45 @@ class DiscoveryApplyTests(unittest.TestCase):
         prompt = captured[-1]
         self.assertIn("ADD cohort override", prompt)
         self.assertIn("inherited from shared pack", prompt)
+
+    def test_per_variable_prompt_surfaces_concept_ids_mode(self):
+        # Commit D: when the observation has concept_ids data, the
+        # prompt must say so. Reviewer needs to know whether they're
+        # approving an integer-id filter (canonical) or a string
+        # values filter (legacy/string).
+        captured: list[str] = []
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda prompt="": (captured.append(prompt) or "n")
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria="drug_concept_name ILIKE '%aspirin%'",
+            configured_values=[],
+            observed=[("Aspirin 81 MG Oral Tablet", 100)],
+            source_pack=self.pack_slug,
+            observed_concept_ids=[
+                (1112807, "Aspirin 81 MG Oral Tablet", 100),
+                (1112809, "Aspirin 325 MG", 50),
+            ],
+            id_matcher_column="drug_concept_id",
+        )
+        self.mod.apply_suggestions(
+            [obs], target="shared", auto_yes=False,
+        )
+        prompt = captured[-1]
+        # Action line names the mode:
+        self.assertIn("(concept-ids)", prompt)
+        # New "Filter:" line spells out which column + that
+        # match.concept_ids will be written:
+        self.assertIn("match.column=drug_concept_id", prompt)
+        self.assertIn("match.concept_ids:", prompt)
+        # Values line shows id=name samples so reviewer can spot-
+        # check IDs against names before approving.
+        self.assertIn("1112807", prompt)
+        self.assertIn("Aspirin 81 MG Oral Tablet", prompt)
 
     def test_per_variable_prompt_quit_aborts_without_writing(self):
         # Interactive prompt: 'q' must abort the whole run and leave
@@ -2109,6 +2406,218 @@ class VariablePackOverrideTests(unittest.TestCase):
             and v.get("proposal").strip() not in ("Standard", "Custom")
         ]
         self.assertEqual(bad_proposals, ["Stnadard"])
+
+    def test_validator_flags_malformed_concept_ids(self):
+        # Commit D: concept_ids must be a list of int-castable
+        # values; concept_ids and values are mutually exclusive;
+        # match.column should look like an *_concept_id column.
+        path = bd.PACKS_DIR / "variables" / "_validator_concept_ids.yaml"
+        path.write_text(
+            "variables:\n"
+            "  - category: Drugs\n"
+            "    variable: BadConceptIdsScalar\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: 40221901\n"           # scalar, not list
+            "  - category: Drugs\n"
+            "    variable: BothConceptIdsAndValues\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      values: ['Lecanemab']\n"           # mutex with concept_ids
+            "  - category: Drugs\n"
+            "    variable: BothConceptIdsAndValuesFile\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      values_file: value_sets/aspirin.yaml\n"  # mutex too
+            "  - category: Drugs\n"
+            "    variable: ConceptIdsOnNameColumn\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_name\n"      # name, not id → warn
+            "      concept_ids: [40221901]\n"
+            "  - category: Drugs\n"
+            "    variable: ConceptIdsBadEntries\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901, 'not_an_id']\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        import importlib.util
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_concept_ids_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_concept_ids_test"] = vp
+        spec.loader.exec_module(vp)
+
+        # Walk the rows through the validator's per-row checks by
+        # calling validate_cohort with a synthetic cohort.
+        cohort_path = bd.PACKS_DIR / "cohorts" / "_validator_concept_ids.yaml"
+        cohort_path.write_text(
+            "provider: TEST\ndisease: TEST\nschema_name: x\n"
+            "cohort_name: _validator_concept_ids\n"
+            "display_name: x\nvariables_pack: _validator_concept_ids\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        report = vp.validate_cohort("_validator_concept_ids", known_categories=set())
+        msgs = "\n".join(f.message for f in report.findings)
+        # Scalar concept_ids → error.
+        self.assertIn("BadConceptIdsScalar", msgs)
+        self.assertIn("must be a YAML list", msgs)
+        # Both concept_ids and values → error.
+        self.assertIn("BothConceptIdsAndValues", msgs)
+        self.assertIn("mutually exclusive", msgs)
+        # Same mutex applies when concept_ids is paired with
+        # values_file (not just inline values).
+        self.assertIn("BothConceptIdsAndValuesFile", msgs)
+        # Concept-name column with concept_ids → warning.
+        self.assertIn("ConceptIdsOnNameColumn", msgs)
+        self.assertIn("`*_concept_id` column", msgs)
+        # Non-integer entry → error.
+        self.assertIn("ConceptIdsBadEntries", msgs)
+        self.assertIn("must be integers", msgs)
+
+    def test_validator_flags_malformed_freshness_metadata(self):
+        # Commit B fields must be the right shape when present.
+        # known_limitations as scalar, sign_off as string, dates
+        # as non-strings — all should produce errors.
+        import importlib.util
+        cohort_path = bd.PACKS_DIR / "cohorts" / "_validator_freshness_test.yaml"
+        cohort_path.write_text(
+            "provider: TEST\n"
+            "disease: TEST\n"
+            "schema_name: x\n"
+            "cohort_name: _validator_freshness_test\n"
+            "display_name: Freshness Test\n"
+            "variables_pack: aat_common\n"
+            "data_cutoff_date: 20260415\n"           # int, not string
+            "known_limitations: 'one caveat'\n"      # scalar, not list
+            "sign_off: 'Dr Jane'\n",                 # string, not dict
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_freshness_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_freshness_test"] = vp
+        spec.loader.exec_module(vp)
+
+        report = vp.validate_cohort(
+            "_validator_freshness_test", known_categories=set(),
+        )
+        msgs = [f.message for f in report.findings]
+        joined = "\n".join(msgs)
+        self.assertIn("data_cutoff_date", joined,
+                      msg=f"validator should flag non-string date; got: {msgs}")
+        self.assertIn("known_limitations", joined,
+                      msg=f"validator should flag scalar limitations; got: {msgs}")
+        self.assertIn("sign_off", joined,
+                      msg=f"validator should flag string sign_off; got: {msgs}")
+
+
+class BatchRunnerTests(unittest.TestCase):
+    """The batch runner builds every cohort in one invocation,
+    records per-cohort results, and emits BUILD_SUMMARY.md. It
+    must keep going through per-cohort failures rather than aborting
+    the whole fleet."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            "build_all_cohorts_under_test",
+            Path(__file__).resolve().parent.parent / "scripts" / "build_all_cohorts.py",
+        )
+        self.mod = importlib.util.module_from_spec(spec)
+        sys.modules["build_all_cohorts_under_test"] = self.mod
+        spec.loader.exec_module(self.mod)
+
+    def test_dry_run_builds_all_cohorts_and_writes_summary(self):
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--dry-run",
+            "--out-dir", str(out_dir),
+            "--audiences", "technical", "customer",
+            "--formats", "xlsx",
+        ])
+        self.assertEqual(rc, 0)
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        # Header + per-cohort table + at least one cohort row.
+        self.assertIn("# Build summary", summary)
+        self.assertIn("Per-cohort results", summary)
+        self.assertIn("| `mtc_aat` |", summary)
+        # Every shipped cohort should appear.
+        for slug in ("balboa_ckd", "drg_ckd", "mtc_aat", "mtc_alzheimers"):
+            self.assertIn(f"| `{slug}` |", summary,
+                          msg=f"summary missing cohort {slug}")
+        # Dry-run note must be present.
+        self.assertIn("Dry-run note", summary)
+
+    def test_restricting_cohorts_only_builds_those(self):
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--dry-run",
+            "--out-dir", str(out_dir),
+            "--cohorts", "mtc_aat", "balboa_ckd",
+            "--audiences", "technical",
+            "--formats", "xlsx",
+        ])
+        self.assertEqual(rc, 0)
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        self.assertIn("| `mtc_aat` |", summary)
+        self.assertIn("| `balboa_ckd` |", summary)
+        # Other cohorts must NOT appear.
+        for slug in ("drg_ckd", "mtc_alzheimers", "newtown_ibd"):
+            self.assertNotIn(f"| `{slug}` |", summary,
+                             msg=f"summary should not contain {slug}")
+
+    def test_per_cohort_error_does_not_kill_batch(self):
+        # Stage a cohort YAML that's missing required fields so
+        # build_model raises. The batch should still complete and
+        # report the error in BUILD_SUMMARY.md without aborting.
+        bad_path = bd.PACKS_DIR / "cohorts" / "_batch_test_bad.yaml"
+        bad_path.write_text(
+            "# deliberately missing schema_name to force build_model to raise\n"
+            "provider: TEST\n"
+            "disease: TEST\n"
+            "cohort_name: _batch_test_bad\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: bad_path.unlink(missing_ok=True))
+
+        out_dir = _output_dir(self.id())
+        rc = self.mod.main([
+            "--dry-run",
+            "--out-dir", str(out_dir),
+            "--cohorts", "_batch_test_bad", "mtc_aat",
+            "--audiences", "technical",
+            "--formats", "xlsx",
+        ])
+        # One cohort failed → exit 1, but the runner kept going.
+        self.assertEqual(rc, 1)
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        # The bad cohort is recorded as an error.
+        self.assertIn("`_batch_test_bad`", summary)
+        self.assertIn("error", summary)
+        # The good cohort still built.
+        self.assertIn("| `mtc_aat` |", summary)
 
 
 if __name__ == "__main__":

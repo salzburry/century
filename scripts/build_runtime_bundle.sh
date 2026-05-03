@@ -46,9 +46,13 @@ DIRS=(
   dictionary_v2
   packs
 )
-# scripts/ is selectively copied — only validate_packs.py is shipped.
+# scripts/ is selectively copied — only the runtime-relevant ones
+# ship (validate_packs lints offline; build_all_cohorts is the
+# batch runner). The bundle-build / cohort-onboarding helpers stay
+# in the source repo only.
 EXTRA_FILES=(
   scripts/validate_packs.py
+  scripts/build_all_cohorts.py
 )
 
 for f in "${FILES[@]}"; do
@@ -110,7 +114,8 @@ century-dictionary/
 │   ├── build_dictionary.py              ← main build (audiences)
 │   └── discover_exact_matches.py        ← discovery + --apply / --auto-stub
 ├── scripts/
-│   └── validate_packs.py                ← pack lint (no DB needed)
+│   ├── validate_packs.py                ← pack lint (no DB needed)
+│   └── build_all_cohorts.py             ← batch runner: build every cohort, write BUILD_SUMMARY.md
 └── packs/                               ← cohort + variable + descriptor packs
     ├── categories.yaml                  ← table → Category map
     ├── column_descriptions.yaml         ← OMOP column semantics
@@ -170,7 +175,7 @@ nimbus_copd, rmn_alzheimers, rvc_amd_curated, rvc_dr_curated.
 | `--audience` | Sheets | Notes |
 |---|---|---|
 | `technical` (default) | Summary + Tables + Columns + Variables | Full debug fields, raw SQL Criteria, PII visible. Writes xlsx + html + json. |
-| `sales` | Summary + Tables + Variables (no Columns sheet). Summary and Tables use the customer-trimmed layouts; Variables uses the Tempus-style spec (Category, Variable, Description, Value Sets, Notes, Type, Proposal, Completeness). | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
+| `sales` | Summary + Tables + Variables (no Columns sheet). Summary and Tables use the customer-trimmed layouts; Variables uses the Tempus-style spec (Category, Variable, Description, Observed Values, Notes, Type, Proposal, % Patients With Value). | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 | `pharma` | Summary + Variables | PII dropped. JSON kept. |
 | `customer` | Summary, Tables, Columns, Variables (all trimmed) | PII dropped, internal scaffolding tables filtered, JSON suppressed. |
 
@@ -264,7 +269,37 @@ unknown `proposal:` values, etc. Exits non-zero on errors.
 
 ---
 
-## 6. Troubleshooting
+## 6. Build every cohort in one shot
+
+```bash
+# Build all 13 cohorts × {technical, customer, sales} (default).
+python scripts/build_all_cohorts.py
+
+# Restrict cohorts:
+python scripts/build_all_cohorts.py --cohorts mtc_aat balboa_ckd
+
+# Restrict audiences / formats:
+python scripts/build_all_cohorts.py --audiences customer --formats xlsx
+
+# Pack-correctness check (no DB):
+python scripts/build_all_cohorts.py --dry-run
+```
+Writes per-cohort outputs to `Output/` and a single
+`Output/BUILD_SUMMARY.md` with:
+- per-cohort row counts, implemented %, drop %, warning count
+- error block for any cohort whose build raised
+- "high drop% — review criteria" callout for cohorts ≥25% dropped
+  (those usually need discovery + criteria tightening, not real
+  data gaps)
+- output-file index per cohort
+
+Per-cohort errors are recorded but don't kill the batch — one
+bad pack doesn't block the rest of the fleet from shipping.
+Exit code is non-zero if any cohort failed.
+
+---
+
+## 7. Troubleshooting
 
 - **`ModuleNotFoundError: psycopg`** — install deps:
   `pip install -r requirements.txt`. Or use `--dry-run` to skip DB.
@@ -308,7 +343,7 @@ technical-audience output instead):
 
 - **Summary** — cohort cover (provider, disease, patient count, date coverage).
 - **Tables** — customer-trimmed: `Table | Category | Description | Inclusion Criteria | Rows | Columns | Patients`. Internal scaffolding tables (`cohort_patients`, `standard_profile_data_model`, etc.) are filtered out via `packs/dictionary_layout.yaml`.
-- **Variables** — Tempus-style spec: `Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness`. Variables that have no data in the cohort (`Implemented = No`) are dropped automatically.
+- **Variables** — Tempus-style spec: `Category | Variable | Description | Observed Values | Notes | Type | Proposal | % Patients With Value`. Variables that have no data in the cohort (`Implemented = No`) are dropped automatically.
 
 JSON is intentionally not produced for the sales audience — the partner
 bundle never carries the internal `CohortModel` dump.
@@ -359,12 +394,14 @@ Wrote Output/mtc__aat_cohort_dictionary_sales.html
 If you open the xlsx, the `Variables` sheet header row will read
 exactly:
 ```
-Category | Variable | Description | Value Sets | Notes | Type | Proposal | Completeness
+Category | Variable | Description | Observed Values | Notes | Type | Proposal | % Patients With Value
 ```
 
-`Value Sets` and `Completeness` are empty / `—` in dry-run because
-both are DB-derived. At runtime, `Value Sets` shows the cohort's
-observed top-N values for the variable's column, newline-separated.
+`Observed Values` and `% Patients With Value` are empty / `—` in
+dry-run because both are DB-derived. At runtime, `Observed Values`
+shows the cohort's observed top-N values for the variable's column,
+newline-separated; `% Patients With Value` is the fraction of cohort
+patients with at least one non-null row for that variable.
 `Proposal` is YAML-only (see Step 3 below).
 
 ---
@@ -377,9 +414,10 @@ python dictionary_v2/build_dictionary.py \
     --audience sales
 ```
 
-`Completeness` is now populated from live cohort counts. Variables
-the cohort doesn't actually carry data for (`Implemented = No`)
-are dropped automatically from the sales / customer artifacts —
+`% Patients With Value` is now populated from live cohort counts.
+Variables the cohort doesn't actually carry data for
+(`Implemented = No`) are dropped automatically from the sales /
+customer artifacts —
 they'd otherwise render as 0% rows and add noise. Internal
 audiences (`technical`, `pharma`) keep them so QA can see gaps.
 
@@ -405,7 +443,7 @@ YAML. Set it on each variable in the cohort's pack
 Must be exactly `Standard` or `Custom` when set; the validator
 rejects anything else.
 
-`Value Sets` is data-driven and not configurable — the cell
+`Observed Values` is data-driven and not configurable — the cell
 always reflects what the cohort actually contains. A data
 dictionary that claims a value the cohort doesn't carry is wrong
 by definition.
@@ -423,29 +461,35 @@ python dictionary_v2/build_dictionary.py --cohort mtc_aat --audience sales
 
 ## Step 4 (optional) — tighten Criteria with discovery
 
-This addresses the reviewer's "Criteria should be exact matches,
-not ILIKE" feedback. Replaces fuzzy `criteria: drug_concept_name
-ILIKE '%lecanemab%'` with strict `match: { column, values }` blocks
-populated from the live cohort.
+Replaces fuzzy `criteria: drug_concept_name ILIKE '%lecanemab%'`
+with strict `match:` blocks populated from the live cohort.
+Two modes:
 
-The sales sheet doesn't show a `Criteria` column directly, but
-tightening Criteria still affects which rows feed `Completeness`
-and the underlying value distributions, so it's worth doing once
-per cohort.
+- `--mode names` (default): writes `match.values: ['Lecanemab',
+  'Donanemab', ...]`. Strict, but string-matching — fragile if
+  the cohort spells the concept slightly differently from the
+  curated list.
+- `--mode concept-ids`: writes `match.concept_ids: [40221901,
+  793143, ...]` against the corresponding `*_concept_id` column.
+  Canonical OMOP IDs, no DB vocabulary lookup at build time.
+  **Recommended** for clinical accuracy — concept IDs are stable
+  even when concept_name strings drift between cohorts.
 
 ```bash
-# 4a. Read-only report — what does mtc_aat actually contain for
-#     each variable's existing broad criteria?
-python dictionary_v2/discover_exact_matches.py --cohort mtc_aat
+# 4a. Read-only concept-id report — surfaces (id, name, count)
+#     triples for each variable's existing broad criteria.
+python dictionary_v2/discover_exact_matches.py \
+    --cohort mtc_aat --mode concept-ids
 # → Output/discovery/mtc_aat/report.md
 
-# 4b. Apply observed values into packs/variables/mtc_aat.yaml.
+# 4b. Apply concept_ids into packs/variables/mtc_aat.yaml.
 #     --auto-stub copies each inherited row from the shared
 #     aat_common pack into mtc_aat.yaml first, then attaches the
 #     match block. Walks one variable at a time with a
 #     [UPDATE]/[ADD cohort override] prompt.
 python dictionary_v2/discover_exact_matches.py \
     --cohort mtc_aat \
+    --mode concept-ids \
     --apply --target cohort --auto-stub
 ```
 

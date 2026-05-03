@@ -226,6 +226,22 @@ class CohortModel:
     tables: list[TableRow]
     columns: list[ColumnRow]
     variables: list[VariableRow]
+    # Cohort-level freshness / governance metadata (Commit B). All
+    # optional. Read from the cohort YAML and surfaced on the
+    # stakeholder cover sheet when present — empty values render
+    # nothing (no blank rows). Fields:
+    #   data_cutoff_date    — latest event date the ETL pulled
+    #                         (ISO date, e.g. "2026-04-15").
+    #   last_etl_run        — when the cohort was refreshed
+    #                         (ISO date or datetime).
+    #   known_limitations   — free-form caveats a reviewer should
+    #                         see before evaluating the cohort.
+    #   sign_off            — {reviewer, date, notes?} dict naming
+    #                         the SME who approved the dictionary.
+    data_cutoff_date: str = ""
+    last_etl_run: str = ""
+    known_limitations: list[str] = field(default_factory=list)
+    sign_off: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         def _conv(v: Any) -> Any:
@@ -851,12 +867,31 @@ def _load_match_values_file(rel_path: str) -> list[str]:
 
 
 def compile_match_block(match: dict[str, Any] | None) -> str:
-    """Return `"<column>" IN ('v1', 'v2', ...)` SQL from a structured
-    match block, or "" if the block is missing/empty.
+    """Return `"<column>" IN (...)` SQL from a structured match block,
+    or "" if the block is missing/empty.
 
-    Values come from `match.values` (inline) and/or `match.values_file`
-    (path under packs/). Both sources are unioned and deduplicated
-    while preserving first-seen order.
+    Two source forms, mutually exclusive:
+
+    - `concept_ids:` (preferred for clinical accuracy) — list of
+      OMOP concept-ID integers. Compiles to a bare-integer
+      IN list with NO database vocabulary lookup at build time:
+          "drug_concept_id" IN (40221901, 793143, 35606214)
+      Concept names are display metadata only — render them via
+      the variable's `column:` (typically the matching
+      `*_concept_name`) on the Observed Values cell. Keeping the
+      filter integer-only means the matcher is deterministic even
+      if a vocabulary lookup is unavailable.
+
+    - `values:` / `values_file:` — list of string labels. Compiles
+      to a quoted IN list:
+          "drug_concept_name" IN ('Lecanemab', 'Donanemab')
+      Both inline and file values are unioned and deduplicated
+      while preserving first-seen order.
+
+    If both `concept_ids` and `values` are populated on the same
+    block, `concept_ids` wins (concept-ID matching is canonical;
+    string matching is a fallback). The validator flags the
+    combination so packs don't drift into ambiguity.
     """
     if not isinstance(match, dict):
         return ""
@@ -864,6 +899,24 @@ def compile_match_block(match: dict[str, Any] | None) -> str:
     if not column:
         return ""
 
+    # Concept-ID branch — bare integers, no name lookup.
+    raw_ids = match.get("concept_ids") or []
+    if raw_ids:
+        ids: list[int] = []
+        seen_ids: set[int] = set()
+        for v in raw_ids:
+            try:
+                i = int(v)
+            except (TypeError, ValueError):
+                continue
+            if i not in seen_ids:
+                seen_ids.add(i)
+                ids.append(i)
+        if ids:
+            return f'"{column}" IN ({", ".join(str(i) for i in ids)})'
+        return ""
+
+    # String values branch (legacy + values_file).
     values: list[str] = []
     seen: set[str] = set()
     for v in (match.get("values") or []):
@@ -1405,6 +1458,17 @@ def build_model(
         tables=table_rows,
         columns=column_rows,
         variables=variables_rows,
+        data_cutoff_date=str(pack.get("data_cutoff_date") or "").strip(),
+        last_etl_run=str(pack.get("last_etl_run") or "").strip(),
+        known_limitations=[
+            str(x).strip()
+            for x in (pack.get("known_limitations") or [])
+            if str(x).strip()
+        ],
+        sign_off=(
+            {k: str(v).strip() for k, v in (pack.get("sign_off") or {}).items()}
+            if isinstance(pack.get("sign_off"), dict) else {}
+        ),
     )
 
 
@@ -1723,24 +1787,68 @@ _TECHNICAL_VARIABLES_TAIL: list[tuple[str, Any]] = [
     ("Median (IQR)",  lambda v: v.median_iqr),
     ("Completeness",  lambda v: _fmt_pct(v.completeness_pct)),
     ("Implemented",   lambda v: v.implemented),
-    ("% Patient",     lambda v: _fmt_pct(v.patient_pct)),
+    # Renamed from "% Patient" — same field (patient_pct), clearer
+    # label that matches what the metric actually measures: the
+    # fraction of cohort patients with at least one non-null row
+    # for this variable. Stakeholder audiences (pharma, sales,
+    # customer) drop the row-level Completeness column and use
+    # only this metric; technical keeps both for internal QA.
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
     ("Data Source",   lambda v: v.data_source),
     ("Notes",         lambda v: v.notes),
 ]
 
-# Customer Variables drops Coding Schema / Implemented / Data Source.
-# `% Patient` is also dropped for customers — Completeness alone
-# answers the reviewer's "what fraction of patients have a value"
-# question in customer-facing form. The technical / sales / pharma
-# layouts still carry both metrics for internal review.
+
+# Shared accessor for the stakeholder "Observed Values" cell.
+# Reads the structured top_value_labels list (newline-separated,
+# no counts) so OMOP labels with internal commas render verbatim.
+def _observed_values_cell(v: Any) -> str:
+    if v.top_value_labels:
+        return "\n".join(v.top_value_labels)
+    return ""
+
+
+# Pharma Variables tail: methodology-rich view for scientific /
+# evidence reviewers. Carries the full methodology stack (Coding
+# Schema, Distribution, Median (IQR), Implemented, Data Source)
+# AND the strict match Criteria — pharma scientists evaluate
+# definitions and want the matcher visible. Drops only the
+# row-level `Completeness` column (single coverage metric is
+# `% Patients With Value`, sourced from patient_pct, consistent
+# with all stakeholder audiences). Renames `Values` to
+# `Observed Values` for label consistency with the
+# top_value_labels-backed cell.
+_PHARMA_VARIABLES_TAIL: list[tuple[str, Any]] = [
+    ("Field Type",      lambda v: v.field_type),
+    ("Example",         lambda v: v.example),
+    ("Coding Schema",   lambda v: v.coding_schema),
+    ("Observed Values", _observed_values_cell),
+    ("Distribution",    lambda v: v.distribution),
+    ("Median (IQR)",    lambda v: v.median_iqr),
+    ("Implemented",     lambda v: v.implemented),
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
+    ("Data Source",     lambda v: v.data_source),
+    ("Notes",           lambda v: v.notes),
+]
+
+
+# Customer Variables: trimmed buyer-evaluation view. Drops the
+# methodology fields that pharma keeps (Coding Schema, Distribution,
+# Median (IQR), Implemented, Data Source) so the customer artifact
+# stays plain-language and definition-focused. Keeps Criteria
+# (added by variables_layout()) for transparency about how each
+# variable is matched. Single coverage metric is
+# `% Patients With Value`, sourced from patient_pct.
+#
+# `Observed Values` reads the structured top_value_labels list so
+# OMOP labels with internal commas render verbatim (e.g.
+# "Cancer, malignant" stays one cell entry, not two).
 _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
-    ("Field Type",   lambda v: v.field_type),
-    ("Example",      lambda v: v.example),
-    ("Values",       lambda v: v.values),
-    ("Distribution", lambda v: v.distribution),
-    ("Median (IQR)", lambda v: v.median_iqr),
-    ("Completeness", lambda v: _fmt_pct(v.completeness_pct)),
-    ("Notes",        lambda v: v.notes),
+    ("Field Type",      lambda v: v.field_type),
+    ("Example",         lambda v: v.example),
+    ("Observed Values", _observed_values_cell),
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
+    ("Notes",           lambda v: v.notes),
 ]
 
 
@@ -1762,22 +1870,20 @@ _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
 # is wrong — so there's no curation override; if it's not in the
 # data, it doesn't appear.
 # `Proposal` comes from the curated YAML field. Type maps directly
-# to extraction_type.
-def _sales_value_sets_cell(v: Any) -> str:
-    if v.top_value_labels:
-        return "\n".join(v.top_value_labels)
-    return ""
+# to extraction_type. The Observed Values cell uses the shared
+# _observed_values_cell helper defined above (also used by the
+# customer Variables tail).
 
 
 _SALES_VARIABLES_LAYOUT: list[tuple[str, Any]] = [
     ("Category",    lambda v: v.category),
     ("Variable",    lambda v: v.variable),
     ("Description", lambda v: v.description),
-    ("Value Sets",  _sales_value_sets_cell),
+    ("Observed Values", _observed_values_cell),
     ("Notes",       lambda v: v.notes),
     ("Type",        lambda v: v.extraction_type),
     ("Proposal",    lambda v: v.proposal),
-    ("Completeness", lambda v: _fmt_pct(v.completeness_pct)),
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
 ]
 
 
@@ -1785,19 +1891,33 @@ def variables_layout(audience: str) -> list[tuple[str, Any]]:
     """Variables sheet layout for the given audience.
 
     Audience rules:
-      - technical: head + Criteria + technical tail (SQL Criteria visible)
-      - customer:  head + Criteria + customer tail (both prose Inclusion
-                   Criteria and configured Criteria visible side by side)
-      - sales:     standalone Tempus-style spec sheet, no shared head.
-      - pharma:    head + technical tail (no raw SQL)
+      - technical: head + Criteria + technical tail. Full audit
+                   view; carries both Completeness (row-level)
+                   and % Patients With Value side by side.
+      - customer:  head + Criteria + customer tail. Plain-language
+                   buyer view — definitions + Observed Values +
+                   coverage; methodology fields (Coding Schema,
+                   Distribution, Median (IQR), Implemented, Data
+                   Source) intentionally omitted.
+      - pharma:    head + Criteria + pharma tail. Methodology-rich
+                   evidence view — keeps Coding Schema,
+                   Distribution, Median (IQR), Implemented, Data
+                   Source. Drops only row-level Completeness.
+                   Pharma scientists evaluate definitions, so the
+                   strict match Criteria IS shown.
+      - sales:     standalone Tempus-style spec sheet (Observed
+                   Values + % Patients With Value), no shared head
+                   and no Criteria column.
     """
     if audience == "sales":
         return list(_SALES_VARIABLES_LAYOUT)
     layout = list(_VARIABLES_LAYOUT_HEAD)
-    if audience in ("technical", "customer"):
+    if audience in ("technical", "customer", "pharma"):
         layout.append(_VARIABLES_LAYOUT_CRITERIA)
     if audience == "customer":
         layout.extend(_CUSTOMER_VARIABLES_TAIL)
+    elif audience == "pharma":
+        layout.extend(_PHARMA_VARIABLES_TAIL)
     else:
         layout.extend(_TECHNICAL_VARIABLES_TAIL)
     return layout
@@ -1999,14 +2119,18 @@ def _render_stakeholder_cover(ws, model: CohortModel) -> None:
     """Write a styled Summary cover into an empty openpyxl worksheet.
 
     Layout (top to bottom):
-      1. Title row     — display_name + " — " + disease pretty name
-      2. Description   — wrapped paragraph from cohort YAML
-      3. Hero stats    — N patients · X years · M variables · K% implemented
-      4. Date coverage — single readable line
-      5. Coverage table — per-category implemented + avg completeness
+      1. Title row       — display_name + " — " + disease pretty name
+      2. Description     — wrapped paragraph from cohort YAML
+      3. Hero stats      — N patients · X years · M variables · K% implemented
+      4. Date coverage   — single readable line
+      5. Freshness facts — data_cutoff_date / last_etl_run / sign_off
+                            (each block only when populated)
+      5b. Known limitations — bulleted list (only when populated)
+      6. Coverage table  — per-category implemented + avg completeness
 
     Cohort-agnostic: only reads model fields. No sheet-name or
-    cohort-slug specialisation.
+    cohort-slug specialisation. Empty freshness fields render
+    nothing (no blank rows / dangling section headers).
     """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
@@ -2112,7 +2236,48 @@ def _render_stakeholder_cover(ws, model: CohortModel) -> None:
                        end_row=row, end_column=6)
         row += 2
 
-    # 5. Coverage rollup table.
+    # 5. Freshness / governance facts (Commit B). Each block
+    #    renders only when the corresponding cohort YAML field is
+    #    populated — empty values produce no row, so un-curated
+    #    cohorts don't show blank section headers that would make
+    #    the workbook look unfinished.
+    fresh_lines: list[str] = []
+    if (model.data_cutoff_date or "").strip():
+        fresh_lines.append(f"Data current to: {model.data_cutoff_date}")
+    if (model.last_etl_run or "").strip():
+        fresh_lines.append(f"Last ETL run: {model.last_etl_run}")
+    so = model.sign_off or {}
+    if so.get("reviewer", "").strip():
+        sign_bits = [f"Reviewed by: {so['reviewer'].strip()}"]
+        if so.get("date", "").strip():
+            sign_bits.append(so["date"].strip())
+        if so.get("notes", "").strip():
+            sign_bits.append(so["notes"].strip())
+        fresh_lines.append("  ·  ".join(sign_bits))
+    if fresh_lines:
+        cell = ws.cell(row=row, column=1,
+                       value="   ·   ".join(fresh_lines))
+        cell.font = subtitle_font
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=6)
+        row += 2
+
+    if model.known_limitations:
+        header = ws.cell(row=row, column=1, value="Known limitations")
+        header.font = section_font
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=6)
+        row += 1
+        for caveat in model.known_limitations:
+            cell = ws.cell(row=row, column=1, value=f"•  {caveat}")
+            cell.font = body_font
+            cell.alignment = wrap_top
+            ws.merge_cells(start_row=row, start_column=1,
+                           end_row=row, end_column=6)
+            row += 1
+        row += 1   # gap before rollup
+
+    # 6. Coverage rollup table.
     rollup = _coverage_rollup(model)
     if rollup:
         header = ws.cell(row=row, column=1, value="Coverage by category")
@@ -2425,6 +2590,10 @@ def write_html(model: CohortModel, out_path: Path,
    padding: 9px 12px;
    vertical-align: top;
    text-align: left;
+   /* Preserve newlines in cell text so multi-line cells (e.g. the
+      sales Value Sets cell) render as separate visible lines
+      instead of collapsing into a single run-on string. */
+   white-space: pre-line;
  }}
  table.dd tbody tr:last-child td {{ border-bottom: none; }}
  table.dd thead th {{
