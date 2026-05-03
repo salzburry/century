@@ -2122,6 +2122,38 @@ class DiscoveryApplyTests(unittest.TestCase):
             self.mod._id_and_name_columns("value_as_number"), ("", ""),
         )
 
+    def test_id_and_name_columns_rejects_mismatched_prefix_display(self):
+        # An observation row's typical shape:
+        #   column: value_as_concept_name           (the answer)
+        #   match:
+        #     column: observation_concept_id        (the question)
+        # In concept-id discovery the matcher is the question column.
+        # Pairing it with value_as_concept_name as the "name" would
+        # produce triples like (observation_concept_id, 'English')
+        # — the answer to the question, not a label for the
+        # observation concept. The name column must derive from the
+        # matcher's prefix instead, giving observation_concept_name.
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "observation_concept_id", "value_as_concept_name",
+            ),
+            ("observation_concept_id", "observation_concept_name"),
+        )
+        # Same rule for measurement / condition variants.
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "measurement_concept_id", "value_as_concept_name",
+            ),
+            ("measurement_concept_id", "measurement_concept_name"),
+        )
+        # Sanity: matched prefixes still honor the display.
+        self.assertEqual(
+            self.mod._id_and_name_columns(
+                "observation_concept_id", "observation_concept_name",
+            ),
+            ("observation_concept_id", "observation_concept_name"),
+        )
+
     def test_report_skips_id_stale_sections_without_observed_triples(self):
         # Name-mode discovery against an id-configured row leaves
         # observed_concept_ids empty. The id-stale/missing/configured-

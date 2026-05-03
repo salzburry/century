@@ -464,10 +464,19 @@ def _id_and_name_columns(
 
     Cases:
       - matcher is `*_concept_name`: id = `*_concept_id`, name = matcher.
-      - matcher is `*_concept_id` (already-migrated row): id = matcher,
-        name = derive from the variable's display column when it's
-        name-shaped (preferred — that's what the author chose for
-        Observed Values), otherwise flip the suffix on the matcher.
+      - matcher is `*_concept_id` (already-migrated row):
+          id = matcher.
+          name = display column ONLY when its prefix matches the
+                 matcher's prefix (e.g. matcher=drug_concept_id +
+                 display=drug_concept_name). Otherwise derived
+                 from the matcher's own prefix.
+        The prefix check is what stops `observation_concept_id` from
+        getting paired with `value_as_concept_name` — different
+        prefixes mean the display column holds answer values, not
+        the clinical concept's name. Pairing them would yield
+        meaningless triples like (observation_concept_id, 'English')
+        for Language rows, where 'English' is the answer rather
+        than a label for the observation concept.
       - anything else: ("", "") — concept-IDs mode can't run.
     """
     if not matcher_col:
@@ -476,9 +485,13 @@ def _id_and_name_columns(
         prefix = matcher_col[:-len("_concept_name")]
         return f"{prefix}_concept_id", matcher_col
     if matcher_col.endswith("_concept_id"):
-        if display_col and display_col.endswith("_concept_name"):
-            return matcher_col, display_col
         prefix = matcher_col[:-len("_concept_id")]
+        if (
+            display_col
+            and display_col.endswith("_concept_name")
+            and display_col[:-len("_concept_name")] == prefix
+        ):
+            return matcher_col, display_col
         return matcher_col, f"{prefix}_concept_name"
     return "", ""
 
