@@ -1735,24 +1735,6 @@ _TECHNICAL_VARIABLES_TAIL: list[tuple[str, Any]] = [
 ]
 
 
-# Pharma Variables tail: same fields as technical except the
-# row-level `Completeness` column is dropped. Stakeholder audiences
-# all converge on `% Patients With Value` as the single coverage
-# metric; row-level Completeness lives in the technical view only.
-_PHARMA_VARIABLES_TAIL: list[tuple[str, Any]] = [
-    ("Field Type",    lambda v: v.field_type),
-    ("Example",       lambda v: v.example),
-    ("Coding Schema", lambda v: v.coding_schema),
-    ("Values",        lambda v: v.values),
-    ("Distribution",  lambda v: v.distribution),
-    ("Median (IQR)",  lambda v: v.median_iqr),
-    ("Implemented",   lambda v: v.implemented),
-    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
-    ("Data Source",   lambda v: v.data_source),
-    ("Notes",         lambda v: v.notes),
-]
-
-
 # Shared accessor for the stakeholder "Observed Values" cell.
 # Reads the structured top_value_labels list (newline-separated,
 # no counts) so OMOP labels with internal commas render verbatim.
@@ -1762,19 +1744,45 @@ def _observed_values_cell(v: Any) -> str:
     return ""
 
 
-# Customer Variables drops Coding Schema / Implemented / Data Source.
-# Single coverage metric (`% Patients With Value`) sourced from
-# patient_pct — the same metric the technical sheet shows under that
-# label. The Values column is renamed to `Observed Values` so the
-# label honestly describes what's in the cell (cohort's actual top-N
-# values, not a curated enum). Comma-safe: reads the structured
-# top_value_labels list, never splits a string on commas.
+# Pharma Variables tail: methodology-rich view for scientific /
+# evidence reviewers. Carries the full methodology stack (Coding
+# Schema, Distribution, Median (IQR), Implemented, Data Source)
+# AND the strict match Criteria — pharma scientists evaluate
+# definitions and want the matcher visible. Drops only the
+# row-level `Completeness` column (single coverage metric is
+# `% Patients With Value`, sourced from patient_pct, consistent
+# with all stakeholder audiences). Renames `Values` to
+# `Observed Values` for label consistency with the
+# top_value_labels-backed cell.
+_PHARMA_VARIABLES_TAIL: list[tuple[str, Any]] = [
+    ("Field Type",      lambda v: v.field_type),
+    ("Example",         lambda v: v.example),
+    ("Coding Schema",   lambda v: v.coding_schema),
+    ("Observed Values", _observed_values_cell),
+    ("Distribution",    lambda v: v.distribution),
+    ("Median (IQR)",    lambda v: v.median_iqr),
+    ("Implemented",     lambda v: v.implemented),
+    ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
+    ("Data Source",     lambda v: v.data_source),
+    ("Notes",           lambda v: v.notes),
+]
+
+
+# Customer Variables: trimmed buyer-evaluation view. Drops the
+# methodology fields that pharma keeps (Coding Schema, Distribution,
+# Median (IQR), Implemented, Data Source) so the customer artifact
+# stays plain-language and definition-focused. Keeps Criteria
+# (added by variables_layout()) for transparency about how each
+# variable is matched. Single coverage metric is
+# `% Patients With Value`, sourced from patient_pct.
+#
+# `Observed Values` reads the structured top_value_labels list so
+# OMOP labels with internal commas render verbatim (e.g.
+# "Cancer, malignant" stays one cell entry, not two).
 _CUSTOMER_VARIABLES_TAIL: list[tuple[str, Any]] = [
     ("Field Type",      lambda v: v.field_type),
     ("Example",         lambda v: v.example),
     ("Observed Values", _observed_values_cell),
-    ("Distribution",    lambda v: v.distribution),
-    ("Median (IQR)",    lambda v: v.median_iqr),
     ("% Patients With Value", lambda v: _fmt_pct(v.patient_pct)),
     ("Notes",           lambda v: v.notes),
 ]
@@ -1819,24 +1827,28 @@ def variables_layout(audience: str) -> list[tuple[str, Any]]:
     """Variables sheet layout for the given audience.
 
     Audience rules:
-      - technical: head + Criteria + technical tail (SQL Criteria
-                   visible; carries both Completeness and
-                   % Patients With Value).
-      - customer:  head + Criteria + customer tail (Observed Values
-                   instead of comma-joined "Values"; only
-                   % Patients With Value, row-level Completeness
-                   dropped; Coding Schema / Implemented / Data
-                   Source dropped).
-      - sales:     standalone Tempus-style spec sheet — Observed
-                   Values + % Patients With Value, no shared head.
-      - pharma:    head + pharma tail (technical fields minus
-                   row-level Completeness; % Patients With Value
-                   only).
+      - technical: head + Criteria + technical tail. Full audit
+                   view; carries both Completeness (row-level)
+                   and % Patients With Value side by side.
+      - customer:  head + Criteria + customer tail. Plain-language
+                   buyer view — definitions + Observed Values +
+                   coverage; methodology fields (Coding Schema,
+                   Distribution, Median (IQR), Implemented, Data
+                   Source) intentionally omitted.
+      - pharma:    head + Criteria + pharma tail. Methodology-rich
+                   evidence view — keeps Coding Schema,
+                   Distribution, Median (IQR), Implemented, Data
+                   Source. Drops only row-level Completeness.
+                   Pharma scientists evaluate definitions, so the
+                   strict match Criteria IS shown.
+      - sales:     standalone Tempus-style spec sheet (Observed
+                   Values + % Patients With Value), no shared head
+                   and no Criteria column.
     """
     if audience == "sales":
         return list(_SALES_VARIABLES_LAYOUT)
     layout = list(_VARIABLES_LAYOUT_HEAD)
-    if audience in ("technical", "customer"):
+    if audience in ("technical", "customer", "pharma"):
         layout.append(_VARIABLES_LAYOUT_CRITERIA)
     if audience == "customer":
         layout.extend(_CUSTOMER_VARIABLES_TAIL)

@@ -474,20 +474,26 @@ The full per-audience column contract lives in
   or `Custom`. Variables with no data (`Implemented = No`) are
   dropped. PII dropped, internal scaffolding tables filtered,
   JSON suppressed.
-- **pharma** — Summary + Variables. Same Variables fields as
-  technical (Coding Schema, Implemented, Data Source kept) but
-  drops the row-level `Completeness` column in favor of the
-  single stakeholder metric `% Patients With Value`. Raw SQL
-  `Criteria` hidden. PII dropped.
-- **customer** — All four sheets but trimmed. Variables drops
-  Coding Schema / Implemented / Data Source; renames `Values` to
-  `Observed Values` (cell is the cohort's observed top-N values,
-  not a curated enum); uses `% Patients With Value` as the single
-  coverage metric. Keeps the configured `Criteria` column
-  side-by-side with prose `Inclusion Criteria` per reviewer
-  feedback. Columns trimmed to Table / Column / Description /
-  Field Type. PII dropped, internal scaffolding tables filtered,
-  JSON suppressed. The main stakeholder-facing run mode.
+- **pharma** — Summary + Variables. Methodology-rich evidence
+  view for scientific / HEOR / RWE / protocol-feasibility
+  reviewers. Carries the full methodology stack: Coding Schema,
+  Distribution, Median (IQR), Implemented, Data Source. Includes
+  the strict match `Criteria` so reviewers can evaluate variable
+  definitions. Drops only the row-level `Completeness` column;
+  uses `% Patients With Value` as the single coverage metric.
+  PII dropped. The contrast with customer: pharma answers *how*,
+  customer answers *what*.
+- **customer** — All four sheets but trimmed; the plain-language
+  buyer-evaluation view. Variables drops the methodology fields
+  (Coding Schema, Distribution, Median (IQR), Implemented, Data
+  Source) — those live on the pharma sheet. Keeps `Criteria` for
+  transparency about how each variable is matched. Renames
+  `Values` to `Observed Values` (cell is the cohort's observed
+  top-N values, not a curated enum); uses `% Patients With Value`
+  as the single coverage metric. Columns trimmed to Table / Column
+  / Description / Field Type. PII dropped, internal scaffolding
+  tables filtered, JSON suppressed. The shortest external-facing
+  artifact.
 
 ### 10.2 PII requirement
 PII redaction is **not optional** for sales / pharma outputs. Any column

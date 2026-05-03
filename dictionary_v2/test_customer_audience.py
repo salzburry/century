@@ -146,34 +146,63 @@ class CustomerLayoutTests(unittest.TestCase):
         for dropped in ("Coding Schema", "Implemented", "Data Source"):
             self.assertNotIn(dropped, headers)
 
-    def test_customer_variables_uses_pct_patients_with_value_only(self):
-        # Audience contract: stakeholder audiences carry a single
-        # patient-coverage metric called `% Patients With Value`
-        # (sourced from patient_pct). Row-level Completeness lives
-        # in the technical view only. The stale "% Patient" /
-        # "Completeness" labels must not appear.
+    def test_customer_variables_is_plain_language_view(self):
+        # Customer is the buyer-evaluation view: definitions +
+        # observed values + coverage. Methodology fields (Coding
+        # Schema, Distribution, Median (IQR), Implemented, Data
+        # Source) are deliberately stripped — those live on the
+        # pharma sheet. Single coverage metric is
+        # `% Patients With Value`. Criteria is kept for
+        # transparency about how each variable is matched.
         headers = [label for label, _ in bd.variables_layout("customer")]
-        self.assertIn("% Patients With Value", headers)
-        for stale in ("Completeness", "% Patient"):
+        # Kept fields:
+        for kept in ("Inclusion Criteria", "Criteria", "Observed Values",
+                     "% Patients With Value"):
+            self.assertIn(kept, headers, msg=f"customer should keep {kept}")
+        # Methodology fields explicitly dropped:
+        for dropped in ("Coding Schema", "Distribution", "Median (IQR)",
+                        "Implemented", "Data Source"):
+            self.assertNotIn(dropped, headers,
+                             msg=f"customer must drop {dropped} (pharma keeps it)")
+        # Old labels gone:
+        for stale in ("Completeness", "% Patient", "Values"):
             self.assertNotIn(stale, headers,
                              msg=f"customer must not carry {stale}")
-        # Customer also renames the comma-joined "Values" cell to
-        # "Observed Values" — the cell is observed top-N from the
-        # cohort, not a curated enum.
-        self.assertIn("Observed Values", headers)
-        self.assertNotIn("Values", headers)
 
-    def test_pharma_variables_uses_pct_patients_with_value_only(self):
-        # Pharma is stakeholder-facing too — drops row-level
-        # Completeness, keeps % Patients With Value. Other technical
-        # fields (Coding Schema, Implemented, Data Source) survive.
+    def test_pharma_variables_is_methodology_rich_view(self):
+        # Pharma is the scientific/evidence view: methodology stack
+        # in full + the strict match Criteria so reviewers can
+        # evaluate variable definitions. Drops only row-level
+        # Completeness; carries % Patients With Value as the single
+        # coverage metric.
         headers = [label for label, _ in bd.variables_layout("pharma")]
-        self.assertIn("% Patients With Value", headers)
-        for stale in ("Completeness", "% Patient"):
+        # Methodology kept (this is what differentiates pharma
+        # from customer):
+        for kept in ("Criteria", "Coding Schema", "Observed Values",
+                     "Distribution", "Median (IQR)", "Implemented",
+                     "% Patients With Value", "Data Source"):
+            self.assertIn(kept, headers, msg=f"pharma should keep {kept}")
+        # Row-level Completeness lives in technical only:
+        self.assertNotIn("Completeness", headers)
+        # Old labels gone:
+        for stale in ("% Patient", "Values"):
             self.assertNotIn(stale, headers,
                              msg=f"pharma must not carry {stale}")
-        for kept in ("Coding Schema", "Implemented", "Data Source"):
-            self.assertIn(kept, headers, msg=f"pharma should keep {kept}")
+
+    def test_customer_and_pharma_have_distinct_shapes(self):
+        # The whole point of Option 2: customer and pharma should
+        # NOT be the same sheet. Lock that intent in.
+        cust = [l for l, _ in bd.variables_layout("customer")]
+        phar = [l for l, _ in bd.variables_layout("pharma")]
+        self.assertNotEqual(cust, phar,
+                            msg="customer and pharma must differ in column set")
+        # Pharma should be strictly wider than customer (it adds
+        # methodology fields on top of the customer base).
+        self.assertGreater(
+            len(phar), len(cust),
+            msg="pharma should be richer than customer; got "
+                f"customer={len(cust)} cols, pharma={len(phar)} cols",
+        )
 
     def test_technical_variables_keeps_both_metrics(self):
         # Technical is the audit view: row-level Completeness and

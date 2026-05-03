@@ -27,11 +27,11 @@ Category | Variable | Description | Inclusion Criteria | Table(s) | Column(s)
 ```
 Sales uses its own Tempus-style head — see below.
 
-### Criteria column (technical + customer only)
+### Criteria column (technical + customer + pharma)
 ```
 Criteria
 ```
-Inserted between `Column(s)` and the audience-specific tail. Pharma hides it (no raw SQL). Sales has no Criteria column at all.
+Inserted between `Column(s)` and the audience-specific tail. Pharma scientists evaluate variable definitions, so the strict match Criteria IS shown. Sales has no Criteria column at all (its standalone Tempus-style layout doesn't use the shared head).
 
 ### Tail per audience
 
@@ -43,19 +43,23 @@ Data Source | Notes
 ```
 Carries **both** metrics: row-level `Completeness` (rows with non-null col / rows matching criteria) AND `% Patients With Value` (distinct patients with non-null col / cohort total).
 
-#### `pharma` — technical fields, single coverage metric
+#### `pharma` — methodology-rich evidence view
 ```
-Field Type | Example | Coding Schema | Values | Distribution |
-Median (IQR) | Implemented | % Patients With Value | Data Source | Notes
+Field Type | Example | Coding Schema | Observed Values |
+Distribution | Median (IQR) | Implemented | % Patients With Value |
+Data Source | Notes
 ```
-Same as technical minus the row-level `Completeness` column. Stakeholder-facing audiences converge on `% Patients With Value` as the single coverage signal.
+Designed for scientific / evidence reviewers (HEOR, RWE, protocol feasibility, market access). Carries the full methodology stack — Coding Schema, Distribution, Median (IQR), Implemented, Data Source — alongside the strict match Criteria (added by the shared head). Drops only the row-level `Completeness` column; uses `% Patients With Value` as the single coverage metric, consistent with all stakeholder audiences. Renames `Values` → `Observed Values` for label consistency.
 
-#### `customer` — trimmed stakeholder view
+The methodology fields are what separate pharma from customer: customer keeps the variable's *what*, pharma adds the *how*.
+
+#### `customer` — plain-language buyer view
 ```
-Field Type | Example | Observed Values | Distribution |
-Median (IQR) | % Patients With Value | Notes
+Field Type | Example | Observed Values | % Patients With Value | Notes
 ```
-Drops `Coding Schema`, `Implemented`, `Data Source`. Renames `Values` → `Observed Values` (honest label: cell is the observed top-N from the cohort, not a curated enum). Reads from the structured `top_value_labels` list so labels with internal commas (e.g. OMOP names like "Cancer, malignant") render verbatim.
+Designed for a buyer evaluating the data asset. Definitions + observed values + coverage. **Methodology fields are intentionally dropped** — `Coding Schema`, `Distribution`, `Median (IQR)`, `Implemented`, `Data Source` all live on the pharma sheet, not here. Keeps `Criteria` (added by the shared head) for transparency about how each variable is matched. Reads from the structured `top_value_labels` list so labels with internal commas (e.g. OMOP names like "Cancer, malignant") render verbatim.
+
+This is the shortest external-facing tail — five columns. The contrast with pharma is deliberate: customer answers "what's in this cohort and how is it defined"; pharma answers "what's the methodology behind each variable."
 
 #### `sales` — Tempus-style spec
 ```
