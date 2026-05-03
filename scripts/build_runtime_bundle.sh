@@ -500,29 +500,31 @@ python dictionary_v2/discover_exact_matches.py \
 
 After step 4b, `git diff packs/variables/mtc_aat.yaml` shows the
 exact rows that were added/updated. Each new row carries a
-provenance comment:
+provenance comment, and the match block uses **concept IDs**
+against the `*_concept_id` column (canonical OMOP filter, no
+runtime vocabulary lookup) — NOT string-based `match.values`:
 
 ```yaml
   # Auto-stubbed from packs/variables/aat_common.yaml via discover_exact_matches.py --auto-stub. Verify clinical fit before shipping.
   - category: Medications
     variable: Anti-amyloid Therapy (Administration)
     table: drug_exposure
-    column: drug_concept_name
+    column: drug_concept_name           # display column for Observed Values
     criteria: drug_concept_name ILIKE '%lecanemab%' OR ...
     match:
-      column: drug_concept_name
-      values:
-        - Lecanemab
-        - Lecanemab-irmb
-        - Leqembi
-        - Donanemab-azbt
-        - Kisunla
+      column: drug_concept_id           # match column — switched to id
+      concept_ids:
+        - 40221901    # Lecanemab
+        - 793143      # Donanemab-azbt
+        - 35606214    # Aducanumab-avwa
 ```
 
-For non-interactive (CI) use:
+For non-interactive (CI) use — keep `--mode concept-ids` so the
+non-interactive path writes the same canonical id-based block:
 ```bash
 python dictionary_v2/discover_exact_matches.py \
     --cohort mtc_aat \
+    --mode concept-ids \
     --apply-yes --target cohort --auto-stub
 ```
 

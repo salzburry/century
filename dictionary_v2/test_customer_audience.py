@@ -2871,9 +2871,13 @@ class VariablePackOverrideTests(unittest.TestCase):
 
     def test_validator_flags_malformed_name_column_override(self):
         # `match.name_column:` is the optional discovery override
-        # for non-canonical tables. When present it must be a
-        # non-empty string — anything else is a typo / wrong shape
-        # the validator catches at lint time.
+        # for non-canonical tables. Discovery interpolates it
+        # directly as a quoted column name, so the validator must
+        # enforce both that it's a non-empty string AND that the
+        # string is a plain SQL identifier (letters / digits /
+        # underscores). Anything containing whitespace, dots,
+        # hyphens, quotes, or expression-like text would fail at
+        # runtime or open an injection path.
         path = bd.PACKS_DIR / "variables" / "_validator_name_column.yaml"
         path.write_text(
             "variables:\n"
@@ -2894,13 +2898,61 @@ class VariablePackOverrideTests(unittest.TestCase):
             "      concept_ids: [40221901]\n"
             "      name_column: ''\n"                  # empty string
             "  - category: Drugs\n"
+            "    variable: NameColumnWithSpace\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      name_column: 'display label'\n"    # space — not an identifier
+            "  - category: Drugs\n"
+            "    variable: NameColumnWithDot\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      name_column: 'schema.column'\n"    # dot path — not an identifier
+            "  - category: Drugs\n"
+            "    variable: NameColumnWithHyphen\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      name_column: 'drug-concept-name'\n"  # hyphen — not an identifier
+            "  - category: Drugs\n"
+            "    variable: NameColumnWithQuote\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            '      name_column: \'col"; DROP TABLE x\'\n'  # injection-shaped
+            "  - category: Drugs\n"
+            "    variable: NameColumnLeadingDigit\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      name_column: '1st_label'\n"        # leading digit — not an identifier
+            "  - category: Drugs\n"
             "    variable: ValidNameColumnOverride\n"
             "    table: drug_exposure\n"
             "    column: drug_concept_name\n"
             "    match:\n"
             "      column: drug_concept_id\n"
             "      concept_ids: [40221901]\n"
-            "      name_column: display_label\n",      # valid — should pass
+            "      name_column: display_label\n"      # valid — should pass
+            "  - category: Drugs\n"
+            "    variable: ValidNameColumnUnderscoreLead\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      name_column: _internal_label\n",   # valid — leading underscore
             encoding="utf-8",
         )
         self.addCleanup(lambda: path.unlink(missing_ok=True))
@@ -2927,21 +2979,42 @@ class VariablePackOverrideTests(unittest.TestCase):
             "_validator_name_column", known_categories=set(),
         )
         msgs = "\n".join(f.message for f in report.findings)
-        # Int → error.
+        # Int → error (type rule).
         self.assertIn("BadNameColumnInt", msgs)
         self.assertIn("name_column", msgs)
-        # Empty string → error.
+        # Empty string → error (non-empty rule).
         self.assertIn("EmptyNameColumn", msgs)
-        # Valid override must NOT trigger a name_column finding.
-        valid_findings = [
-            f for f in report.findings
-            if "ValidNameColumnOverride" in f.message
-            and "name_column" in f.message
-        ]
-        self.assertEqual(
-            valid_findings, [],
-            msg="valid name_column override must not trigger a finding",
-        )
+        # Identifier-shape rule fires on each malformed shape.
+        for bad_var in (
+            "NameColumnWithSpace",
+            "NameColumnWithDot",
+            "NameColumnWithHyphen",
+            "NameColumnWithQuote",
+            "NameColumnLeadingDigit",
+        ):
+            bad_findings = [
+                f for f in report.findings
+                if bad_var in f.message and "name_column" in f.message
+            ]
+            self.assertTrue(
+                bad_findings,
+                msg=f"expected an identifier-shape finding for {bad_var}; "
+                    f"all findings:\n{msgs}",
+            )
+        # Valid overrides must NOT trigger a name_column finding.
+        for good_var in (
+            "ValidNameColumnOverride",
+            "ValidNameColumnUnderscoreLead",
+        ):
+            valid_findings = [
+                f for f in report.findings
+                if good_var in f.message and "name_column" in f.message
+            ]
+            self.assertEqual(
+                valid_findings, [],
+                msg=f"valid name_column {good_var!r} must not trigger a finding; "
+                    f"got: {[f.message for f in valid_findings]}",
+            )
 
     def test_validator_flags_malformed_freshness_metadata(self):
         # Commit B fields must be the right shape when present.
