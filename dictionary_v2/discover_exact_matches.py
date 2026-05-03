@@ -103,7 +103,13 @@ class VariableObservation:
     # configured/observed/missing/stale comparisons work in concept-ID
     # space when the row is already partly migrated.
     configured_concept_ids: list[int] = field(default_factory=list)
-    id_matcher_column: str = ""        # e.g. drug_concept_id
+    # `match.column:` from the YAML (when present) — preserved so the
+    # apply path can write back to the same column even when discovery
+    # ran in name mode and didn't derive an id_matcher_column itself.
+    # Without this, an existing concept-IDs row could lose its column
+    # binding on a name-mode update.
+    configured_match_column: str = ""
+    id_matcher_column: str = ""        # e.g. drug_concept_id (set in concept-ids mode)
 
     @property
     def configured_set(self) -> set[str]:
@@ -418,6 +424,10 @@ def _build_observation(
         criteria=displayed_criteria,
         configured_values=_resolve_configured_values(v.get("match")),
         configured_concept_ids=_resolve_configured_concept_ids(v.get("match")),
+        configured_match_column=(
+            (v.get("match") or {}).get("column", "").strip()
+            if isinstance(v.get("match"), dict) else ""
+        ),
         observed=[],
         error=error,
         source_pack=v.get("_source_pack") or "",
@@ -573,7 +583,7 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
         #      and configured_values is empty. Variable hasn't
         #      been converted to exact matches yet.
         #   4. neither — row was skipped or unscoped.
-        has_match_block = bool(o.configured_values)
+        has_match_block = bool(o.configured_values or o.configured_concept_ids)
         criteria_and_scope_differ = (
             bool(o.criteria) and o.criteria != o.discovery_scope
         )
@@ -604,7 +614,17 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
         # Concept-ID mode: comparisons happen in integer-ID space.
         # Existing rows already migrated to match.concept_ids show
         # up correctly as "configured" instead of looking empty.
-        in_id_mode = bool(o.observed_concept_ids and o.id_matcher_column)
+        # In-mode triggers when EITHER:
+        #   - this discovery run produced observed_concept_ids, OR
+        #   - the YAML already has match.concept_ids configured
+        # The latter case lets the report flag stale IDs (configured
+        # but never observed in this cohort) even when name mode was
+        # the discovery mode.
+        id_col_for_report = o.id_matcher_column or o.configured_match_column
+        in_id_mode = bool(
+            (o.observed_concept_ids or o.configured_concept_ids)
+            and id_col_for_report
+        )
 
         if in_id_mode:
             out.append(
@@ -615,15 +635,25 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
                 f"- observed distinct concept ids: "
                 f"{len(o.observed_concept_ids)}"
             )
-            out.append(
-                f"- concept-id mode: {o.id_matcher_column}"
-            )
+            out.append(f"- concept-id mode: {id_col_for_report}")
+            if not o.observed_concept_ids and not o.id_matcher_column:
+                out.append(
+                    "- _name-mode discovery against an id-configured "
+                    "row — re-run with `--mode concept-ids` for an "
+                    "id-aware comparison_"
+                )
             out.append("")
 
-            out.append("### Observed concept IDs (id · name · count)")
-            for cid, name, n in o.observed_concept_ids:
-                out.append(f"- `{cid}`  ·  `{name}`  ·  ({n:,})")
-            out.append("")
+            if o.observed_concept_ids:
+                out.append("### Observed concept IDs (id · name · count)")
+                for cid, name, n in o.observed_concept_ids:
+                    out.append(f"- `{cid}`  ·  `{name}`  ·  ({n:,})")
+                out.append("")
+            if o.configured_concept_ids and not o.observed_concept_ids:
+                out.append("### Configured concept IDs (no observations from this run)")
+                for cid in o.configured_concept_ids:
+                    out.append(f"- `{cid}`")
+                out.append("")
 
             if o.configured_and_observed_ids:
                 out.append("### Configured & observed (concept IDs)")
@@ -700,7 +730,16 @@ def _fmt_suggestions_yaml(
         # In concept-id mode the proposal is a `match.concept_ids:`
         # block keyed on the *_concept_id column. Otherwise the
         # legacy `match.values:` shape on the matcher's name column.
-        in_id_mode = bool(o.observed_concept_ids and o.id_matcher_column)
+        # Concept-id mode triggers when EITHER observed_concept_ids
+        # is populated (this run was --mode concept-ids) OR the row
+        # already has match.concept_ids in YAML — both need a known
+        # id column. Without that pairing we'd lose the row from
+        # the suggestion file even though it's clearly id-configured.
+        id_col_for_yaml = o.id_matcher_column or o.configured_match_column
+        in_id_mode = bool(
+            (o.observed_concept_ids or o.configured_concept_ids)
+            and id_col_for_yaml
+        )
         if not in_id_mode and not o.observed and not o.configured_values:
             continue
         if in_id_mode and not o.observed_concept_ids and not o.configured_concept_ids:
@@ -734,7 +773,7 @@ def _fmt_suggestions_yaml(
             # reviewer can spot-check the proposal in YAML form.
             id_to_name = {cid: name for cid, name, _ in o.observed_concept_ids}
 
-            lines.append(f"  column: {o.id_matcher_column}")
+            lines.append(f"  column: {id_col_for_yaml}")
             lines.append("  concept_ids:")
             for cid in id_union:
                 name = id_to_name.get(cid)
@@ -797,6 +836,30 @@ def _suggested_values_for(o: VariableObservation) -> list[str]:
         if val not in seen:
             seen.add(val)
             union.append(val)
+    return union
+
+
+def _suggested_concept_ids_for(o: VariableObservation) -> list[int]:
+    """Union of observed (frequency-ordered) + currently-configured
+    concept IDs. Mirrors the YAML suggestion's ordering and matches
+    what _suggested_values_for does for name mode.
+
+    Approving an update on a concept-IDs row must NEVER silently
+    drop a previously-curated ID just because it didn't show up in
+    this cohort run — the cohort might be sparse, or the curated
+    ID list might intentionally cover concepts that haven't appeared
+    yet. Apply preserves both sources.
+    """
+    union: list[int] = []
+    seen: set[int] = set()
+    for cid, _, _ in o.observed_concept_ids:
+        if cid not in seen:
+            seen.add(cid)
+            union.append(cid)
+    for cid in o.configured_concept_ids:
+        if cid not in seen:
+            seen.add(cid)
+            union.append(cid)
     return union
 
 
@@ -1162,10 +1225,25 @@ def apply_suggestions(
         # Build the match block. Concept-ID mode writes the
         # `*_concept_id` column + an integer concept_ids list.
         # Name mode keeps the existing column + string values list.
-        if o.observed_concept_ids and o.id_matcher_column:
+        # Concept-ID mode is active when EITHER side has IDs:
+        #   - observed_concept_ids (concept-ids discovery ran)
+        #   - configured_concept_ids (row already migrated)
+        # The id column comes from id_matcher_column (set during
+        # concept-ids discovery) or from the YAML's match.column
+        # when that's already an *_concept_id column.
+        id_col = o.id_matcher_column or o.configured_match_column
+        in_id_mode = bool(
+            (o.observed_concept_ids or o.configured_concept_ids) and id_col
+        )
+        if in_id_mode:
             match_block = {
-                "column": o.id_matcher_column,
-                "concept_ids": [cid for cid, _, _ in o.observed_concept_ids],
+                "column": id_col,
+                # Union observed + already-configured. Approving an
+                # update must NEVER silently drop a previously-curated
+                # ID just because the cohort happens to be sparse on
+                # this run — _suggested_concept_ids_for() preserves
+                # both sources.
+                "concept_ids": _suggested_concept_ids_for(o),
             }
         else:
             match_block = {
