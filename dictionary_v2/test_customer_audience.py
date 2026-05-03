@@ -1896,6 +1896,97 @@ class DiscoveryApplyTests(unittest.TestCase):
         self.assertIn("ADD cohort override", prompt)
         self.assertIn("inherited from shared pack", prompt)
 
+    def test_suggestions_yaml_writes_concept_ids_in_concept_ids_mode(self):
+        # Suggestions YAML must mirror what --apply will write.
+        # In concept-ids mode the proposal is `match.column:
+        # *_concept_id` + `match.concept_ids: [...]`, NOT
+        # `match.values: [...]` — otherwise a reviewer copying the
+        # suggestion lands the wrong matcher shape.
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria="drug_concept_name ILIKE '%aspirin%'",
+            configured_values=[],
+            observed=[("Aspirin 81 MG Oral Tablet", 100), ("Aspirin 325 MG", 50)],
+            source_pack=self.pack_slug,
+            observed_concept_ids=[
+                (1112807, "Aspirin 81 MG Oral Tablet", 100),
+                (1112809, "Aspirin 325 MG", 50),
+            ],
+            id_matcher_column="drug_concept_id",
+        )
+        y = self.mod._fmt_suggestions_yaml([obs], cohort="balboa_ckd")
+        self.assertIn("column: drug_concept_id", y)
+        self.assertIn("concept_ids:", y)
+        self.assertIn("- 1112807", y)
+        self.assertIn("- 1112809", y)
+        # Inline name comments help clinical spot-check.
+        self.assertIn("# Aspirin 81 MG Oral Tablet", y)
+        # Must NOT regress to the old `values:` shape on the
+        # name column.
+        self.assertNotIn("column: drug_concept_name", y)
+        self.assertNotIn("values:", y)
+
+    def test_resolve_configured_concept_ids_reads_match_block(self):
+        # Existing concept_ids in the YAML must be visible to the
+        # discovery resolver so the report doesn't claim the row
+        # has "no match block configured."
+        ids = self.mod._resolve_configured_concept_ids({
+            "column": "drug_concept_id",
+            "concept_ids": [40221901, "793143", 35606214, 40221901],
+        })
+        self.assertEqual(ids, [40221901, 793143, 35606214])
+        self.assertEqual(self.mod._resolve_configured_concept_ids(None), [])
+        self.assertEqual(self.mod._resolve_configured_concept_ids({}), [])
+        self.assertEqual(self.mod._resolve_configured_concept_ids(
+            {"concept_ids": "not_a_list"}
+        ), [])
+
+    def test_concept_id_comparisons_use_id_aware_properties(self):
+        # An observation in concept-ids mode with some IDs already
+        # configured must surface configured_and_observed_ids,
+        # missing_from_config_ids, stale_in_config_ids correctly.
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria="", configured_values=[],
+            observed=[("Aspirin 81 MG Oral Tablet", 100), ("Aspirin 325 MG", 50)],
+            source_pack="ckd_common",
+            observed_concept_ids=[
+                (1112807, "Aspirin 81 MG Oral Tablet", 100),
+                (1112809, "Aspirin 325 MG", 50),
+            ],
+            configured_concept_ids=[1112807, 9999999],   # one match, one stale
+            id_matcher_column="drug_concept_id",
+        )
+        self.assertEqual(
+            obs.configured_and_observed_ids,
+            [(1112807, "Aspirin 81 MG Oral Tablet", 100)],
+        )
+        self.assertEqual(
+            obs.missing_from_config_ids,
+            [(1112809, "Aspirin 325 MG", 50)],
+        )
+        self.assertEqual(obs.stale_in_config_ids, [9999999])
+
+    def test_report_uses_id_aware_sections_in_concept_ids_mode(self):
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria="", configured_values=[],
+            observed=[("Aspirin 81 MG Oral Tablet", 100)],
+            source_pack="ckd_common",
+            observed_concept_ids=[(1112807, "Aspirin 81 MG Oral Tablet", 100)],
+            configured_concept_ids=[9999999],
+            id_matcher_column="drug_concept_id",
+        )
+        md = self.mod._fmt_md([obs], "balboa_ckd")
+        self.assertIn("Observed but NOT in match.concept_ids", md)
+        self.assertIn("In match.concept_ids but NOT observed", md)
+        self.assertIn("9999999", md)
+        # Old name-mode header must NOT appear when in id mode.
+        self.assertNotIn("Observed but NOT in config", md)
+
     def test_per_variable_prompt_surfaces_concept_ids_mode(self):
         # Commit D: when the observation has concept_ids data, the
         # prompt must say so. Reviewer needs to know whether they're
@@ -2558,7 +2649,7 @@ class BatchRunnerTests(unittest.TestCase):
             "--formats", "xlsx",
         ])
         self.assertEqual(rc, 0)
-        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text(encoding="utf-8")
         # Header + per-cohort table + at least one cohort row.
         self.assertIn("# Build summary", summary)
         self.assertIn("Per-cohort results", summary)
@@ -2580,7 +2671,7 @@ class BatchRunnerTests(unittest.TestCase):
             "--formats", "xlsx",
         ])
         self.assertEqual(rc, 0)
-        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text(encoding="utf-8")
         self.assertIn("| `mtc_aat` |", summary)
         self.assertIn("| `balboa_ckd` |", summary)
         # Other cohorts must NOT appear.
@@ -2612,7 +2703,7 @@ class BatchRunnerTests(unittest.TestCase):
         ])
         # One cohort failed → exit 1, but the runner kept going.
         self.assertEqual(rc, 1)
-        summary = (out_dir / "BUILD_SUMMARY.md").read_text()
+        summary = (out_dir / "BUILD_SUMMARY.md").read_text(encoding="utf-8")
         # The bad cohort is recorded as an error.
         self.assertIn("`_batch_test_bad`", summary)
         self.assertIn("error", summary)

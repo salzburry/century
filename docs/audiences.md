@@ -140,15 +140,21 @@ introspect_version | schema_snapshot_digest
 ```
 
 ### Stakeholder audiences (`sales`, `customer`)
-Styled cover sheet:
+Styled cover sheet (top to bottom):
 - Title block: `<display_name> — <Disease> cohort`
 - Subtitle: `Provider · Schema · Generated`
 - Description paragraph (from cohort YAML's `description:`)
 - Hero stats block: Patients · Years of follow-up · Variables · With data (count + %)
 - Date coverage line
+- **Freshness facts** (optional, Commit B) — single line containing the segments that are populated:
+  - `Data current to: <data_cutoff_date>`
+  - `Last ETL run: <last_etl_run>`
+  - `Reviewed by: <sign_off.reviewer>  ·  <sign_off.date>  ·  <sign_off.notes>`
+  - Renders only when at least one segment is populated; an empty cohort YAML produces no line at all.
+- **Known limitations** (optional, Commit B) — bulleted list under a `Known limitations` header, sourced from the cohort YAML's `known_limitations:` list. The header itself is suppressed when the list is empty (no dangling section headers for un-curated cohorts).
 - Coverage-by-category rollup table
 
-Internal fields (`variant`, `column_count`, `status`, `git_sha`, `introspect_version`, `schema_snapshot_digest`) are dropped.
+Internal fields (`variant`, `column_count`, `status`, `git_sha`, `introspect_version`, `schema_snapshot_digest`) are dropped from the cover.
 
 ---
 
