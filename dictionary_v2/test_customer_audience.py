@@ -1643,6 +1643,61 @@ class DiscoveryApplyTests(unittest.TestCase):
         self.assertNotIn("match:", between_diag,
                          msg="Diagnosis row must not be touched")
 
+    def test_apply_unions_observed_with_existing_configured_concept_ids(self):
+        # Approving an UPDATE on a concept-IDs row must NEVER
+        # silently drop a previously-curated ID just because it
+        # didn't show up in this cohort run. Apply unions the
+        # observed IDs with whatever is already configured.
+        # Mirrors what name mode does via _suggested_values_for().
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria="drug_concept_name ILIKE '%aspirin%'",
+            configured_values=[],
+            observed=[("Aspirin 81 MG", 100)],
+            source_pack=self.pack_slug,
+            observed_concept_ids=[(1112807, "Aspirin 81 MG", 100)],
+            # Two IDs already configured — only one was observed
+            # this run. Both must survive the apply.
+            configured_concept_ids=[1112807, 9999999],
+            id_matcher_column="drug_concept_id",
+        )
+        applied, _ = self.mod.apply_suggestions(
+            [obs], target="shared", auto_yes=True,
+        )
+        self.assertEqual(applied, 1)
+        text = self.pack_path.read_text()
+        self.assertIn("- 1112807", text)
+        self.assertIn("- 9999999", text,
+                      msg="previously-curated ID must be preserved on update")
+
+    def test_apply_uses_configured_match_column_when_id_matcher_absent(self):
+        # Discovery in name mode against an id-configured row
+        # carries configured_concept_ids + configured_match_column
+        # but no id_matcher_column. Apply must still write back
+        # against the YAML's existing match.column instead of
+        # losing the column binding.
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria='"drug_concept_id" IN (1112807)',
+            configured_values=[],
+            observed=[("Aspirin 81 MG", 100)],
+            source_pack=self.pack_slug,
+            observed_concept_ids=[],         # name mode — no triples
+            configured_concept_ids=[1112807],
+            configured_match_column="drug_concept_id",
+            id_matcher_column="",            # not set in name mode
+        )
+        applied, _ = self.mod.apply_suggestions(
+            [obs], target="shared", auto_yes=True,
+        )
+        self.assertEqual(applied, 1)
+        text = self.pack_path.read_text()
+        # Should write match against the id column, NOT lose it.
+        self.assertIn("column: drug_concept_id", text)
+        self.assertIn("- 1112807", text)
+
     def test_apply_writes_concept_ids_when_observation_has_them(self):
         # Commit D: observations from concept-id mode carry
         # observed_concept_ids + id_matcher_column. apply must
@@ -1968,6 +2023,58 @@ class DiscoveryApplyTests(unittest.TestCase):
             [(1112809, "Aspirin 325 MG", 50)],
         )
         self.assertEqual(obs.stale_in_config_ids, [9999999])
+
+    def test_report_recognizes_id_configured_row_with_no_observations(self):
+        # An id-configured row that didn't return any rows from
+        # this cohort run (sparse cohort, or stale IDs) must still
+        # appear in the report as id-mode AND surface stale IDs.
+        # Previously the row showed up as "no match: block configured
+        # yet" with "configured values: 0" — a regression that hid
+        # exactly the case discovery should flag.
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria='"drug_concept_id" IN (111, 222)',
+            configured_values=[],
+            observed=[],
+            source_pack="ckd_common",
+            observed_concept_ids=[],         # cohort returned nothing
+            configured_concept_ids=[111, 222],
+            configured_match_column="drug_concept_id",
+            id_matcher_column="",
+            discovery_scope='"drug_concept_id" IN (111, 222)',
+        )
+        md = self.mod._fmt_md([obs], "balboa_ckd")
+        # Must NOT claim no match block.
+        self.assertNotIn("no `match:` block configured yet", md)
+        # Must surface concept-id-mode framing.
+        self.assertIn("concept-id mode: drug_concept_id", md)
+        self.assertIn("configured concept ids: 2", md)
+        # Configured IDs are still listed even without observations.
+        self.assertIn("Configured concept IDs (no observations from this run)", md)
+        self.assertIn("`111`", md)
+        self.assertIn("`222`", md)
+
+    def test_suggestions_yaml_includes_id_configured_rows_without_observations(self):
+        # Companion check on the YAML emitter — must not silently
+        # drop a row whose only id signal is the existing
+        # configured_concept_ids.
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name", criteria="",
+            configured_values=[], observed=[],
+            source_pack="ckd_common",
+            observed_concept_ids=[],
+            configured_concept_ids=[111, 222],
+            configured_match_column="drug_concept_id",
+            id_matcher_column="",
+        )
+        y = self.mod._fmt_suggestions_yaml([obs], cohort="balboa_ckd")
+        self.assertIn("variable: Aspirin", y,
+                      msg="id-configured row must not be skipped")
+        self.assertIn("column: drug_concept_id", y)
+        self.assertIn("- 111", y)
+        self.assertIn("- 222", y)
 
     def test_report_uses_id_aware_sections_in_concept_ids_mode(self):
         obs = self.mod.VariableObservation(
