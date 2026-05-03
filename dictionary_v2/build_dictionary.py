@@ -226,6 +226,22 @@ class CohortModel:
     tables: list[TableRow]
     columns: list[ColumnRow]
     variables: list[VariableRow]
+    # Cohort-level freshness / governance metadata (Commit B). All
+    # optional. Read from the cohort YAML and surfaced on the
+    # stakeholder cover sheet when present — empty values render
+    # nothing (no blank rows). Fields:
+    #   data_cutoff_date    — latest event date the ETL pulled
+    #                         (ISO date, e.g. "2026-04-15").
+    #   last_etl_run        — when the cohort was refreshed
+    #                         (ISO date or datetime).
+    #   known_limitations   — free-form caveats a reviewer should
+    #                         see before evaluating the cohort.
+    #   sign_off            — {reviewer, date, notes?} dict naming
+    #                         the SME who approved the dictionary.
+    data_cutoff_date: str = ""
+    last_etl_run: str = ""
+    known_limitations: list[str] = field(default_factory=list)
+    sign_off: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         def _conv(v: Any) -> Any:
@@ -1405,6 +1421,17 @@ def build_model(
         tables=table_rows,
         columns=column_rows,
         variables=variables_rows,
+        data_cutoff_date=str(pack.get("data_cutoff_date") or "").strip(),
+        last_etl_run=str(pack.get("last_etl_run") or "").strip(),
+        known_limitations=[
+            str(x).strip()
+            for x in (pack.get("known_limitations") or [])
+            if str(x).strip()
+        ],
+        sign_off=(
+            {k: str(v).strip() for k, v in (pack.get("sign_off") or {}).items()}
+            if isinstance(pack.get("sign_off"), dict) else {}
+        ),
     )
 
 
@@ -2055,14 +2082,18 @@ def _render_stakeholder_cover(ws, model: CohortModel) -> None:
     """Write a styled Summary cover into an empty openpyxl worksheet.
 
     Layout (top to bottom):
-      1. Title row     — display_name + " — " + disease pretty name
-      2. Description   — wrapped paragraph from cohort YAML
-      3. Hero stats    — N patients · X years · M variables · K% implemented
-      4. Date coverage — single readable line
-      5. Coverage table — per-category implemented + avg completeness
+      1. Title row       — display_name + " — " + disease pretty name
+      2. Description     — wrapped paragraph from cohort YAML
+      3. Hero stats      — N patients · X years · M variables · K% implemented
+      4. Date coverage   — single readable line
+      5. Freshness facts — data_cutoff_date / last_etl_run / sign_off
+                            (each block only when populated)
+      5b. Known limitations — bulleted list (only when populated)
+      6. Coverage table  — per-category implemented + avg completeness
 
     Cohort-agnostic: only reads model fields. No sheet-name or
-    cohort-slug specialisation.
+    cohort-slug specialisation. Empty freshness fields render
+    nothing (no blank rows / dangling section headers).
     """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
@@ -2168,7 +2199,48 @@ def _render_stakeholder_cover(ws, model: CohortModel) -> None:
                        end_row=row, end_column=6)
         row += 2
 
-    # 5. Coverage rollup table.
+    # 5. Freshness / governance facts (Commit B). Each block
+    #    renders only when the corresponding cohort YAML field is
+    #    populated — empty values produce no row, so un-curated
+    #    cohorts don't show blank section headers that would make
+    #    the workbook look unfinished.
+    fresh_lines: list[str] = []
+    if (model.data_cutoff_date or "").strip():
+        fresh_lines.append(f"Data current to: {model.data_cutoff_date}")
+    if (model.last_etl_run or "").strip():
+        fresh_lines.append(f"Last ETL run: {model.last_etl_run}")
+    so = model.sign_off or {}
+    if so.get("reviewer", "").strip():
+        sign_bits = [f"Reviewed by: {so['reviewer'].strip()}"]
+        if so.get("date", "").strip():
+            sign_bits.append(so["date"].strip())
+        if so.get("notes", "").strip():
+            sign_bits.append(so["notes"].strip())
+        fresh_lines.append("  ·  ".join(sign_bits))
+    if fresh_lines:
+        cell = ws.cell(row=row, column=1,
+                       value="   ·   ".join(fresh_lines))
+        cell.font = subtitle_font
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=6)
+        row += 2
+
+    if model.known_limitations:
+        header = ws.cell(row=row, column=1, value="Known limitations")
+        header.font = section_font
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=6)
+        row += 1
+        for caveat in model.known_limitations:
+            cell = ws.cell(row=row, column=1, value=f"•  {caveat}")
+            cell.font = body_font
+            cell.alignment = wrap_top
+            ws.merge_cells(start_row=row, start_column=1,
+                           end_row=row, end_column=6)
+            row += 1
+        row += 1   # gap before rollup
+
+    # 6. Coverage rollup table.
     rollup = _coverage_rollup(model)
     if rollup:
         header = ws.cell(row=row, column=1, value="Coverage by category")

@@ -4,6 +4,21 @@ Authoritative spec for what each `--audience` of `build_dictionary.py` ships, pl
 
 ---
 
+## Term definitions
+
+These terms appear in multiple sheets. Defined once here so the audiences agree on what they mean.
+
+| Term | Definition |
+|---|---|
+| **Observed Values** | The most-frequent non-null values seen in the variable's column for the live cohort, top-10 by row count, newline-separated within the cell. **Not a curated enum** — if a value isn't in the cohort, it doesn't appear. Reads from the structured `top_value_labels` field on `VariableRow` so OMOP labels with internal commas (e.g. `"Cancer, malignant"`) render verbatim. |
+| **% Patients With Value** | Distinct cohort patients with at least one non-null row for this variable, as a percentage of the cohort's total patient count. Patient-level coverage signal. Sourced from the `patient_pct` field. Used by all stakeholder audiences (sales, customer, pharma) as the single coverage metric. |
+| **Completeness** | Row-level non-null rate: rows with non-null column value among rows matching the variable's criteria/match scope, as a percentage. Methodology / QA signal — useful for auditing whether the criteria filter is sized correctly relative to the column's nullability. **Technical audience only.** Sourced from the `completeness_pct` field. |
+| **Implemented** | `"Yes"` if the variable has at least one non-null row matching its scope in the live cohort; `"No"` otherwise. Stakeholder audiences (sales, customer) drop `Implemented = No` rows from the rendered output to avoid surfacing 0% rows; technical and pharma keep them so the audit can see gaps. |
+| **Criteria** | The scoping clause for the variable — either the broad `criteria:` from YAML (typically `column ILIKE '%pattern%'`) OR, when a `match:` block is configured, the strict `column IN ('value1', 'value2', ...)` form compiled from `match.values` / `match.values_file`. Sales hides this column entirely; technical / customer / pharma show it. |
+| **Inclusion Criteria** | Plain-language prose ("Records are included for each X recorded for the patient") describing what each row in the variable represents. Authored in the variable YAML's `inclusion_criteria:` field. Renders for every audience that ships a Variables sheet. |
+
+---
+
 ## Sheet visibility per audience
 
 | Audience    | Summary | Tables | Columns | Variables | JSON |

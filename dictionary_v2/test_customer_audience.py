@@ -522,6 +522,76 @@ class StakeholderCoverTests(unittest.TestCase):
         self.assertIn("Demographics", text)
         self.assertIn("Medications", text)
 
+    def test_cover_renders_freshness_metadata_when_present(self):
+        # Commit B: when data_cutoff_date / last_etl_run / sign_off /
+        # known_limitations are populated on CohortModel, they
+        # appear on the stakeholder cover.
+        import openpyxl
+        v = _make_variable("person", variable="Sex")
+        v.category = "Demographics"
+        v.completeness_pct = 100.0
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v],
+        )
+        model = dataclasses.replace(
+            model,
+            description="A sample cohort.",
+            data_cutoff_date="2026-04-15",
+            last_etl_run="2026-04-30",
+            known_limitations=[
+                "Diagnosis dates rounded to month before 2020.",
+                "ICU encounters not captured pre-2022.",
+            ],
+            sign_off={"reviewer": "Dr. Jane Doe, MD", "date": "2026-05-01"},
+            summary=dataclasses.replace(model.summary, patient_count=42),
+        )
+        path = _output_dir(self.id()) / "cover.xlsx"
+        bd.write_xlsx(model, path, audience="sales")
+        wb = openpyxl.load_workbook(path)
+        text = "\n".join(
+            str(c.value or "") for c in wb["Summary"]["A"]
+        )
+        self.assertIn("Data current to: 2026-04-15", text)
+        self.assertIn("Last ETL run: 2026-04-30", text)
+        self.assertIn("Reviewed by: Dr. Jane Doe, MD", text)
+        self.assertIn("2026-05-01", text)
+        self.assertIn("Known limitations", text)
+        self.assertIn("Diagnosis dates rounded to month before 2020.", text)
+        self.assertIn("ICU encounters not captured pre-2022.", text)
+
+    def test_cover_skips_freshness_metadata_when_absent(self):
+        # When the cohort YAML doesn't carry the fields, the cover
+        # must NOT show "Known limitations" header or "Data current
+        # to:" — empty values are silent, no blank rows.
+        import openpyxl
+        v = _make_variable("person", variable="Sex")
+        v.category = "Demographics"
+        v.completeness_pct = 100.0
+        model = _make_model(
+            tables=[_make_table("person")],
+            columns=[_make_column("person")],
+            variables=[v],
+        )
+        # Do NOT set freshness fields — defaults are empty.
+        model = dataclasses.replace(
+            model,
+            description="A sample cohort.",
+            summary=dataclasses.replace(model.summary, patient_count=42),
+        )
+        path = _output_dir(self.id()) / "cover_no_freshness.xlsx"
+        bd.write_xlsx(model, path, audience="sales")
+        wb = openpyxl.load_workbook(path)
+        text = "\n".join(
+            str(c.value or "") for c in wb["Summary"]["A"]
+        )
+        # None of the freshness section labels should appear.
+        self.assertNotIn("Data current to:", text)
+        self.assertNotIn("Last ETL run:", text)
+        self.assertNotIn("Reviewed by:", text)
+        self.assertNotIn("Known limitations", text)
+
 
 class StakeholderImplementedFilterTests(unittest.TestCase):
     """Variables that have no data in the cohort (`implemented="No"`)
@@ -2191,6 +2261,46 @@ class VariablePackOverrideTests(unittest.TestCase):
             and v.get("proposal").strip() not in ("Standard", "Custom")
         ]
         self.assertEqual(bad_proposals, ["Stnadard"])
+
+    def test_validator_flags_malformed_freshness_metadata(self):
+        # Commit B fields must be the right shape when present.
+        # known_limitations as scalar, sign_off as string, dates
+        # as non-strings — all should produce errors.
+        import importlib.util
+        cohort_path = bd.PACKS_DIR / "cohorts" / "_validator_freshness_test.yaml"
+        cohort_path.write_text(
+            "provider: TEST\n"
+            "disease: TEST\n"
+            "schema_name: x\n"
+            "cohort_name: _validator_freshness_test\n"
+            "display_name: Freshness Test\n"
+            "variables_pack: aat_common\n"
+            "data_cutoff_date: 20260415\n"           # int, not string
+            "known_limitations: 'one caveat'\n"      # scalar, not list
+            "sign_off: 'Dr Jane'\n",                 # string, not dict
+            encoding="utf-8",
+        )
+        self.addCleanup(lambda: cohort_path.unlink(missing_ok=True))
+
+        vp_path = Path(__file__).resolve().parent.parent / "scripts" / "validate_packs.py"
+        spec = importlib.util.spec_from_file_location(
+            "validate_packs_freshness_test", vp_path,
+        )
+        vp = importlib.util.module_from_spec(spec)
+        sys.modules["validate_packs_freshness_test"] = vp
+        spec.loader.exec_module(vp)
+
+        report = vp.validate_cohort(
+            "_validator_freshness_test", known_categories=set(),
+        )
+        msgs = [f.message for f in report.findings]
+        joined = "\n".join(msgs)
+        self.assertIn("data_cutoff_date", joined,
+                      msg=f"validator should flag non-string date; got: {msgs}")
+        self.assertIn("known_limitations", joined,
+                      msg=f"validator should flag scalar limitations; got: {msgs}")
+        self.assertIn("sign_off", joined,
+                      msg=f"validator should flag string sign_off; got: {msgs}")
 
 
 if __name__ == "__main__":

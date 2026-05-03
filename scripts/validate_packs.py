@@ -406,6 +406,39 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                 "error", slug, f"cohort pack missing required field: {field_name}"
             ))
 
+    # Optional freshness / governance fields. None of these are
+    # required, but when present they must have the right shape so
+    # the cover renderer can ingest them safely.
+    for field_name in ("data_cutoff_date", "last_etl_run"):
+        v = data.get(field_name)
+        if v is not None and not isinstance(v, str):
+            report.findings.append(Finding(
+                "error", slug,
+                f"cohort pack `{field_name}` must be a string (ISO date), "
+                f"got {type(v).__name__}",
+            ))
+    kl = data.get("known_limitations")
+    if kl is not None and not isinstance(kl, list):
+        report.findings.append(Finding(
+            "error", slug,
+            f"cohort pack `known_limitations` must be a YAML list of "
+            f"strings, got {type(kl).__name__}. Use the block form:\n"
+            f"  known_limitations:\n    - First caveat.\n    - Second caveat.",
+        ))
+    so = data.get("sign_off")
+    if so is not None:
+        if not isinstance(so, dict):
+            report.findings.append(Finding(
+                "error", slug,
+                f"cohort pack `sign_off` must be a YAML mapping with "
+                f"`reviewer` and `date` keys, got {type(so).__name__}",
+            ))
+        elif not (so.get("reviewer") or "").strip():
+            report.findings.append(Finding(
+                "error", slug,
+                "cohort pack `sign_off:` is set but `reviewer` is empty",
+            ))
+
     if not report.variables_pack:
         report.findings.append(Finding(
             "warning", slug,
