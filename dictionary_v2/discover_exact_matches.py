@@ -440,6 +440,9 @@ def _id_column_for(name_col: str) -> str:
     column by string substitution. Returns "" when the input doesn't
     look like a concept_name column — concept-ID discovery only
     works on canonical OMOP shapes.
+
+    Kept for back-compat; new code should use _id_and_name_columns
+    so the report can render real concept names alongside the IDs.
     """
     if not name_col:
         return ""
@@ -448,6 +451,36 @@ def _id_column_for(name_col: str) -> str:
     if name_col.endswith("_concept_id"):
         return name_col   # already an id column
     return ""
+
+
+def _id_and_name_columns(
+    matcher_col: str, display_col: str = "",
+) -> tuple[str, str]:
+    """Return (id_column, name_column) for concept-ids discovery.
+
+    The discovery query needs BOTH columns so the report can render
+    `(id, name, count)` triples — id for the canonical match, name
+    for the human-readable spot-check.
+
+    Cases:
+      - matcher is `*_concept_name`: id = `*_concept_id`, name = matcher.
+      - matcher is `*_concept_id` (already-migrated row): id = matcher,
+        name = derive from the variable's display column when it's
+        name-shaped (preferred — that's what the author chose for
+        Observed Values), otherwise flip the suffix on the matcher.
+      - anything else: ("", "") — concept-IDs mode can't run.
+    """
+    if not matcher_col:
+        return "", ""
+    if matcher_col.endswith("_concept_name"):
+        prefix = matcher_col[:-len("_concept_name")]
+        return f"{prefix}_concept_id", matcher_col
+    if matcher_col.endswith("_concept_id"):
+        if display_col and display_col.endswith("_concept_name"):
+            return matcher_col, display_col
+        prefix = matcher_col[:-len("_concept_id")]
+        return matcher_col, f"{prefix}_concept_name"
+    return "", ""
 
 
 def _observe_one(
@@ -478,22 +511,33 @@ def _observe_one(
         return obs
 
     if mode == "concept-ids":
-        id_col = _id_column_for(matcher_column)
-        if not id_col:
+        # _id_and_name_columns picks BOTH the id column (for
+        # matching) and the name column (for display). Critically,
+        # for an already-migrated row whose matcher IS the id
+        # column, the name column comes from the variable's display
+        # `column:` (or a derived `*_concept_name` fallback) rather
+        # than re-using the id column — otherwise the (id, name)
+        # triples would render as (111, '111') and reviewers would
+        # have no clinical label to spot-check.
+        display_col = (v.get("column") or "").strip()
+        id_col, name_col = _id_and_name_columns(matcher_column, display_col)
+        if not id_col or not name_col:
             obs.error = (
-                f"--mode concept-ids needs a `*_concept_name` matcher "
-                f"column to derive the matching `*_concept_id`; got "
-                f"{matcher_column!r}"
+                f"--mode concept-ids needs a `*_concept_name` / "
+                f"`*_concept_id` matcher column (or display column) "
+                f"to derive both the id column for matching and the "
+                f"name column for display; got matcher={matcher_column!r} "
+                f"display={display_col!r}"
             )
             return obs
         obs.id_matcher_column = id_col
         sql = (
-            f'SELECT "{id_col}", "{matcher_column}"::text, COUNT(*) AS n '
+            f'SELECT "{id_col}", "{name_col}"::text, COUNT(*) AS n '
             f'FROM "{schema}"."{obs.table}" '
             f'WHERE ({scope_sql}) '
             f'  AND "{id_col}" IS NOT NULL '
-            f'  AND "{matcher_column}" IS NOT NULL '
-            f'GROUP BY "{id_col}", "{matcher_column}" '
+            f'  AND "{name_col}" IS NOT NULL '
+            f'GROUP BY "{id_col}", "{name_col}" '
             f'ORDER BY n DESC;'
         )
         try:
@@ -504,9 +548,9 @@ def _observe_one(
                     for r in cur.fetchall()
                 ]
             obs.observed_concept_ids = triples
-            # Mirror name-mode `observed` for the existing report
-            # branches (configured & observed / missing / stale all
-            # work off `observed`). The id column travels separately.
+            # Mirror name-mode `observed` so existing report branches
+            # work. The id column travels separately on
+            # observed_concept_ids / id_matcher_column.
             obs.observed = [(name, n) for _, name, n in triples]
         except Exception as exc:
             obs.error = str(exc)
@@ -655,27 +699,35 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
                     out.append(f"- `{cid}`")
                 out.append("")
 
-            if o.configured_and_observed_ids:
-                out.append("### Configured & observed (concept IDs)")
-                for cid, name, n in o.configured_and_observed_ids:
-                    out.append(f"- `{cid}`  ·  `{name}`  ({n:,})")
-                out.append("")
-            if o.missing_from_config_ids:
-                out.append(
-                    "### Observed but NOT in match.concept_ids "
-                    "(candidate additions)"
-                )
-                for cid, name, n in o.missing_from_config_ids:
-                    out.append(f"- [ ] `{cid}`  ·  `{name}`  ({n:,})")
-                out.append("")
-            if o.stale_in_config_ids:
-                out.append(
-                    "### In match.concept_ids but NOT observed "
-                    "(candidate removals)"
-                )
-                for cid in o.stale_in_config_ids:
-                    out.append(f"- [ ] `{cid}`")
-                out.append("")
+            # Configured/observed/missing/stale comparisons only
+            # make sense when this run actually populated
+            # observed_concept_ids (i.e. --mode concept-ids ran).
+            # Without it we have no id-keyed observations to compare
+            # against, and listing every configured ID under "stale"
+            # would push reviewers toward removing valid IDs that
+            # simply weren't queried in id space this run.
+            if o.observed_concept_ids:
+                if o.configured_and_observed_ids:
+                    out.append("### Configured & observed (concept IDs)")
+                    for cid, name, n in o.configured_and_observed_ids:
+                        out.append(f"- `{cid}`  ·  `{name}`  ({n:,})")
+                    out.append("")
+                if o.missing_from_config_ids:
+                    out.append(
+                        "### Observed but NOT in match.concept_ids "
+                        "(candidate additions)"
+                    )
+                    for cid, name, n in o.missing_from_config_ids:
+                        out.append(f"- [ ] `{cid}`  ·  `{name}`  ({n:,})")
+                    out.append("")
+                if o.stale_in_config_ids:
+                    out.append(
+                        "### In match.concept_ids but NOT observed "
+                        "(candidate removals)"
+                    )
+                    for cid in o.stale_in_config_ids:
+                        out.append(f"- [ ] `{cid}`")
+                    out.append("")
         else:
             out.append(f"- configured values: {len(o.configured_values)}")
             out.append(f"- observed distinct values: {len(o.observed)}")
@@ -967,10 +1019,16 @@ def _ask_per_variable(
     `action` is "update" (existing row's match block changes) or
     "stub" (a new cohort-override row is being added from source).
     """
-    # Concept-IDs mode flag — surface in the prompt so the
-    # reviewer always knows which proposal shape is about to land
-    # in the YAML (integer concept_ids vs string values).
-    is_concept_ids = bool(obs.observed_concept_ids and obs.id_matcher_column)
+    # Concept-IDs mode predicate must MATCH what apply_suggestions
+    # and _fmt_suggestions_yaml use, otherwise the prompt promises
+    # a name-mode UPDATE while apply silently writes a concept_ids
+    # block. id_col falls through configured_match_column so a
+    # name-mode discovery against an id-configured row still
+    # surfaces as concept-ids in the prompt.
+    id_col = obs.id_matcher_column or obs.configured_match_column
+    is_concept_ids = bool(
+        (obs.observed_concept_ids or obs.configured_concept_ids) and id_col
+    )
     mode_tag = " (concept-ids)" if is_concept_ids else ""
 
     if action == "update":
@@ -987,16 +1045,30 @@ def _ask_per_variable(
         )
 
     if is_concept_ids:
-        sample = ", ".join(
-            f'{cid}={name!r}'
-            for cid, name, _ in obs.observed_concept_ids[:2]
-        )
-        if len(obs.observed_concept_ids) > 2:
-            sample += ", …"
-        values_line = (
-            f"  Values:   {len(obs.observed_concept_ids)} concept IDs "
-            f"({sample})\n"
-            f"  Filter:   match.column={obs.id_matcher_column} "
+        if obs.observed_concept_ids:
+            sample = ", ".join(
+                f'{cid}={name!r}'
+                for cid, name, _ in obs.observed_concept_ids[:2]
+            )
+            if len(obs.observed_concept_ids) > 2:
+                sample += ", …"
+            values_line = (
+                f"  Values:   {len(obs.observed_concept_ids)} concept IDs "
+                f"({sample})\n"
+            )
+        else:
+            # Only configured IDs — name-mode discovery against an
+            # id-configured row, no observation triples to show.
+            sample = ", ".join(str(c) for c in obs.configured_concept_ids[:5])
+            if len(obs.configured_concept_ids) > 5:
+                sample += ", …"
+            values_line = (
+                f"  Values:   {len(obs.configured_concept_ids)} configured "
+                f"concept IDs ({sample}) — no observations from this run, "
+                f"re-run --mode concept-ids for an id-aware diff\n"
+            )
+        values_line += (
+            f"  Filter:   match.column={id_col} "
             f"+ match.concept_ids: [...]\n"
         )
     else:
