@@ -169,8 +169,11 @@ class VariableRow:
         Implemented | % Patient | Data Source | Notes
 
     `criteria` (raw SQL / configured matcher) renders for the
-    technical and customer audiences. Sales / pharma see only
-    `inclusion_criteria` (prose). Customer keeps both columns side
+    technical, customer, AND pharma audiences (pharma scientists
+    evaluate variable definitions and want the matcher visible).
+    Sales is the only audience that hides Criteria — its
+    Tempus-style spec sheet is for quick partner pitches and
+    keeps a tighter column set. Customer keeps both columns side
     by side so reviewers can map prose to the underlying rule.
     """
     category: str

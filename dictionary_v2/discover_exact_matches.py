@@ -98,6 +98,11 @@ class VariableObservation:
     # never reads from this — it's report metadata for the human
     # reviewer and the apply path that writes match.concept_ids.
     observed_concept_ids: list[tuple[int, str, int]] = field(default_factory=list)
+    # Concept IDs already sitting in this variable's `match.concept_ids`
+    # block (read from the YAML at observation time). Lets the report's
+    # configured/observed/missing/stale comparisons work in concept-ID
+    # space when the row is already partly migrated.
+    configured_concept_ids: list[int] = field(default_factory=list)
     id_matcher_column: str = ""        # e.g. drug_concept_id
 
     @property
@@ -122,6 +127,30 @@ class VariableObservation:
     def stale_in_config(self) -> list[str]:
         seen = {v for v, _ in self.observed}
         return [v for v in self.configured_values if v not in seen]
+
+    # ID-aware companions, used when the observation was produced
+    # in concept-ID mode. Comparisons happen on integer IDs (the
+    # canonical OMOP key) instead of name strings.
+    @property
+    def configured_id_set(self) -> set[int]:
+        return set(self.configured_concept_ids)
+
+    @property
+    def configured_and_observed_ids(self) -> list[tuple[int, str, int]]:
+        cs = self.configured_id_set
+        return [(cid, name, n) for cid, name, n in self.observed_concept_ids
+                if cid in cs]
+
+    @property
+    def missing_from_config_ids(self) -> list[tuple[int, str, int]]:
+        cs = self.configured_id_set
+        return [(cid, name, n) for cid, name, n in self.observed_concept_ids
+                if cid not in cs]
+
+    @property
+    def stale_in_config_ids(self) -> list[int]:
+        seen = {cid for cid, _, _ in self.observed_concept_ids}
+        return [cid for cid in self.configured_concept_ids if cid not in seen]
 
 
 def _load_variables_pack_tagged(slug: str) -> list[dict[str, Any]]:
@@ -202,6 +231,35 @@ def _resolve_configured_values(match_block: dict[str, Any] | None) -> list[str]:
         if v not in seen:
             seen.add(v)
             out.append(v)
+    return out
+
+
+def _resolve_configured_concept_ids(
+    match_block: dict[str, Any] | None,
+) -> list[int]:
+    """Read `match.concept_ids` from a match block as an int list.
+
+    Mirrors compile_match_block's tolerant parsing — strings that
+    parse as ints are accepted (YAML often quotes large IDs). Used
+    by discovery so a row already migrated to concept-ID matching
+    is correctly recognised as "configured" instead of looking
+    like an empty (un-curated) row.
+    """
+    if not isinstance(match_block, dict):
+        return []
+    raw = match_block.get("concept_ids")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for v in raw:
+        try:
+            i = int(v)
+        except (TypeError, ValueError):
+            continue
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
     return out
 
 
@@ -359,6 +417,7 @@ def _build_observation(
         column=matcher_column or display_column,
         criteria=displayed_criteria,
         configured_values=_resolve_configured_values(v.get("match")),
+        configured_concept_ids=_resolve_configured_concept_ids(v.get("match")),
         observed=[],
         error=error,
         source_pack=v.get("_source_pack") or "",
@@ -542,39 +601,71 @@ def _fmt_md(observations: list[VariableObservation], cohort: str) -> str:
             out.append("")
             continue
 
-        out.append(f"- configured values: {len(o.configured_values)}")
-        out.append(f"- observed distinct values: {len(o.observed)}")
-        if o.observed_concept_ids and o.id_matcher_column:
-            out.append(
-                f"- concept-id mode: {o.id_matcher_column} → "
-                f"{len(o.observed_concept_ids)} unique ids"
-            )
-        out.append("")
+        # Concept-ID mode: comparisons happen in integer-ID space.
+        # Existing rows already migrated to match.concept_ids show
+        # up correctly as "configured" instead of looking empty.
+        in_id_mode = bool(o.observed_concept_ids and o.id_matcher_column)
 
-        # Concept-id mode: show (id, name, count) triples so the
-        # reviewer can copy the integer list straight into a
-        # `match.concept_ids: [...]` block.
-        if o.observed_concept_ids:
+        if in_id_mode:
+            out.append(
+                f"- configured concept ids: "
+                f"{len(o.configured_concept_ids)}"
+            )
+            out.append(
+                f"- observed distinct concept ids: "
+                f"{len(o.observed_concept_ids)}"
+            )
+            out.append(
+                f"- concept-id mode: {o.id_matcher_column}"
+            )
+            out.append("")
+
             out.append("### Observed concept IDs (id · name · count)")
             for cid, name, n in o.observed_concept_ids:
                 out.append(f"- `{cid}`  ·  `{name}`  ·  ({n:,})")
             out.append("")
 
-        if o.configured_and_observed:
-            out.append("### Configured & observed")
-            for val, n in o.configured_and_observed:
-                out.append(f"- `{val}`  ({n:,})")
+            if o.configured_and_observed_ids:
+                out.append("### Configured & observed (concept IDs)")
+                for cid, name, n in o.configured_and_observed_ids:
+                    out.append(f"- `{cid}`  ·  `{name}`  ({n:,})")
+                out.append("")
+            if o.missing_from_config_ids:
+                out.append(
+                    "### Observed but NOT in match.concept_ids "
+                    "(candidate additions)"
+                )
+                for cid, name, n in o.missing_from_config_ids:
+                    out.append(f"- [ ] `{cid}`  ·  `{name}`  ({n:,})")
+                out.append("")
+            if o.stale_in_config_ids:
+                out.append(
+                    "### In match.concept_ids but NOT observed "
+                    "(candidate removals)"
+                )
+                for cid in o.stale_in_config_ids:
+                    out.append(f"- [ ] `{cid}`")
+                out.append("")
+        else:
+            out.append(f"- configured values: {len(o.configured_values)}")
+            out.append(f"- observed distinct values: {len(o.observed)}")
             out.append("")
-        if o.missing_from_config:
-            out.append("### Observed but NOT in config (candidate additions)")
-            for val, n in o.missing_from_config:
-                out.append(f"- [ ] `{val}`  ({n:,})")
-            out.append("")
-        if o.stale_in_config:
-            out.append("### In config but NOT observed (candidate removals)")
-            for val in o.stale_in_config:
-                out.append(f"- [ ] `{val}`")
-            out.append("")
+
+            if o.configured_and_observed:
+                out.append("### Configured & observed")
+                for val, n in o.configured_and_observed:
+                    out.append(f"- `{val}`  ({n:,})")
+                out.append("")
+            if o.missing_from_config:
+                out.append("### Observed but NOT in config (candidate additions)")
+                for val, n in o.missing_from_config:
+                    out.append(f"- [ ] `{val}`  ({n:,})")
+                out.append("")
+            if o.stale_in_config:
+                out.append("### In config but NOT observed (candidate removals)")
+                for val in o.stale_in_config:
+                    out.append(f"- [ ] `{val}`")
+                out.append("")
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -606,20 +697,16 @@ def _fmt_suggestions_yaml(
         "",
     ]
     for o in observations:
-        if not o.observed and not o.configured_values:
+        # In concept-id mode the proposal is a `match.concept_ids:`
+        # block keyed on the *_concept_id column. Otherwise the
+        # legacy `match.values:` shape on the matcher's name column.
+        in_id_mode = bool(o.observed_concept_ids and o.id_matcher_column)
+        if not in_id_mode and not o.observed and not o.configured_values:
+            continue
+        if in_id_mode and not o.observed_concept_ids and not o.configured_concept_ids:
             continue
         if o.error:
             continue
-        union: list[str] = []
-        seen: set[str] = set()
-        for val, _ in o.observed:
-            if val not in seen:
-                seen.add(val)
-                union.append(val)
-        for val in o.configured_values:
-            if val not in seen:
-                seen.add(val)
-                union.append(val)
 
         lines.append(f"# {o.category} / {o.variable}")
         if o.source_pack:
@@ -629,10 +716,47 @@ def _fmt_suggestions_yaml(
         lines.append(f"# table={o.table} column={o.column}")
         lines.append(f"variable: {o.variable}")
         lines.append("match:")
-        lines.append(f"  column: {o.column}")
-        lines.append("  values:")
-        for v in union:
-            lines.append(f"    - {_yaml_str(v)}")
+
+        if in_id_mode:
+            # Union of observed (frequency-ordered) + already-configured,
+            # deduped, ints-only — matches what --apply will write.
+            id_union: list[int] = []
+            id_seen: set[int] = set()
+            for cid, _name, _n in o.observed_concept_ids:
+                if cid not in id_seen:
+                    id_seen.add(cid)
+                    id_union.append(cid)
+            for cid in o.configured_concept_ids:
+                if cid not in id_seen:
+                    id_seen.add(cid)
+                    id_union.append(cid)
+            # Inline name comments alongside each id so a clinical
+            # reviewer can spot-check the proposal in YAML form.
+            id_to_name = {cid: name for cid, name, _ in o.observed_concept_ids}
+
+            lines.append(f"  column: {o.id_matcher_column}")
+            lines.append("  concept_ids:")
+            for cid in id_union:
+                name = id_to_name.get(cid)
+                if name:
+                    lines.append(f"    - {cid}    # {name}")
+                else:
+                    lines.append(f"    - {cid}")
+        else:
+            union: list[str] = []
+            seen: set[str] = set()
+            for val, _ in o.observed:
+                if val not in seen:
+                    seen.add(val)
+                    union.append(val)
+            for val in o.configured_values:
+                if val not in seen:
+                    seen.add(val)
+                    union.append(val)
+            lines.append(f"  column: {o.column}")
+            lines.append("  values:")
+            for v in union:
+                lines.append(f"    - {_yaml_str(v)}")
         lines.append("")
     return "\n".join(lines)
 

@@ -286,11 +286,16 @@ python scripts/build_all_cohorts.py --dry-run
 ```
 Writes per-cohort outputs to `Output/` and a single
 `Output/BUILD_SUMMARY.md` with:
-- per-cohort row counts, implemented %, drop %, warning count
+- per-cohort row counts, implemented %, **`unimplemented%`**, warning count.
+  `unimplemented%` is the fraction of variables flagged
+  `Implemented = No` from the canonical model BEFORE any audience
+  filter — a coverage signal about whether the cohort actually
+  carries data, NOT an audience-policy signal (PII filtering,
+  internal-table excludes, etc. are not subtracted from the count).
 - error block for any cohort whose build raised
-- "high drop% — review criteria" callout for cohorts ≥25% dropped
-  (those usually need discovery + criteria tightening, not real
-  data gaps)
+- "high `unimplemented%` — review variable criteria" callout for
+  cohorts ≥25% unimplemented (those usually need discovery +
+  criteria tightening, not real data gaps)
 - output-file index per cohort
 
 Per-cohort errors are recorded but don't kill the batch — one

@@ -138,16 +138,21 @@ renderer is tracked in §5.3.
 
 ### 4.1 Workbook shape
 
-Every workbook ships the same four sheets. Layout follows the
-Flatiron-style data-dictionary convention — clinical Description and
-Inclusion Criteria lead each table; observed-data signals follow.
+Sheet set varies per audience — see [`docs/audiences.md`](./docs/audiences.md)
+for the authoritative contract. Quick summary:
 
-| Sheet | Rows | Columns |
+| Audience | Sheets | Notes |
 |---|---|---|
-| Summary | ~17 key/value | provider, disease, patient_count, table_count, column_count, date coverage, years_of_data, generated_at, git_sha, schema_snapshot_digest |
-| Tables | one per warehouse table | Table, Category, Description, Inclusion Criteria, Data Source, Source Table, Rows, Columns, Patients |
-| Columns | one per physical column | Category, Table, Column, Description, Field Type, Nullable, Example, Coding Schema, Values, Distribution, Median (IQR), Completeness, % Patient, Data Source, PII, Notes |
-| Variables | one per clinical concept in the cohort's variable pack | Category, Variable, Description, Inclusion Criteria, Table(s), Column(s), [Criteria — technical + customer], Field Type, Example, Coding Schema, Values, Distribution, Median (IQR), Completeness, Implemented, % Patient, Data Source, Notes |
+| `technical` | Summary + Tables + Columns + Variables | Full audit view. Carries both `Completeness` (row-level) and `% Patients With Value`. Raw SQL `Criteria` shown. JSON dump produced. No PII redaction. |
+| `pharma` | Summary + Variables | Methodology-rich evidence view. Carries Coding Schema, Distribution, Median (IQR), Implemented, Data Source. Shows `Criteria` so reviewers can evaluate definitions. Single coverage metric: `% Patients With Value`. PII dropped. |
+| `sales` | Summary (cover) + Tables + Variables | Tempus-style spec. Variables uses `Category, Variable, Description, Observed Values, Notes, Type, Proposal, % Patients With Value` — no `Criteria` column. Variables marked `Implemented = No` are dropped. Stakeholder cover replaces the bare key/value Summary. PII dropped, internal scaffolding tables filtered, JSON suppressed. |
+| `customer` | Summary (cover) + Tables + Columns + Variables | Plain-language buyer view. Variables drops methodology fields (Coding Schema, Distribution, Median (IQR), Implemented, Data Source); keeps `Criteria` for transparency. Renames `Values` → `Observed Values`. Single coverage metric: `% Patients With Value`. Columns trimmed to Table / Column / Description / Field Type. PII dropped, internal tables filtered, JSON suppressed. |
+
+Per-sheet column lists per audience are spelled out in
+[`docs/audiences.md`](./docs/audiences.md). Tests in
+`dictionary_v2/test_customer_audience.py` enforce the contract;
+`Inclusion Criteria` (prose) renders for every audience that
+ships Variables.
 
 `Data Source` uses the Flatiron typology — Normalized / Derived /
 Abstracted / NLP / Enhanced — derived from each row's
@@ -155,12 +160,12 @@ Abstracted / NLP / Enhanced — derived from each row's
 `build_dictionary.derive_data_source`. Pack rows can override per-row
 with an explicit `data_source:` key.
 
-`Inclusion Criteria` (prose) renders for every audience. The
-`Criteria` column (the SQL or `match: { values: [...] }` matcher)
-shows for `technical` and `customer` audiences — config-owned exact
-matches were the headline reviewer ask — and is hidden for `sales`
-and `pharma`. See `packs/STYLE.md` for the prose-quality bar each
-customer-visible string must meet.
+`Criteria` shows for `technical`, `customer`, **and** `pharma` —
+pharma scientists evaluate variable definitions, so the matcher
+is visible. Only `sales` hides it (its standalone Tempus-style
+spec sheet keeps a tighter column set for partner pitches). See
+`packs/STYLE.md` for the prose-quality bar each customer-visible
+string must meet.
 
 All fields populate from the canonical `CohortModel` — nothing is
 hardcoded-empty any more.
