@@ -249,6 +249,13 @@ def _check_missing_criteria(v: dict[str, Any]) -> str | None:
 _ID_COLUMN_RE = re.compile(r"(?:^|_)(concept_id|id)$", re.IGNORECASE)
 _ID_NAME_RE = re.compile(r"\b(id|concept\s*id|identifier)\b", re.IGNORECASE)
 
+# Plain SQL identifier — letters, digits, underscores; must start with
+# a letter or underscore. Used to shape-check `match.name_column:`,
+# which discovery interpolates directly as a quoted column name. The
+# rule rejects realistic typos (whitespace, dot-paths, hyphens, quotes,
+# expression-like text) before they reach a live `SELECT`.
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
 
 # Customer-visible prose denylist. See packs/STYLE.md.
 #
@@ -557,9 +564,15 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                             f"usually targets a `*_concept_id` column.",
                         ))
             # Optional `name_column:` override for non-canonical
-            # tables. Must be a non-empty string when present —
-            # discovery uses it as the label projection for the
-            # report's (id, name, count) triples.
+            # tables. Must be a SQL-identifier-shaped string when
+            # present — discovery interpolates it directly as a
+            # quoted column name (`SELECT "<name_column>" ...`),
+            # so anything containing a quote, dot, space, or
+            # expression-style text would either fail at runtime
+            # or open an injection path. The identifier rule
+            # (`[A-Za-z_][A-Za-z0-9_]*`) catches the realistic
+            # typos (display label, drug-concept-name, value as
+            # number, schema.column).
             name_col = match.get("name_column")
             if name_col is not None:
                 if not isinstance(name_col, str) or not name_col.strip():
@@ -568,6 +581,15 @@ def validate_cohort(slug: str, known_categories: set[str]) -> CohortReport:
                         f"{cat}/{var}: `match.name_column:` must be a "
                         f"non-empty string when set, got "
                         f"{type(name_col).__name__}={name_col!r}",
+                    ))
+                elif not _IDENTIFIER_RE.fullmatch(name_col.strip()):
+                    report.findings.append(Finding(
+                        "error", slug,
+                        f"{cat}/{var}: `match.name_column:` must be a "
+                        f"plain SQL identifier "
+                        f"(letters, digits, underscores; starting "
+                        f"with a letter or underscore), got "
+                        f"{name_col!r}",
                     ))
 
         # Sales-spec proposal: must be one of the allowed tags when
