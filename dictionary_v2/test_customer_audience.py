@@ -1896,6 +1896,45 @@ class DiscoveryApplyTests(unittest.TestCase):
         self.assertIn("ADD cohort override", prompt)
         self.assertIn("inherited from shared pack", prompt)
 
+    def test_per_variable_prompt_surfaces_concept_ids_mode(self):
+        # Commit D: when the observation has concept_ids data, the
+        # prompt must say so. Reviewer needs to know whether they're
+        # approving an integer-id filter (canonical) or a string
+        # values filter (legacy/string).
+        captured: list[str] = []
+        import builtins
+        original_input = builtins.input
+        builtins.input = lambda prompt="": (captured.append(prompt) or "n")
+        self.addCleanup(lambda: setattr(builtins, "input", original_input))
+
+        obs = self.mod.VariableObservation(
+            category="Drugs", variable="Aspirin", table="drug_exposure",
+            column="drug_concept_name",
+            criteria="drug_concept_name ILIKE '%aspirin%'",
+            configured_values=[],
+            observed=[("Aspirin 81 MG Oral Tablet", 100)],
+            source_pack=self.pack_slug,
+            observed_concept_ids=[
+                (1112807, "Aspirin 81 MG Oral Tablet", 100),
+                (1112809, "Aspirin 325 MG", 50),
+            ],
+            id_matcher_column="drug_concept_id",
+        )
+        self.mod.apply_suggestions(
+            [obs], target="shared", auto_yes=False,
+        )
+        prompt = captured[-1]
+        # Action line names the mode:
+        self.assertIn("(concept-ids)", prompt)
+        # New "Filter:" line spells out which column + that
+        # match.concept_ids will be written:
+        self.assertIn("match.column=drug_concept_id", prompt)
+        self.assertIn("match.concept_ids:", prompt)
+        # Values line shows id=name samples so reviewer can spot-
+        # check IDs against names before approving.
+        self.assertIn("1112807", prompt)
+        self.assertIn("Aspirin 81 MG Oral Tablet", prompt)
+
     def test_per_variable_prompt_quit_aborts_without_writing(self):
         # Interactive prompt: 'q' must abort the whole run and leave
         # both packs unchanged on disk.
@@ -2391,6 +2430,14 @@ class VariablePackOverrideTests(unittest.TestCase):
             "      concept_ids: [40221901]\n"
             "      values: ['Lecanemab']\n"           # mutex with concept_ids
             "  - category: Drugs\n"
+            "    variable: BothConceptIdsAndValuesFile\n"
+            "    table: drug_exposure\n"
+            "    column: drug_concept_name\n"
+            "    match:\n"
+            "      column: drug_concept_id\n"
+            "      concept_ids: [40221901]\n"
+            "      values_file: value_sets/aspirin.yaml\n"  # mutex too
+            "  - category: Drugs\n"
             "    variable: ConceptIdsOnNameColumn\n"
             "    table: drug_exposure\n"
             "    column: drug_concept_name\n"
@@ -2436,6 +2483,9 @@ class VariablePackOverrideTests(unittest.TestCase):
         # Both concept_ids and values → error.
         self.assertIn("BothConceptIdsAndValues", msgs)
         self.assertIn("mutually exclusive", msgs)
+        # Same mutex applies when concept_ids is paired with
+        # values_file (not just inline values).
+        self.assertIn("BothConceptIdsAndValuesFile", msgs)
         # Concept-name column with concept_ids → warning.
         self.assertIn("ConceptIdsOnNameColumn", msgs)
         self.assertIn("`*_concept_id` column", msgs)

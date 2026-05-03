@@ -780,29 +780,50 @@ def _ask_per_variable(
     `action` is "update" (existing row's match block changes) or
     "stub" (a new cohort-override row is being added from source).
     """
+    # Concept-IDs mode flag — surface in the prompt so the
+    # reviewer always knows which proposal shape is about to land
+    # in the YAML (integer concept_ids vs string values).
+    is_concept_ids = bool(obs.observed_concept_ids and obs.id_matcher_column)
+    mode_tag = " (concept-ids)" if is_concept_ids else ""
+
     if action == "update":
-        action_label = "UPDATE variable"
+        action_label = "UPDATE variable" + mode_tag
         reason = (
             "row already exists in target pack; only the match: "
             "block will change"
         )
     else:
-        action_label = "ADD cohort override"
+        action_label = "ADD cohort override" + mode_tag
         reason = (
             "row is inherited from shared pack; discovered values "
             "came from one cohort only"
         )
 
-    sample = ", ".join(f'"{v}"' for v, _ in obs.observed[:2])
-    if len(obs.observed) > 2:
-        sample += ", …"
+    if is_concept_ids:
+        sample = ", ".join(
+            f'{cid}={name!r}'
+            for cid, name, _ in obs.observed_concept_ids[:2]
+        )
+        if len(obs.observed_concept_ids) > 2:
+            sample += ", …"
+        values_line = (
+            f"  Values:   {len(obs.observed_concept_ids)} concept IDs "
+            f"({sample})\n"
+            f"  Filter:   match.column={obs.id_matcher_column} "
+            f"+ match.concept_ids: [...]\n"
+        )
+    else:
+        sample = ", ".join(f'"{v}"' for v, _ in obs.observed[:2])
+        if len(obs.observed) > 2:
+            sample += ", …"
+        values_line = f"  Values:   {len(obs.observed)} ({sample})\n"
 
     block = (
         f"\n  Variable: {obs.category} / {obs.variable}\n"
         f"  Source:   packs/variables/{obs.source_pack}.yaml\n"
         f"  Target:   packs/variables/{dest_path.stem}.yaml\n"
         f"  Action:   {action_label}\n"
-        f"  Values:   {len(obs.observed)} ({sample})\n"
+        f"{values_line}"
         f"  Reason:   {reason}\n"
         f"  Proceed?  [y]es / [n]o / [a]ll-remaining / [q]uit: "
     )
